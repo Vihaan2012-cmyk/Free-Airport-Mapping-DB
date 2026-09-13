@@ -67,6 +67,9 @@ struct BulkArgs {
     /// Bulk: delete each airport's source downloads (OSM extract, Gateway scenery) as soon as it is built.
     #[arg(long = "discard-downloads")]
     discard_downloads: bool,
+    /// Bulk: airports fetched from OpenStreetMap at the same time (the main speed lever).
+    #[arg(long = "jobs", short = 'j', default_value_t = 4, value_name = "N")]
+    jobs: usize,
 }
 
 /// Remove cached downloads belonging to these airports (files named `<ICAO>.*` or `<ICAO>_*`).
@@ -194,8 +197,10 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard:
     }
     let t0 = std::time::Instant::now();
     let (mut built, mut failed, mut freed) = (0usize, 0usize, 0u64);
-    const CHUNK: usize = 6;
-    for (n, part) in todo.chunks(CHUNK).enumerate() {
+    // Chunks of three OSM widths: Gateway fetches and builds of one chunk overlap with
+    // the OSM waits of the same chunk.
+    let chunk = (cfg.osm_parallel.max(1) * 3).max(6);
+    for (n, part) in todo.chunks(chunk).enumerate() {
         match crate::pipeline::run(cfg, part) {
             Ok(s) => {
                 built += s.built.len();
@@ -219,8 +224,7 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard:
         if let Some(d) = discard {
             freed += discard_downloads(d, part);
         }
-        let done = (n + 1) * CHUNK;
-        let done = done.min(todo.len());
+        let done = ((n + 1) * chunk).min(todo.len());
         let per = t0.elapsed().as_secs_f64() / done as f64;
         let eta = per * (todo.len() - done) as f64;
         crate::term::info(&format!("Bulk {label}: {done}/{} done ({built} built, {failed} failed), about {} left", todo.len(), crate::term::human_secs(eta)));
@@ -340,6 +344,7 @@ fn config(d: &DataArgs, s: &Settings) -> Config {
         write_ir: false,
         layers: crate::model::ALL_LAYERS.to_vec(),
         index_cache: Cache::for_index(false),
+        osm_parallel: 2,
     }
 }
 
@@ -413,7 +418,8 @@ fn serve(a: ServeArgs) -> Result<()> {
     if a.bulk.active() {
         // Resolve now (errors surface before the server starts), build in the background
         // once the server is up so aircraft are served meanwhile.
-        let cfg = config(&a.data, &settings);
+        let mut cfg = config(&a.data, &settings);
+        cfg.osm_parallel = a.bulk.jobs.max(1);
         let icaos = a.bulk.resolve(&cfg)?;
         let label = a.bulk.label();
         let rebuild = a.bulk.rebuild;
@@ -453,7 +459,8 @@ pub fn run() -> Result<()> {
         Cmd::Serve(a) => serve(a),
         Cmd::Prefetch { data, bulk, icaos, simbrief } => {
             let settings = effective_settings(&data)?;
-            let cfg = config(&data, &settings);
+            let mut cfg = config(&data, &settings);
+            cfg.osm_parallel = bulk.jobs.max(1);
             let mut icaos = icaos;
             if bulk.active() {
                 let label = bulk.label();

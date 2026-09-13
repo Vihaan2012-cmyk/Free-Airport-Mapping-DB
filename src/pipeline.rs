@@ -60,6 +60,9 @@ pub struct Config {
     pub layers: Vec<Layer>,
     /// Always-on daily cache for the airport index files.
     pub index_cache: Cache,
+    /// Airports fetched from OpenStreetMap concurrently (2 for one-off builds, more
+    /// for bulk runs; OSM's policy is fine with a few parallel map calls).
+    pub osm_parallel: usize,
 }
 
 #[derive(Debug, Default)]
@@ -137,9 +140,6 @@ pub fn is_building(icao: &str) -> bool {
     let up = icao.to_uppercase();
     IN_PROGRESS.lock().unwrap().iter().any(|x| *x == up)
 }
-
-/// How many airports the OpenStreetMap stage fetches concurrently.
-pub const OSM_PARALLEL: usize = 2;
 
 struct Prepared {
     icao: String,
@@ -467,9 +467,9 @@ pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
     // Phase B: OSM, one airport at a time (public endpoints throttle parallel use).
     let mut stores: HashMap<String, Store> = HashMap::new();
     if !matches!(cfg.osm, OsmMode::Off) {
-        // OSM_PARALLEL airports at a time: the public API copes with a couple of parallel
-        // map calls, and the wait for the server is most of an airport's build time.
-        for group in prepared.chunks(OSM_PARALLEL) {
+        // A few airports at a time: the wait for the OSM server is most of an airport's
+        // build time, and the public API copes with a handful of parallel map calls.
+        for group in prepared.chunks(cfg.osm_parallel.max(1)) {
             let results: Vec<(String, Result<Store>, f64)> = std::thread::scope(|sc| {
                 let handles: Vec<_> = group
                     .iter()

@@ -308,6 +308,9 @@ pub struct BuildArgs {
     /// Parallel jobs.
     #[arg(long, short = 'j')]
     jobs: Option<usize>,
+    /// Airports fetched from OpenStreetMap at the same time.
+    #[arg(long = "osm-parallel", default_value_t = 2, value_name = "N")]
+    osm_parallel: usize,
     /// Do not generate Annex 14 runway markings.
     #[arg(long = "no-markings")]
     no_markings: bool,
@@ -377,6 +380,7 @@ impl BuildArgs {
             overrides: PathBuf::from("overrides"),
             radius_km: 5.0,
             jobs: None,
+            osm_parallel: 2,
             no_markings: false,
             shoulders: false,
             write_source: false,
@@ -455,6 +459,7 @@ pub fn config(a: &BuildArgs) -> Result<Config> {
         write_ir: a.write_source,
         layers,
         index_cache: Cache::for_index(ix.offline),
+        osm_parallel: a.osm_parallel,
     })
 }
 
