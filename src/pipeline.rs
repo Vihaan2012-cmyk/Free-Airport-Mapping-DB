@@ -66,6 +66,8 @@ pub struct Config {
 pub struct Summary {
     pub built: Vec<String>,
     pub failed: Vec<(String, String)>,
+    /// Build time per built airport in seconds.
+    pub timings: Vec<(String, f64)>,
 }
 
 /// Load the airport index from every configured source.
@@ -144,6 +146,67 @@ struct Prepared {
     src: SourceAirport,
     bbox: (f64, f64, f64, f64), // s, w, n, e
     country: Option<String>,
+    /// OurAirports runway rows: the last-resort runway geometry when no scenery and no
+    /// OpenStreetMap runway exists.
+    oa_runways: Vec<crate::sources::index::OaRunway>,
+}
+
+/// Runways from OurAirports' runway table (both thresholds known), for airports with
+/// no scenery anywhere and nothing mapped in OSM: a plain strip per runway so the map
+/// at least shows where to land.
+fn runways_from_ourairports(rows: &[crate::sources::index::OaRunway]) -> Vec<crate::ir::Runway> {
+    use crate::ir::{Runway, RunwayEnd};
+    use crate::model::codes::{rwymktyp, source, surftype};
+    let surface = |s: Option<&str>| -> i64 {
+        let s = s.unwrap_or("").to_ascii_uppercase();
+        if s.starts_with("ASP") || s.contains("ASPHALT") || s.contains("BIT") {
+            surftype::ASPHALT
+        } else if s.starts_with("CON") || s.contains("CONCRETE") || s.contains("PEM") {
+            surftype::CONCRETE
+        } else if s.starts_with("GR") && !s.starts_with("GRV") || s.contains("TURF") || s.contains("GRASS") {
+            surftype::GRASS
+        } else if s.starts_with("GRV") || s.contains("GRAVEL") {
+            surftype::GRAVEL
+        } else if s.contains("WATER") {
+            surftype::WATER
+        } else if s.contains("DIRT") || s.contains("SAND") || s.contains("EARTH") || s.contains("CLAY") {
+            5
+        } else {
+            surftype::UNKNOWN
+        }
+    };
+    rows.iter()
+        .filter(|r| !r.closed)
+        .filter_map(|r| {
+            let (Some(la), Some(lo), Some(ha), Some(ho)) = (r.le_lat, r.le_lon, r.he_lat, r.he_lon) else { return None };
+            let end = |ident: &str, lat: f64, lon: f64, displaced_ft: Option<f64>| RunwayEnd {
+                ident: crate::sources::xplane::aptdat::norm_rwy(ident),
+                pos: Coord { x: lon, y: lat },
+                displaced_m: displaced_ft.unwrap_or(0.0) * 0.3048,
+                blastpad_m: 0.0,
+                marking: rwymktyp::from_xplane(1),
+                approach_lights: 0,
+                tdz_lights: false,
+                reil: 0,
+                tora_m: r.length_ft.map(|l| l * 0.3048),
+                toda_m: None,
+                asda_m: None,
+                lda_m: None,
+                tdze_ft: None,
+            };
+            Some(Runway {
+                width_m: r.width_ft.map(|w| w * 0.3048).filter(|w| *w > 5.0).unwrap_or(30.0),
+                surface: surface(r.surface.as_deref()),
+                shoulder_surface: None,
+                shoulder_width_m: None,
+                centerline_lights: false,
+                edge_lights: 0,
+                ends: [end(&r.le_ident, la, lo, r.le_displaced_ft), end(&r.he_ident, ha, ho, r.he_displaced_ft)],
+                stopway_m: [0.0, 0.0],
+                source: source::OURAIRPORTS,
+            })
+        })
+        .collect()
 }
 
 /// Source order: an explicit apt.dat file, then the Scenery Gateway (newest community
@@ -250,7 +313,8 @@ fn prepare(cfg: &Config, idx: &AirportIndex, icao: &str) -> Result<Prepared> {
         }
     };
     let country = src.header.country.clone().or_else(|| entry.as_ref().and_then(|e| e.country.clone()));
-    Ok(Prepared { icao, src, bbox, country })
+    let oa_runways = idx.runways.get(&icao).cloned().unwrap_or_default();
+    Ok(Prepared { icao, src, bbox, country, oa_runways })
 }
 
 fn faa_enrich(tables: &faa::NasrTables, src: &mut SourceAirport) {
@@ -337,6 +401,14 @@ fn build_and_write(cfg: &Config, mut p: Prepared, osm_store: Option<Store>, faa_
     }
     if let Some(t) = faa_tables {
         faa_enrich(t, &mut p.src);
+    }
+    if p.src.runways.is_empty() && !p.oa_runways.is_empty() {
+        let rws = runways_from_ourairports(&p.oa_runways);
+        if !rws.is_empty() {
+            term::warn(&format!("[{icao}] No scenery and no OSM runway: {} runway strip(s) taken from OurAirports (ends and width only)", rws.len()));
+            p.src.runways = rws;
+            p.src.sources.push(crate::model::codes::source::OURAIRPORTS.to_string());
+        }
     }
     p.src.sources.sort();
     p.src.sources.dedup();
@@ -559,7 +631,9 @@ pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
                     dir: icao.clone(),
                     error: None,
                 });
-                summary.lock().unwrap().built.push(icao);
+                let mut s = summary.lock().unwrap();
+                s.timings.push((icao.clone(), t0.elapsed().as_secs_f64()));
+                s.built.push(icao);
             }
             Err(e) => {
                 log::error!("{icao}: {e:#}");

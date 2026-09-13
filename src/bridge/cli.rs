@@ -12,7 +12,7 @@ use crate::cache::Cache;
 use crate::output::{Formats, Projection};
 use crate::pipeline::{Config, FaaMode, OsmMode};
 use crate::sources::http::Http;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
@@ -149,10 +149,45 @@ impl BulkArgs {
     }
 }
 
+/// One line of the bulk status report.
+struct BulkRow {
+    icao: String,
+    status: &'static str,
+    seconds: Option<f64>,
+    error: String,
+}
+
+/// Write `bulk-status.csv` next to the airports folder: every airport of the run with
+/// its outcome, the sources its manifest lists, feature count, build time and error.
+fn write_bulk_status(cfg: &Config, rows: &[BulkRow], label: &str) -> Result<PathBuf> {
+    let path = cfg.out.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| cfg.out.clone()).join("bulk-status.csv");
+    let idx = crate::pipeline::load_index(cfg).ok();
+    let mut w = csv::Writer::from_path(&path).with_context(|| format!("write {}", path.display()))?;
+    w.write_record(["icao", "status", "name", "country", "sources", "features", "build_seconds", "error", "run"])?;
+    for r in rows {
+        let entry = idx.as_ref().and_then(|i| i.get(&r.icao));
+        let manifest = std::fs::read_to_string(cfg.out.join(&r.icao).join("manifest.json")).ok().and_then(|t| serde_json::from_str::<crate::output::manifest::Manifest>(&t).ok());
+        w.write_record([
+            r.icao.clone(),
+            r.status.to_string(),
+            manifest.as_ref().and_then(|m| m.name.clone()).or_else(|| entry.and_then(|e| e.name.clone())).unwrap_or_default(),
+            manifest.as_ref().and_then(|m| m.country.clone()).or_else(|| entry.and_then(|e| e.country.clone())).unwrap_or_default(),
+            manifest.as_ref().map(|m| m.sources.join("+")).unwrap_or_default(),
+            manifest.as_ref().map(|m| m.total_features().to_string()).unwrap_or_default(),
+            r.seconds.map(|s| format!("{s:.1}")).unwrap_or_default(),
+            r.error.clone(),
+            label.to_string(),
+        ])?;
+    }
+    w.flush()?;
+    Ok(path)
+}
+
 /// Build a list of airports in chunks, skipping what already exists unless asked to rebuild.
 fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard: Option<&Path>) {
     let todo: Vec<String> = icaos.iter().filter(|i| rebuild || !cfg.out.join(i).join("manifest.json").is_file()).cloned().collect();
     let skipped = icaos.len() - todo.len();
+    let mut rows: Vec<BulkRow> = icaos.iter().filter(|i| !todo.contains(i)).map(|i| BulkRow { icao: i.clone(), status: "skipped (already built)", seconds: None, error: String::new() }).collect();
     crate::term::start(&format!("Bulk build {label}: {} airport(s){}", todo.len(), if skipped > 0 { format!(", {skipped} already built") } else { String::new() }));
     if todo.is_empty() {
         return;
@@ -165,10 +200,20 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard:
             Ok(s) => {
                 built += s.built.len();
                 failed += s.failed.len();
+                for i in &s.built {
+                    let secs = s.timings.iter().find(|(k, _)| k == i).map(|(_, t)| *t);
+                    rows.push(BulkRow { icao: i.clone(), status: "built", seconds: secs, error: String::new() });
+                }
+                for (i, e) in &s.failed {
+                    rows.push(BulkRow { icao: i.clone(), status: "failed", seconds: None, error: e.clone() });
+                }
             }
             Err(e) => {
                 crate::term::warn(&format!("bulk chunk failed: {e:#}"));
                 failed += part.len();
+                for i in part {
+                    rows.push(BulkRow { icao: i.clone(), status: "failed", seconds: None, error: format!("{e:#}") });
+                }
             }
         }
         if let Some(d) = discard {
@@ -185,6 +230,11 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard:
         crate::term::human_secs(t0.elapsed().as_secs_f64()),
         if discard.is_some() { format!(", {} of downloads discarded", crate::term::human_bytes(freed)) } else { String::new() }
     ));
+    rows.sort_by(|a, b| a.icao.cmp(&b.icao));
+    match write_bulk_status(cfg, &rows, label) {
+        Ok(p) => crate::term::file(None, &p.display().to_string(), &format!("status of all {} airports (built / failed / skipped, sources, features, errors)", rows.len())),
+        Err(e) => crate::term::warn(&format!("could not write the status CSV: {e:#}")),
+    }
 }
 
 #[derive(Args, Clone)]

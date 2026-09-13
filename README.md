@@ -125,8 +125,12 @@ amdb-bridge autostart                       # start with the sim (exe.xml)
 `--bulk` takes continents (africa, antarctica, asia, europe, north-america, oceania,
 south-america), ISO countries, or `all`, comma separated; `--type` (default
 large,medium), `--min-runways` (default 1) and `--min-runway-ft` narrow it down, and
-airports already built are skipped unless `--rebuild`. `amdbgen build --continent
-europe --min-runways 2` does the same outside the bridge.
+airports already built are skipped unless `--rebuild`, `--discard-downloads` deletes
+each airport's source downloads once it is built, and every run ends with
+`bulk-status.csv` next to the airports folder (built / failed / skipped per airport,
+sources used, feature count, error). `amdbgen build --continent europe --min-runways 2`
+does the same outside the bridge. Source order per airport: Scenery Gateway, then the
+local X-Plane install, then OpenStreetMap alone, then OurAirports runway strips.
 
 The first `serve` asks three questions: keep generated airports and downloads on
 disk, where, and up to how much space (oldest airports are dropped first). Answers
