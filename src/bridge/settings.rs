@@ -37,7 +37,8 @@ impl Settings {
 
     pub fn load() -> Option<Settings> {
         let text = std::fs::read_to_string(Self::path()).ok()?;
-        serde_json::from_str(&text).ok()
+        // Tolerate a UTF-8 BOM (PowerShell's Set-Content writes one).
+        serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()
     }
 
     pub fn save(&self) -> Result<()> {

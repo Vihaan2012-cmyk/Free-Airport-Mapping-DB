@@ -14,7 +14,7 @@ use crate::pipeline::{Config, FaaMode, OsmMode};
 use crate::sources::http::Http;
 use anyhow::{anyhow, Result};
 use clap::{Args, Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "amdb-bridge", version, about = "Serve amdbgen airport data to aircraft in place of the Navigraph AMDB API")]
@@ -64,6 +64,33 @@ struct BulkArgs {
     /// Bulk: ICAO codes from a text file or a CSV with an `icao` column (e.g. from `amdbgen list --csv`).
     #[arg(long = "from-file", value_name = "FILE")]
     from_file: Option<PathBuf>,
+    /// Bulk: delete each airport's source downloads (OSM extract, Gateway scenery) as soon as it is built.
+    #[arg(long = "discard-downloads")]
+    discard_downloads: bool,
+}
+
+/// Remove cached downloads belonging to these airports (files named `<ICAO>.*` or `<ICAO>_*`).
+fn discard_downloads(downloads: &Path, icaos: &[String]) -> u64 {
+    fn walk(dir: &Path, icaos: &[String], freed: &mut u64) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, icaos, freed);
+                continue;
+            }
+            let name = p.file_name().map(|s| s.to_string_lossy().to_uppercase()).unwrap_or_default();
+            if icaos.iter().any(|i| name.starts_with(&format!("{i}.")) || name.starts_with(&format!("{i}_"))) {
+                let len = e.metadata().map(|m| m.len()).unwrap_or(0);
+                if std::fs::remove_file(&p).is_ok() {
+                    *freed += len;
+                }
+            }
+        }
+    }
+    let mut freed = 0;
+    walk(downloads, icaos, &mut freed);
+    freed
 }
 
 impl BulkArgs {
@@ -123,7 +150,7 @@ impl BulkArgs {
 }
 
 /// Build a list of airports in chunks, skipping what already exists unless asked to rebuild.
-fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str) {
+fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard: Option<&Path>) {
     let todo: Vec<String> = icaos.iter().filter(|i| rebuild || !cfg.out.join(i).join("manifest.json").is_file()).cloned().collect();
     let skipped = icaos.len() - todo.len();
     crate::term::start(&format!("Bulk build {label}: {} airport(s){}", todo.len(), if skipped > 0 { format!(", {skipped} already built") } else { String::new() }));
@@ -131,7 +158,7 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str) {
         return;
     }
     let t0 = std::time::Instant::now();
-    let (mut built, mut failed) = (0usize, 0usize);
+    let (mut built, mut failed, mut freed) = (0usize, 0usize, 0u64);
     const CHUNK: usize = 6;
     for (n, part) in todo.chunks(CHUNK).enumerate() {
         match crate::pipeline::run(cfg, part) {
@@ -144,13 +171,20 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str) {
                 failed += part.len();
             }
         }
+        if let Some(d) = discard {
+            freed += discard_downloads(d, part);
+        }
         let done = (n + 1) * CHUNK;
         let done = done.min(todo.len());
         let per = t0.elapsed().as_secs_f64() / done as f64;
         let eta = per * (todo.len() - done) as f64;
         crate::term::info(&format!("Bulk {label}: {done}/{} done ({built} built, {failed} failed), about {} left", todo.len(), crate::term::human_secs(eta)));
     }
-    crate::term::success(&format!("Bulk build {label} finished: {built} built, {failed} failed, {skipped} skipped, in {}", crate::term::human_secs(t0.elapsed().as_secs_f64())));
+    crate::term::success(&format!(
+        "Bulk build {label} finished: {built} built, {failed} failed, {skipped} skipped, in {}{}",
+        crate::term::human_secs(t0.elapsed().as_secs_f64()),
+        if discard.is_some() { format!(", {} of downloads discarded", crate::term::human_bytes(freed)) } else { String::new() }
+    ));
 }
 
 #[derive(Args, Clone)]
@@ -333,6 +367,7 @@ fn serve(a: ServeArgs) -> Result<()> {
         let icaos = a.bulk.resolve(&cfg)?;
         let label = a.bulk.label();
         let rebuild = a.bulk.rebuild;
+        let discard = if a.bulk.discard_downloads { a.data.cache.clone().or_else(|| settings.downloads_dir()) } else { None };
         if let Some(limit) = settings.limit_bytes() {
             let need = icaos.len() as u64 * 4 * 1024 * 1024;
             if a.data.out.is_none() && need > limit {
@@ -342,7 +377,7 @@ fn serve(a: ServeArgs) -> Result<()> {
         crate::term::info(&format!("Bulk {label}: {} airport(s) selected; building in the background", icaos.len()));
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(3));
-            run_bulk(&cfg, &icaos, rebuild, &label);
+            run_bulk(&cfg, &icaos, rebuild, &label, discard.as_deref());
         });
     }
     let result = server::serve(store, server::Listen { http_port: if a.http_port == 0 { None } else { Some(a.http_port) }, https });
@@ -373,7 +408,8 @@ pub fn run() -> Result<()> {
             if bulk.active() {
                 let label = bulk.label();
                 let sel = bulk.resolve(&cfg)?;
-                run_bulk(&cfg, &sel, bulk.rebuild, &label);
+                let discard = if bulk.discard_downloads { data.cache.clone().or_else(|| settings.downloads_dir()) } else { None };
+                run_bulk(&cfg, &sel, bulk.rebuild, &label, discard.as_deref());
                 if icaos.is_empty() && simbrief.is_none() {
                     return Ok(());
                 }
