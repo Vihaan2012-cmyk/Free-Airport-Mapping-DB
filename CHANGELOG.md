@@ -19,7 +19,11 @@
   `search`, `view`, `stats`, `zip`, `clean`, `layers`, `codes`.
 - Bulk builds: `amdb-bridge serve --bulk asia` (background) / `prefetch --bulk`, by
   continent, country or `all`, filtered by `--type`, `--min-runways`, `--min-runway-ft`;
-  `amdbgen --continent`, `--min-runways`.
+  `amdbgen --continent`, `--min-runways`; `--from-file` takes a CSV with an `icao`
+  column and keeps its order; `amdbgen list --csv` exports selections; ready-made
+  priority lists in `lists/`.
+- Source order is now Gateway first, then the local X-Plane install (auto-detected,
+  Custom Scenery before Global Airports, indexed once) for airports the Gateway lacks.
 - `amdb-bridge`: patches the GM5 A220 moving map automatically; first-run storage setup (cache on/off, folder, size limit with oldest-
   first pruning; `setup`, `--no-cache`); request logging; CORS preflight for clients
   that send an Authorization header; EPSG:4326 default projection like Navigraph;

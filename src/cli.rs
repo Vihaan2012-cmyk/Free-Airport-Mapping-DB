@@ -31,7 +31,13 @@ enum Cmd {
     /// Validate a generated airport directory (out/<ICAO>).
     Validate { dir: PathBuf },
     /// List the ICAO codes a selection resolves to (country, region, prefix, radius, box, type ...).
-    List(SelectArgs),
+    List {
+        #[command(flatten)]
+        select: SelectArgs,
+        /// Write the selection as a CSV (icao, iata, name, city, country, continent, kind, runways, longest_ft, lat, lon) instead of printing codes; edit it and feed it back with --from-file.
+        #[arg(long, value_name = "FILE")]
+        csv: Option<PathBuf>,
+    },
     /// Show what the index knows about airports (name, IATA, position, elevation, runways, Gateway scenery).
     Info(SelectArgs),
     /// Search the airport index by name, city, IATA or ICAO.
@@ -211,11 +217,7 @@ impl SelectArgs {
     fn explicit(&self) -> Result<Vec<String>> {
         let mut v: Vec<String> = self.icaos.clone();
         if let Some(p) = &self.from_file {
-            let text = std::fs::read_to_string(p).with_context(|| format!("read {}", p.display()))?;
-            for line in text.lines() {
-                let line = line.split('#').next().unwrap_or("");
-                v.extend(line.split(|c: char| c.is_whitespace() || c == ',' || c == ';').filter(|s| !s.is_empty()).map(str::to_string));
-            }
+            v.extend(pipeline::read_icao_file(p)?);
         }
         Ok(v)
     }
@@ -279,7 +281,7 @@ pub struct BuildArgs {
     /// Coordinate output: wgs84 (EPSG:4326) or metres (azimuthal equidistant from ARP).
     #[arg(long, default_value = "wgs84")]
     projection: String,
-    /// X-Plane installation root (Custom Scenery / Global Airports apt.dat are used).
+    /// X-Plane installation root, used for airports the Gateway does not have (auto-detected from the X-Plane installer record when omitted).
     #[arg(long = "xplane-dir")]
     xplane_dir: Option<PathBuf>,
     /// A specific apt.dat file (any size) to read airports from.
@@ -438,7 +440,8 @@ pub fn config(a: &BuildArgs) -> Result<Config> {
         http: Http::new(a.timeout, 250),
         formats,
         projection,
-        xplane_dir: a.xplane_dir.clone(),
+        // Gateway first; a local X-Plane install (given or auto-detected) fills the gaps.
+        xplane_dir: a.xplane_dir.clone().or_else(crate::sources::xplane::local::detect_install),
         aptdat_file: a.aptdat_file.clone(),
         use_gateway: !a.no_gateway,
         osm,
@@ -854,13 +857,42 @@ pub fn run() -> Result<()> {
             println!("{}: {} error(s), {} warning(s)", dir.display(), rep.errors.len(), rep.warnings.len());
             if rep.errors.is_empty() { Ok(()) } else { Err(anyhow!("validation failed")) }
         }
-        Cmd::List(s) => {
+        Cmd::List { select: s, csv } => {
             let cfg = config(&BuildArgs::index_only(s.clone()))?;
             let icaos = s.resolve(&cfg)?;
-            for i in &icaos {
-                println!("{i}");
+            if let Some(path) = csv {
+                let idx = pipeline::load_index(&cfg)?;
+                let mut w = csv::Writer::from_path(&path).with_context(|| format!("write {}", path.display()))?;
+                w.write_record(["icao", "iata", "name", "city", "country", "region", "continent", "kind", "runways", "longest_ft", "lat", "lon"])?;
+                for i in &icaos {
+                    let e = idx.get(i);
+                    let rws = idx.runways.get(i);
+                    let n_rwy = rws.map(|r| r.iter().filter(|x| !x.closed).count()).unwrap_or(0);
+                    let longest = rws.and_then(|r| r.iter().filter(|x| !x.closed).filter_map(|x| x.length_ft).fold(None, |m: Option<f64>, v| Some(m.map_or(v, |m| m.max(v)))));
+                    let s = |o: Option<&String>| o.cloned().unwrap_or_default();
+                    w.write_record([
+                        i.clone(),
+                        s(e.and_then(|e| e.iata.as_ref())),
+                        s(e.and_then(|e| e.name.as_ref())),
+                        s(e.and_then(|e| e.city.as_ref())),
+                        s(e.and_then(|e| e.country.as_ref())),
+                        s(e.and_then(|e| e.region.as_ref())),
+                        s(e.and_then(|e| e.continent.as_ref())),
+                        s(e.and_then(|e| e.kind.as_ref())),
+                        n_rwy.to_string(),
+                        longest.map(|v| format!("{v:.0}")).unwrap_or_default(),
+                        e.map(|e| format!("{:.5}", e.lat)).unwrap_or_default(),
+                        e.map(|e| format!("{:.5}", e.lon)).unwrap_or_default(),
+                    ])?;
+                }
+                w.flush()?;
+                term::file(None, &shown_path(&path), &format!("{} airports, CSV", icaos.len()));
+            } else {
+                for i in &icaos {
+                    println!("{i}");
+                }
+                eprintln!("{} airport(s)", icaos.len());
             }
-            eprintln!("{} airport(s)", icaos.len());
             Ok(())
         }
         Cmd::Info(s) => info_cmd(s),

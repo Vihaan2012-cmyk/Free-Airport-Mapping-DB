@@ -1,0 +1,366 @@
+icao,iata,name,city,country,continent,kind,runways,longest_ft,lat,lon
+CYAV,,Winnipeg / St. Andrews Airport,Winnipeg/Saint Andrews,CA,NA,medium_airport,3,3000,50.05640,-97.03250
+CYAZ,YAZ,Tofino / Long Beach Airport,Tofino,CA,NA,medium_airport,3,5000,49.07983,-125.77558
+CYDN,YDN,Dauphin Barker Airport,Dauphin,CA,NA,medium_airport,3,5000,51.10080,-100.05200
+CYFD,,Brantford Municipal Airport,Brantford,CA,NA,medium_airport,3,5000,43.13140,-80.34250
+CYGD,,Goderich Airport,Goderich,CA,NA,medium_airport,3,5000,43.76690,-81.71060
+CYHU,YHU,Montréal / Saint-Hubert Metropolitan Airport,Montréal,CA,NA,medium_airport,3,7840,45.51750,-73.41690
+CYJN,YJN,St Jean Airport,St Jean,CA,NA,medium_airport,3,4000,45.29440,-73.28110
+CYMJ,YMJ,Moose Jaw Air Vice Marshal C. M. McEwen Airport,Moose Jaw,CA,NA,medium_airport,3,8326,50.33030,-105.55900
+CYOD,YOD,CFB Cold Lake,Cold Lake,CA,NA,medium_airport,3,12600,54.40500,-110.27900
+CYOW,YOW,Ottawa Macdonald-Cartier International Airport,Ottawa,CA,NA,large_airport,3,10000,45.32250,-75.66920
+CYPG,YPG,Portage-la-Prairie / Southport Airport,Portage la Prairie,CA,NA,medium_airport,4,7000,49.90310,-98.27382
+CYPK,,Pitt Meadows Regional Airport,Pitt Meadows,CA,NA,medium_airport,3,5003,49.21488,-122.70929
+CYQS,YQS,St Thomas Municipal Airport,St Thomas,CA,NA,medium_airport,3,5013,42.77000,-81.11080
+CYSN,YCM,Niagara District Airport,Niagara-on-the-Lake,CA,NA,medium_airport,3,5000,43.19160,-79.17169
+CYVR,YVR,Vancouver International Airport,Vancouver,CA,NA,large_airport,3,11500,49.19390,-123.18400
+CYXS,YXS,Prince George (International) Airport,Prince George,CA,NA,medium_airport,3,11450,53.88431,-122.66655
+CYYB,YYB,North Bay Jack Garland Airport,North Bay,CA,NA,medium_airport,3,10000,46.36360,-79.42280
+CYYC,YYC,Calgary International Airport,Calgary,CA,NA,large_airport,3,14000,51.11882,-114.00993
+CYYJ,YYJ,Victoria International Airport,Victoria,CA,NA,large_airport,3,7000,48.64720,-123.42779
+CYYZ,YYZ,Toronto Pearson International Airport,Toronto,CA,NA,large_airport,5,11120,43.67594,-79.62942
+CYZT,YZT,Port Hardy Airport,Port Hardy,CA,NA,medium_airport,3,5000,50.68060,-127.36700
+EBBR,BRU,Brussels Airport,Zaventem,BE,EU,large_airport,3,11936,50.90140,4.48444
+EDAH,HDF,Heringsdorf Airport,Zirchow,DE,EU,medium_airport,3,7562,53.87870,14.15230
+EDDF,FRA,Frankfurt Main Airport,Frankfurt am Main,DE,EU,large_airport,4,13123,50.02671,8.55835
+EDDK,CGN,Cologne Bonn Airport,Köln (Cologne),DE,EU,large_airport,3,12516,50.86590,7.14274
+EDDS,STR,Stuttgart Airport,Stuttgart,DE,EU,large_airport,3,10974,48.68990,9.22196
+EDDV,HAJ,Hannover Airport,Hannover,DE,EU,large_airport,3,12434,52.46110,9.68508
+EDFM,MHG,Mannheim-City Airport,Mannheim,DE,EU,medium_airport,3,3497,49.47306,8.51417
+EDGS,SGE,Siegerland Airport,Burbach,DE,EU,medium_airport,5,5315,50.70770,8.08297
+EFHK,HEL,Helsinki Vantaa Airport,Helsinki (Vantaa),FI,EU,large_airport,3,11483,60.31836,24.96334
+EGDM,,MoD Boscombe Down,"Salisbury, Wiltshire",GB,EU,medium_airport,3,10538,51.15220,-1.74741
+EGDR,,RNAS Culdrose,Helston,GB,EU,medium_airport,3,6006,50.08610,-5.25571
+EGJA,ACI,Alderney Airport,Saint Anne,GG,EU,medium_airport,3,2877,49.70610,-2.21472
+EGKA,ESH,Brighton City Airport,"Brighton, East Sussex",GB,EU,medium_airport,3,3385,50.83560,-0.29722
+EGPB,LSI,Sumburgh Airport,"Lerwick, Shetland",GB,EU,medium_airport,3,4915,59.87890,-1.29556
+EGPR,BRR,Barra Airport,Eoligarry,GB,EU,medium_airport,3,2776,57.02280,-7.44306
+EGPU,TRE,Tiree Airport,"Balemartine, Argyll and Bute",GB,EU,medium_airport,3,4600,56.49920,-6.86917
+EGYD,,RAF Cranwell,"Sleaford, Lincolnshire",GB,EU,medium_airport,4,6831,53.02731,-0.49310
+EGYE,,RAF Barkston Heath,"Grantham, Lincolnshire",GB,EU,medium_airport,3,5722,52.96062,-0.55943
+EHAM,AMS,Amsterdam Airport Schiphol,Amsterdam,NL,EU,large_airport,6,12467,52.30860,4.76389
+EIDW,DUB,Dublin Airport,Dublin,IE,EU,large_airport,3,10203,53.42871,-6.26212
+EKCH,CPH,Copenhagen Kastrup Airport,Copenhagen,DK,EU,large_airport,3,11811,55.61790,12.65600
+EKKA,KRP,Midtjyllands Airport / Air Base Karup,Karup,DK,EU,medium_airport,5,9816,56.29714,9.10431
+EPRZ,RZE,Rzeszów-Jasionka Airport,Jasionka,PL,EU,large_airport,4,10498,50.10979,22.02416
+ESSA,ARN,Stockholm-Arlanda Airport,Stockholm,SE,EU,large_airport,3,10830,59.64849,17.92883
+ETHL,,Laupheim Air Base,Laupheim,DE,EU,medium_airport,3,5400,48.22030,9.91002
+ETHS,,Faßberg Air Base,Faßberg,DE,EU,medium_airport,3,8005,52.91940,10.18583
+ETNW,,Wunstorf Air Base,,DE,EU,medium_airport,3,8199,52.45730,9.42717
+FAAB,ALJ,Alexander Bay Airport,Alexander Bay,ZA,AF,medium_airport,3,6063,-28.57500,16.53330
+FAKD,KXE,P C Pelser Airport,Klerksdorp,ZA,AF,medium_airport,3,4921,-26.87110,26.71800
+FALW,SDB,Langebaanweg Airport,Langebaanweg,ZA,AF,medium_airport,4,7689,-32.96890,18.16030
+FAUP,UTN,Upington Airport,Upington,ZA,AF,medium_airport,3,16076,-28.40025,21.26359
+HE37,,Bilbeis Air Base,Bilbeis,EG,AF,medium_airport,5,11480,30.39490,31.60140
+HECA,CAI,Cairo International Airport,Cairo,EG,AF,large_airport,3,13124,30.11153,31.39669
+HECP,CCE,Capital International Airport,New Cairo,EG,AF,medium_airport,3,11980,30.06465,31.83997
+HKLO,LOK,Lodwar Airport,Lodwar,KE,AF,medium_airport,3,3281,3.12197,35.60870
+KABI,ABI,Abilene Regional Airport,Abilene,US,NA,medium_airport,3,7208,32.41130,-99.68190
+KABQ,ABQ,Albuquerque International Sunport,Albuquerque,US,NA,large_airport,3,13793,35.03998,-106.60892
+KAGC,AGC,Allegheny County Airport,Pittsburgh,US,NA,medium_airport,3,6501,40.35440,-79.93020
+KAIA,AIA,Alliance Municipal Airport,Alliance,US,NA,medium_airport,3,9203,42.05254,-102.80397
+KAPA,APA,Centennial Airport,Denver,US,NA,medium_airport,3,10001,39.57010,-104.84900
+KAPF,APF,Naples Municipal Airport,Naples,US,NA,medium_airport,3,6600,26.15260,-81.77530
+KATL,ATL,Hartsfield Jackson Atlanta International Airport,Atlanta,US,NA,large_airport,5,12390,33.63670,-84.42810
+KAUW,AUW,Wausau Downtown Airport,Wausau,US,NA,medium_airport,3,8000,44.92620,-89.62660
+KAZO,AZO,Kalamazoo/Battle Creek International Airport,Kalamazoo,US,NA,medium_airport,3,6502,42.23210,-85.54964
+KBIH,BIH,Eastern Sierra Regional Airport,Bishop,US,NA,medium_airport,3,7498,37.37310,-118.36400
+KBIL,BIL,Billings Logan International Airport,Billings,US,NA,medium_airport,3,10518,45.80893,-108.54124
+KBJC,BJC,Rocky Mountain Metropolitan Airport,Denver,US,NA,medium_airport,3,9000,39.90880,-105.11700
+KBKE,BKE,Baker City Municipal Airport,Baker City,US,NA,medium_airport,3,5084,44.83730,-117.80900
+KBNA,BNA,Nashville International Airport,Nashville,US,NA,large_airport,4,11030,36.12450,-86.67820
+KBOS,BOS,Boston Logan International Airport,Boston,US,NA,large_airport,6,10083,42.36197,-71.00790
+KBRD,BRD,Brainerd Lakes Regional Airport,Brainerd,US,NA,medium_airport,3,7100,46.40286,-94.12973
+KBTL,BTL,Battle Creek Executive Airport at Kellogg Field,Battle Creek,US,NA,medium_airport,3,10004,42.30730,-85.25150
+KBTR,BTR,Baton Rouge Metropolitan Airport,Baton Rouge,US,NA,medium_airport,3,7500,30.53320,-91.14960
+KBWI,BWI,Baltimore/Washington International Thurgood Marshall Airport,Baltimore,US,NA,large_airport,3,10503,39.17540,-76.66830
+KBZN,BZN,Bozeman Yellowstone International Airport,Bozeman,US,NA,medium_airport,4,8994,45.77885,-111.15371
+KCBM,CBM,Columbus Air Force Base,Columbus,US,NA,medium_airport,3,12004,33.64380,-88.44380
+KCCR,CCR,Buchanan Field,Concord,US,NA,medium_airport,4,5001,37.98970,-122.05700
+KCCY,CCY,Northeast Iowa Regional Airport,Charles City,US,NA,medium_airport,3,4000,43.07260,-92.61080
+KCLE,CLE,Cleveland Hopkins International Airport,Cleveland,US,NA,large_airport,3,9953,41.41170,-81.84980
+KCLT,CLT,Charlotte Douglas International Airport,Charlotte,US,NA,large_airport,3,10000,35.21400,-80.94310
+KCMI,CMI,University of Illinois Willard Airport,Savoy,US,NA,medium_airport,3,8101,40.03982,-88.27625
+KCNM,CNM,Cavern City Air Terminal,Carlsbad,US,NA,medium_airport,4,7854,32.33750,-104.26300
+KCOS,COS,City of Colorado Springs Municipal Airport,Colorado Springs,US,NA,large_airport,3,13500,38.80580,-104.70100
+KCVG,CVG,Cincinnati Northern Kentucky International Airport,Cincinnati / Covington,US,NA,large_airport,4,12001,39.04880,-84.66780
+KCVN,CVN,Clovis Municipal Airport,Clovis,US,NA,medium_airport,3,7200,34.42659,-103.07879
+KDAB,DAB,Daytona Beach International Airport,Daytona Beach,US,NA,medium_airport,3,10500,29.18255,-81.05946
+KDAY,DAY,James M. Cox Dayton International Airport,Dayton,US,NA,medium_airport,3,10901,39.90240,-84.21940
+KDCA,DCA,Ronald Reagan Washington National Airport,Washington,US,NA,large_airport,3,7169,38.85210,-77.03770
+KDEC,DEC,Decatur Airport,Decatur,US,NA,medium_airport,3,8496,39.83460,-88.86570
+KDEN,DEN,Denver International Airport,Denver,US,NA,large_airport,6,16000,39.86003,-104.67379
+KDFW,DFW,Dallas Fort Worth International Airport,Dallas-Fort Worth,US,NA,large_airport,7,13401,32.89680,-97.03800
+KDLF,DLF,Laughlin Air Force Base,Del Rio,US,NA,medium_airport,3,8852,29.35950,-100.77800
+KDPA,DPA,Dupage Airport,Chicago/West Chicago,US,NA,medium_airport,4,7571,41.90780,-88.24860
+KDTW,DTW,Detroit Metropolitan Wayne County Airport,Detroit,US,NA,large_airport,6,12003,42.21377,-83.35379
+KDYS,DYS,Dyess Air Force Base,Abilene,US,NA,medium_airport,3,13500,32.42080,-99.85460
+KEDW,EDW,Edwards Air Force Base,Edwards,US,NA,medium_airport,3,16798,34.91078,-117.88639
+KELM,ELM,Elmira Corning Regional Airport,Elmira/Corning,US,NA,medium_airport,3,8001,42.15990,-76.89160
+KELP,ELP,El Paso International Airport,El Paso,US,NA,large_airport,3,12020,31.80991,-106.37561
+KEND,END,Vance Air Force Base,Enid,US,NA,medium_airport,3,9217,36.33920,-97.91650
+KENW,ENW,Kenosha Regional Airport,Kenosha,US,NA,medium_airport,3,6600,42.59570,-87.92780
+KEVV,EVV,Evansville Regional Airport,Evansville,US,NA,medium_airport,3,8021,38.03700,-87.53240
+KEWR,EWR,Newark Liberty International Airport,Newark,US,NA,large_airport,3,11000,40.68940,-74.17055
+KFAR,FAR,Hector International Airport,Fargo,US,NA,medium_airport,3,9001,46.92070,-96.81580
+KFHU,FHU,Sierra Vista Municipal Airport / Libby Army Air Field,Fort Huachuca / Sierra Vista,US,NA,medium_airport,3,12001,31.58738,-110.34822
+KFSD,FSD,Sioux Falls Regional Airport,Sioux Falls,US,NA,medium_airport,3,9000,43.58546,-96.74115
+KFST,FST,Fort Stockton Pecos County Airport,Fort Stockton,US,NA,medium_airport,5,7508,30.91570,-102.91600
+KFTK,FTK,Godman Army Air Field,Fort Knox,US,NA,medium_airport,3,5184,37.90710,-85.97210
+KFWA,FWA,Fort Wayne International Airport,Fort Wayne,US,NA,medium_airport,3,11981,40.97890,-85.19446
+KGFK,GFK,Grand Forks International Airport,Grand Forks,US,NA,medium_airport,4,7351,47.94930,-97.17610
+KGLD,GLD,Goodland Municipal Airport,Goodland,US,NA,medium_airport,3,5499,39.37070,-101.69975
+KGRR,GRR,Gerald R. Ford International Airport,Grand Rapids,US,NA,large_airport,3,10001,42.88080,-85.52280
+KGSO,GSO,Piedmont Triad International Airport,Greensboro,US,NA,large_airport,3,10001,36.09937,-79.93726
+KGTB,,Wheeler Sack Army Air Field,Fort Drum,US,NA,medium_airport,3,10000,44.05560,-75.71950
+KGTF,GTF,Great Falls International Airport,Great Falls,US,NA,medium_airport,3,10502,47.48200,-111.37100
+KGWO,GWO,Greenwood–Leflore Airport,Greenwood,US,NA,medium_airport,3,6501,33.49502,-90.08820
+KHFD,HFD,Hartford Brainard Airport,Hartford,US,NA,medium_airport,3,4417,41.73670,-72.64940
+KHIO,HIO,Portland Hillsboro Airport,Portland,US,NA,medium_airport,3,6600,45.54040,-122.95000
+KHLN,HLN,Helena Regional Airport,Helena,US,NA,medium_airport,3,9000,46.60680,-111.98300
+KHMN,HMN,Holloman Air Force Base,Alamogordo,US,NA,medium_airport,3,12922,32.85250,-106.10700
+KHOB,HOB,Lea County Regional Airport,Hobbs,US,NA,medium_airport,3,8000,32.68750,-103.21700
+KHOU,HOU,William P. Hobby Airport,Houston,US,NA,large_airport,3,7602,29.64534,-95.27681
+KHRL,HRL,Valley International Airport,Harlingen,US,NA,medium_airport,3,9400,26.22850,-97.65440
+KHUT,HUT,Hutchinson Municipal Airport,Hutchinson,US,NA,medium_airport,3,7003,38.06550,-97.86060
+KHWO,HWO,North Perry Airport,Hollywood,US,NA,medium_airport,4,3463,26.00120,-80.24070
+KHYI,,San Marcos Regional Airport,San Marcos,US,NA,medium_airport,3,6330,29.89270,-97.86300
+KIAD,IAD,Washington Dulles International Airport,Dulles,US,NA,large_airport,4,11500,38.94450,-77.45580
+KIAH,IAH,George Bush Intercontinental Airport,Houston,US,NA,large_airport,5,12001,29.98440,-95.34140
+KICT,ICT,Wichita Dwight D. Eisenhower National Airport,Wichita,US,NA,medium_airport,3,10302,37.65031,-97.42858
+KILG,ILG,Wilmington Airport,Wilmington,US,NA,medium_airport,3,7275,39.67870,-75.60650
+KIND,IND,Indianapolis International Airport,Indianapolis,US,NA,large_airport,3,11200,39.71730,-86.29440
+KISP,ISP,Long Island MacArthur Airport,Islip,US,NA,medium_airport,3,7006,40.79632,-73.10170
+KIWA,AZA,Mesa Gateway Airport,Mesa,US,NA,medium_airport,3,10401,33.30780,-111.65500
+KJFK,JFK,John F. Kennedy International Airport,New York,US,NA,large_airport,4,14511,40.63945,-73.77932
+KLAN,LAN,Capital Region International Airport,Lansing,US,NA,medium_airport,3,8506,42.77758,-84.58572
+KLAS,LAS,Harry Reid International Airport,Las Vegas,US,NA,large_airport,4,14835,36.08336,-115.15182
+KLAX,LAX,Los Angeles International Airport,Los Angeles,US,NA,large_airport,4,12894,33.94250,-118.40800
+KLBB,LBB,Lubbock Preston Smith International Airport,Lubbock,US,NA,medium_airport,3,11500,33.66360,-101.82300
+KLFT,LFT,Lafayette Regional Airport,Lafayette,US,NA,medium_airport,3,8000,30.20530,-91.98760
+KLGB,LGB,Long Beach International Airport,Long Beach,US,NA,large_airport,3,10000,33.81652,-118.14989
+KLIT,LIT,Bill & Hillary Clinton National Airport/Adams Field,Little Rock,US,NA,medium_airport,3,8273,34.72922,-92.22359
+KLNK,LNK,Lincoln Airport,Lincoln,US,NA,medium_airport,3,12901,40.84488,-96.76178
+KLRD,LRD,Laredo International Airport,Laredo,US,NA,medium_airport,3,8743,27.54380,-99.46160
+KLRU,LRU,Las Cruces International Airport,Las Cruces,US,NA,medium_airport,3,7506,32.28940,-106.92200
+KLSE,LSE,La Crosse Regional Airport,La Crosse,US,NA,medium_airport,3,8742,43.87900,-91.25670
+KLTS,LTS,Altus Air Force Base,Altus,US,NA,medium_airport,3,13440,34.66710,-99.26670
+KLUK,LUK,Cincinnati Municipal Airport Lunken Field,Cincinnati,US,NA,medium_airport,3,6101,39.10236,-84.41894
+KLVM,LVM,Mission Field,Livingston,US,NA,medium_airport,3,5701,45.69940,-110.44800
+KLWT,LWT,Lewistown Municipal Airport,Lewistown,US,NA,medium_airport,3,6100,47.04843,-109.46614
+KMAF,MAF,Midland International Air and Space Port,Midland,US,NA,medium_airport,4,9501,31.94250,-102.20200
+KMCI,MCI,Kansas City International Airport,Kansas City,US,NA,large_airport,3,10801,39.30170,-94.71389
+KMCK,MCK,McCook Ben Nelson Regional Airport,McCook,US,NA,medium_airport,3,6450,40.20779,-100.59279
+KMCO,MCO,Orlando International Airport,Orlando,US,NA,large_airport,4,12005,28.42940,-81.30900
+KMDH,MDH,Southern Illinois Airport,Murphysboro,US,NA,medium_airport,3,6506,37.77810,-89.25200
+KMDW,MDW,Chicago Midway International Airport,Chicago,US,NA,large_airport,4,6522,41.78600,-87.75240
+KMEM,MEM,Frederick W. Smith International Airport,Memphis,US,NA,large_airport,4,11120,35.04384,-89.97634
+KMHV,MHV,Mojave Air &  Space Port,Mojave,US,NA,medium_airport,3,12503,35.05639,-118.14534
+KMIA,MIA,Miami International Airport,Miami,US,NA,large_airport,4,13016,25.79601,-80.28975
+KMKE,MKE,General Mitchell International Airport,Milwaukee,US,NA,large_airport,5,9990,42.94720,-87.89660
+KMLB,MLB,Melbourne Orlando International Airport,Melbourne,US,NA,medium_airport,3,10181,28.10201,-80.64109
+KMLI,MLI,Quad City International Airport,Moline,US,NA,medium_airport,3,10002,41.44850,-90.50750
+KMSN,MSN,Dane County Regional Truax Field,Madison,US,NA,medium_airport,3,9006,43.13990,-89.33750
+KMSP,MSP,Minneapolis–Saint Paul International Airport / Wold–Chamberlain Field,Minneapolis,US,NA,large_airport,4,11006,44.88008,-93.22174
+KMUI,MUI,Muir Army Air Field (Fort Indiantown Gap) Airport,Fort Indiantown Gap(Annville),US,NA,medium_airport,4,3981,40.43521,-76.56866
+KMWH,MWH,Grant County International Airport,Moses Lake,US,NA,medium_airport,5,13503,47.20770,-119.32000
+KNEW,NEW,Lakefront Airport,New Orleans,US,NA,medium_airport,3,6879,30.04240,-90.02830
+KNFL,NFL,Fallon Naval Air Station,Fallon,US,NA,medium_airport,3,14001,39.41660,-118.70100
+KNGP,NGP,Naval Air Station Corpus Christi Truax Field,Corpus Christi,US,NA,medium_airport,4,8001,27.69260,-97.29110
+KNHK,NHK,Patuxent River Naval Air Station (Trapnell Field),Patuxent River,US,NA,medium_airport,3,11799,38.28600,-76.41180
+KNID,,China Lake Naws (Armitage Field) Airport,China Lake,US,NA,medium_airport,3,11199,35.68540,-117.69200
+KNKT,,Cherry Point MCAS / Cunningham Field/,Cherry Point,US,NA,medium_airport,4,8978,34.90090,-76.88070
+KNKX,NKX,Miramar Marine Corps Air Station - Mitscher Field,San Diego,US,NA,medium_airport,6,12000,32.86840,-117.14300
+KNMM,,Naval Air Station Meridian / McCain Field,Lauderdale,US,NA,medium_airport,3,8003,32.55310,-88.55406
+KNPA,NPA,Naval Air Station Pensacola Forrest Sherman Field,Pensacola,US,NA,medium_airport,3,8001,30.35270,-87.31860
+KNQI,NQI,Kingsville Naval Air Station,Kingsville,US,NA,medium_airport,4,8000,27.50720,-97.80970
+KNQX,NQX,Naval Air Station Key West/Boca Chica Field,Key West,US,NA,medium_airport,3,10001,24.57580,-81.68890
+KNTU,NTU,Oceana Naval Air Station,Virginia Beach,US,NA,medium_airport,4,12001,36.82070,-76.03350
+KNYL,YUM,Yuma International Airport / Marine Corps Air Station Yuma,Yuma,US,NA,medium_airport,3,13300,32.65094,-114.60938
+KOAK,OAK,Oakland San Francisco Bay Airport,Oakland,US,NA,large_airport,4,10520,37.72008,-122.22118
+KOKC,OKC,OKC Will Rogers World Airport,Oklahoma City,US,NA,large_airport,4,9802,35.39339,-97.59825
+KOMA,OMA,Eppley Airfield,Omaha,US,NA,large_airport,3,9502,41.30320,-95.89410
+KOPF,OPF,Miami-Opa Locka Executive Airport,Miami,US,NA,medium_airport,3,8002,25.90700,-80.27840
+KORD,ORD,Chicago O'Hare International Airport,Chicago,US,NA,large_airport,8,13000,41.97860,-87.90480
+KOSH,OSH,Wittman Regional Airport,Oshkosh,US,NA,medium_airport,4,8002,43.98440,-88.55700
+KOSU,OSU,The Ohio State University Airport - Don Scott Field,Columbus,US,NA,medium_airport,3,5004,40.07980,-83.07300
+KPDK,PDK,DeKalb Peachtree Airport,Atlanta,US,NA,medium_airport,4,6001,33.87633,-84.30213
+KPDX,PDX,Portland International Airport,Portland,US,NA,large_airport,3,11000,45.58870,-122.59800
+KPGD,PGD,Punta Gorda Airport,Punta Gorda,US,NA,medium_airport,3,7193,26.92020,-81.99050
+KPHL,PHL,Philadelphia International Airport,Philadelphia,US,NA,large_airport,4,12000,39.87190,-75.24110
+KPHX,PHX,Phoenix Sky Harbor International Airport,Phoenix,US,NA,large_airport,3,11489,33.43530,-112.00590
+KPIT,PIT,Pittsburgh International Airport,Pittsburgh,US,NA,large_airport,4,11500,40.49150,-80.23290
+KPMD,PMD,Palmdale Regional Airport / USAF Plant 42 Airport,Palmdale,US,NA,medium_airport,3,12002,34.62940,-118.08500
+KPOU,POU,Dutchess County Airport,Poughkeepsie,US,NA,medium_airport,3,5001,41.62660,-73.88420
+KPRC,PRC,Prescott Regional Airport - Ernest A. Love Field,Prescott,US,NA,medium_airport,3,7619,34.65350,-112.41988
+KPRX,PRX,Cox Field,Paris,US,NA,medium_airport,3,6002,33.63660,-95.45080
+KPSC,PSC,Tri Cities Airport,Pasco,US,NA,medium_airport,3,7707,46.26470,-119.11900
+KPTK,PTK,Oakland County International Airport,Pontiac,US,NA,medium_airport,3,6521,42.66550,-83.42010
+KPUB,PUB,Pueblo Memorial Airport,Pueblo,US,NA,medium_airport,3,10498,38.28910,-104.49700
+KRDU,RDU,Raleigh-Durham International Airport,Raleigh/Durham,US,NA,large_airport,3,10000,35.87866,-78.78730
+KRNO,RNO,Reno Tahoe International Airport,Reno,US,NA,large_airport,3,11001,39.49910,-119.76800
+KROC,ROC,Frederick Douglass Greater Rochester International Airport,Rochester,US,NA,large_airport,3,8001,43.11890,-77.67240
+KRVS,RVS,Tulsa Riverside Airport,Tulsa,US,NA,medium_airport,3,5101,36.03960,-95.98460
+KSAC,SAC,Sacramento Executive Airport,Sacramento,US,NA,medium_airport,3,5503,38.51250,-121.49300
+KSAF,SAF,Santa Fe Municipal Airport,Santa Fe,US,NA,medium_airport,3,8366,35.61710,-106.08900
+KSAT,SAT,San Antonio International Airport,San Antonio,US,NA,large_airport,3,8505,29.53370,-98.46980
+KSBA,SBA,Santa Barbara Municipal Airport,Santa Barbara,US,NA,medium_airport,3,6037,34.42620,-119.84000
+KSBN,SBN,South Bend International Airport,South Bend,US,NA,medium_airport,3,8412,41.70830,-86.31692
+KSDF,SDF,Louisville Muhammad Ali International Airport,Louisville,US,NA,large_airport,3,11887,38.17060,-85.73508
+KSEA,SEA,Seattle–Tacoma International Airport,Seattle,US,NA,large_airport,3,11901,47.44794,-122.31028
+KSFB,SFB,Orlando Sanford International Airport,Orlando,US,NA,large_airport,4,11002,28.77428,-81.23463
+KSFF,SFF,Felts Field,Spokane,US,NA,medium_airport,3,6000,47.68290,-117.32192
+KSFO,SFO,San Francisco International Airport,San Francisco,US,NA,large_airport,4,11870,37.61981,-122.37482
+KSGJ,UST,Northeast Florida Regional Airport,St Augustine,US,NA,medium_airport,6,12000,29.95920,-81.33980
+KSJT,SJT,San Angelo Regional Mathis Field,San Angelo,US,NA,medium_airport,3,8054,31.35770,-100.49600
+KSLC,SLC,Salt Lake City International Airport,Salt Lake City,US,NA,large_airport,4,12002,40.78886,-111.97987
+KSLN,SLN,Salina Municipal Airport,Salina,US,NA,medium_airport,4,12301,38.79100,-97.65220
+KSPI,SPI,Abraham Lincoln Capital Airport,Springfield,US,NA,medium_airport,3,8001,39.84410,-89.67790
+KSPS,SPS,Wichita Falls Municipal Airport / Sheppard Air Force Base,Wichita Falls,US,NA,medium_airport,4,13100,33.98880,-98.49190
+KSTL,STL,St. Louis Lambert International Airport,St Louis,US,NA,large_airport,4,11020,38.74870,-90.37000
+KSTP,STP,Saint Paul Downtown Holman Field,Saint Paul,US,NA,medium_airport,3,6491,44.93479,-93.06004
+KSVC,SVC,Grant County Airport,Silver City,US,NA,medium_airport,4,6803,32.63670,-108.15474
+KTCS,TCS,Truth or Consequences Municipal Airport,Truth or Consequences,US,NA,medium_airport,5,7202,33.23690,-107.27200
+KTMB,TMB,Miami Executive Airport,Miami,US,NA,medium_airport,3,6000,25.64790,-80.43280
+KTOP,TOP,Philip Billard Municipal Airport,Topeka,US,NA,medium_airport,3,5099,39.06990,-95.62261
+KTPA,TPA,Tampa International Airport,Tampa,US,NA,large_airport,3,11002,27.97550,-82.53320
+KTUL,TUL,Tulsa International Airport,Tulsa,US,NA,large_airport,3,10000,36.19708,-95.88622
+KTYR,TYR,Tyler Pounds Regional Airport,Tyler,US,NA,medium_airport,3,8334,32.35410,-95.40240
+KUIN,UIN,Quincy Regional Airport Baldwin Field,Quincy,US,NA,medium_airport,3,7098,39.94270,-91.19460
+KVGT,VGT,North Las Vegas Airport,Las Vegas,US,NA,medium_airport,3,5005,36.20907,-115.19398
+KVQQ,VQQ,Cecil Airport,Jacksonville,US,NA,medium_airport,4,12504,30.21870,-81.87670
+KVRB,VRB,Vero Beach Regional Airport,Vero Beach,US,NA,medium_airport,3,7314,27.65560,-80.41790
+KWRL,WRL,Worland Municipal Airport,Worland,US,NA,medium_airport,3,7000,43.96570,-107.95100
+KX51,,Miami Homestead General Aviation Airport,Homestead,US,NA,medium_airport,3,4000,25.49920,-80.55430
+KYNG,YNG,Youngstown Warren Regional Airport,Youngstown/Warren,US,NA,medium_airport,3,9003,41.26070,-80.67910
+LEBL,BCN,Josep Tarradellas Barcelona-El Prat Airport,Barcelona,ES,EU,large_airport,3,11000,41.29710,2.07846
+LECU,,Madrid-Cuatro Vientos Airport,Madrid,ES,EU,medium_airport,3,4921,40.37070,-3.78514
+LEMD,MAD,Adolfo Suárez Madrid–Barajas Airport,Madrid,ES,EU,large_airport,4,14271,40.49341,-3.57225
+LFAV,,Valenciennes-Denain Airfield,Prouvy,FR,EU,medium_airport,3,5604,50.32782,3.46106
+LFJR,ANE,Angers Marcé airport,Angers,FR,EU,medium_airport,3,5906,47.56030,-0.31222
+LFLC,CFE,Clermont-Ferrand Auvergne airport,Clermont-Ferrand,FR,EU,large_airport,3,9885,45.78670,3.16917
+LFLU,VAF,Valence-Chabeuil Airport,"Chabeuil, Drôme",FR,EU,medium_airport,3,6890,44.92160,4.96990
+LFMD,CEQ,Cannes Mandelieu Airport,Cannes,FR,EU,medium_airport,3,5052,43.54800,6.95518
+LFMY,,Salon-de-Provence (BA 701) Air Base,Salon,FR,EU,medium_airport,4,6565,43.60640,5.10925
+LFOB,BVA,Beauvais-Tillé airport,Beauvais,FR,EU,large_airport,3,7972,49.45440,2.11278
+LFOI,,Abbeville-Buigny Baie de Somme Airfield,Buigny-Saint-Maclou,FR,EU,medium_airport,3,4101,50.14350,1.83189
+LFPB,LBG,Paris-Le Bourget International Airport,Paris,FR,EU,large_airport,3,9843,48.96228,2.43654
+LFPG,CDG,Charles de Gaulle International Airport,"Paris (Roissy-en-France, Val-d'Oise)",FR,EU,large_airport,5,13829,49.00896,2.55412
+LFPO,ORY,Paris-Orly Airport,"Paris (Orly, Val-de-Marne)",FR,EU,large_airport,3,11975,48.72950,2.35896
+LFQB,,Troyes-Barberey Airport,"Barberey-Saint-Sulpice, Aube",FR,EU,medium_airport,3,5413,48.32210,4.01670
+LFRL,,Lanvéoc-Poulmic Air Base,Lanvéoc/Poulmic,FR,EU,medium_airport,3,3635,48.28170,-4.44502
+LFRU,MXN,Morlaix-Ploujean Airport,Morlaix/Ploujean,FR,EU,medium_airport,3,5305,48.60320,-3.81578
+LIRF,FCO,Rome–Fiumicino Leonardo da Vinci International Airport,Rome,IT,EU,large_airport,3,12801,41.80453,12.25200
+LIRV,,Viterbo Airport,Viterbo,IT,EU,medium_airport,3,4265,42.43530,12.06136
+LKKU,UHE,Kunovice Airport,Uherské Hradiště,CZ,EU,medium_airport,3,6562,49.02940,17.43970
+LLBG,TLV,Ben Gurion International Airport,Tel Aviv,IL,AS,large_airport,3,13327,32.01140,34.88670
+LLEK,,Tel Nof Air Base,Rehovot,IL,AS,medium_airport,3,7880,31.83950,34.82180
+LLNV,VTM,Nevatim Air Base,Beersheba,IL,AS,medium_airport,4,10991,31.20830,35.01230
+LLRD,,Ramat David Air Base,Haifa,IL,AS,medium_airport,3,8550,32.66510,35.17950
+LOWG,GRZ,Graz Airport,Feldkirchen bei Graz,AT,EU,large_airport,3,9842,46.99110,15.43960
+LOWL,LNZ,Linz-Hörsching Airport,Linz,AT,EU,large_airport,3,9843,48.23536,14.18813
+LOXN,,Wiener Neustadt West Airport,Wiener Neustadt,AT,EU,medium_airport,6,5314,47.83693,16.22184
+LSZB,BRN,Bern Airport,Bern,CH,EU,medium_airport,5,5676,46.91274,7.49882
+LSZG,,Grenchen Airfield,Grenchen,CH,EU,medium_airport,4,3281,47.18160,7.41719
+LSZH,ZRH,Zürich Airport,Zurich,CH,EU,large_airport,4,12139,47.45806,8.54806
+LTAI,AYT,Antalya International Airport,Antalya,TR,AS,large_airport,3,11155,36.89870,30.80050
+LTFM,IST,İstanbul Airport,Istanbul,TR,EU,large_airport,6,13451,41.27487,28.73214
+LZTT,TAT,Poprad-Tatry Airport,Poprad,SK,EU,medium_airport,3,8530,49.07099,20.24139
+MMCU,CUU,General Roberto Fierro Villalobos International Airport,Chihuahua,MX,NA,large_airport,3,8530,28.70265,-105.96376
+MMSM,NLU,Felipe Ángeles International Airport,Mexico City,MX,NA,large_airport,3,14764,19.74382,-99.01507
+MMTM,TAM,General Francisco Javier Mina International Airport,Ciudad Madero,MX,NA,medium_airport,3,8366,22.29262,-97.86706
+NZAR,AMZ,Ardmore Airport,Manurewa,NZ,OC,medium_airport,3,4630,-37.02970,174.97301
+NZCH,CHC,Christchurch International Airport,Christchurch,NZ,OC,large_airport,3,10787,-43.48903,172.53206
+NZGS,GIS,Gisborne Airport,Gisborne,NZ,OC,medium_airport,5,4298,-38.66330,177.97800
+NZHN,HLZ,Hamilton International Airport,Hamilton,NZ,OC,medium_airport,5,6755,-37.86696,175.33195
+NZKK,KKE,Kerikeri Airport,Kerikeri,NZ,OC,medium_airport,4,3904,-35.25915,173.91332
+NZLX,ALR,Alexandra Aerodrome,Alexandra,NZ,OC,medium_airport,3,3937,-45.21050,169.37111
+NZMS,MRO,Hood Airport,Masterton,NZ,OC,medium_airport,5,4101,-40.97463,175.63454
+NZNP,NPL,New Plymouth Airport,New Plymouth,NZ,OC,medium_airport,3,4298,-39.00860,174.17900
+NZNS,NSN,Nelson Airport,Nelson,NZ,OC,medium_airport,4,4420,-41.29671,173.22432
+NZNV,IVC,Invercargill Airport,Invercargill,NZ,OC,medium_airport,4,7251,-46.41240,168.31300
+NZOH,OHA,RNZAF Base Ohakea,,NZ,OC,medium_airport,3,8028,-40.20600,175.38800
+NZOU,OAM,Oamaru Airport,,NZ,OC,medium_airport,3,4210,-44.97000,171.08200
+NZPM,PMR,Palmerston North Airport,Palmerston North,NZ,OC,medium_airport,3,6240,-40.32060,175.61700
+NZPP,PPQ,Paraparaumu Airport,,NZ,OC,medium_airport,5,4429,-40.90470,174.98900
+NZRO,ROT,Rotorua Regional Airport,Rotorua,NZ,OC,medium_airport,3,5321,-38.10920,176.31700
+NZTG,TRG,Tauranga Airport,Tauranga,NZ,OC,medium_airport,5,5988,-37.67190,176.19600
+NZTU,TIU,Timaru Airport,,NZ,OC,medium_airport,3,4200,-44.30280,171.22501
+NZWB,BHE,Woodbourne Airport,Blenheim,NZ,OC,medium_airport,3,4675,-41.51830,173.87000
+NZWK,WHK,Whakatāne Airport,Whakatāne,NZ,OC,medium_airport,3,4200,-37.92222,176.91696
+NZWP,,RNZAF Base Auckland-Whenuapai,,NZ,OC,medium_airport,3,6665,-36.78780,174.63001
+NZWU,WAG,Wanganui Airport,Wanganui,NZ,OC,medium_airport,6,4521,-39.96347,175.02444
+OEJN,JED,King Abdulaziz International Airport,Jeddah,SA,AS,large_airport,3,13123,21.68024,39.15744
+OKKK,KWI,Kuwait International Airport,Kuwait City,KW,AS,large_airport,3,15026,29.22449,47.96981
+OLBA,BEY,Beirut Rafic Hariri International Airport,Beirut,LB,AS,large_airport,3,12467,33.81983,35.48744
+OMAM,DHF,Al Dhafra Air Base,,AE,AS,medium_airport,3,12012,24.24820,54.54770
+ORAA,IQA,Al Asad Air Base,Hīt,IQ,AS,medium_airport,3,13124,33.78560,42.44120
+PAAQ,PAQ,"Warren ""Bud"" Woods Palmer Municipal Airport",Palmer,US,NA,medium_airport,3,6006,61.59490,-149.08901
+PABE,BET,Bethel Airport,Bethel,US,NA,medium_airport,3,6400,60.77980,-161.83800
+PABI,BIG,Allen Army Airfield,Delta Junction Ft Greely,US,NA,medium_airport,3,9000,63.99450,-145.72200
+PADQ,ADQ,Kodiak Airport,Kodiak,US,NA,medium_airport,3,7534,57.75000,-152.49400
+PAEN,ENA,Kenai Municipal Airport,Kenai,US,NA,medium_airport,3,7855,60.57095,-151.24517
+PAFA,FAI,Fairbanks International Airport,Fairbanks,US,NA,medium_airport,4,11800,64.81510,-147.85600
+PAIL,ILI,Iliamna Airport,Iliamna,US,NA,medium_airport,4,5086,59.75440,-154.91100
+PAKN,AKN,King Salmon Airport,King Salmon,US,NA,medium_airport,3,8901,58.67784,-156.65196
+PAMR,MRI,Merrill Field,Anchorage,US,NA,medium_airport,3,4000,61.21279,-149.84399
+PANC,ANC,Ted Stevens Anchorage International Airport,Anchorage,US,NA,large_airport,3,12400,61.17900,-149.99256
+PANN,ENN,Nenana Municipal Airport,Nenana,US,NA,medium_airport,3,4600,64.54877,-149.07452
+PHJR,JRF,Kalaeloa Airport,Kapolei,US,OC,medium_airport,3,8365,21.30740,-158.07001
+PHNL,HNL,Daniel K. Inouye International Airport,"Honolulu, Oahu",US,OC,large_airport,6,12360,21.31839,-157.92567
+RCAY,,Gangshan Air Force Base,Kaohsiung (Gangshan),TW,AS,medium_airport,3,8019,22.78250,120.26300
+RCKU,CYI,Chiayi Airport,Shuishang,TW,AS,medium_airport,3,10007,23.46258,120.39054
+RJSH,HHE,JMSDF Hachinohe Air Base / Hachinohe Airport,Hachinohe,JP,AS,medium_airport,3,7380,40.55118,141.46543
+RJTT,HND,Tokyo Haneda International Airport,Tokyo,JP,AS,large_airport,4,11024,35.54968,139.78696
+RKSI,ICN,Incheon International Airport,Seoul,KR,AS,large_airport,4,13123,37.46910,126.45100
+RKSW,SWU,Suwon Airport,Suwon,KR,AS,medium_airport,3,9000,37.23940,127.00700
+SAWP,PMQ,Perito Moreno Jalil Hamer Airport,Perito Moreno,AR,SA,medium_airport,3,5577,-46.53790,-70.97870
+SAZB,BHI,Comandante Espora Airport,Bahía Blanca,AR,SA,medium_airport,3,7907,-38.72500,-62.16930
+SAZH,OYO,Tres Arroyos Airport,Tres Arroyos,AR,SA,medium_airport,3,3934,-38.38690,-60.32970
+SAZO,NEC,Necochea Airport,Necochea,AR,SA,medium_airport,3,4921,-38.49075,-58.81634
+SBNT,,Natal Air Force Base,Natal,BR,SA,medium_airport,3,8530,-5.91142,-35.24770
+SBYS,,Campo Fontenelle,Pirassununga,BR,SA,medium_airport,3,6923,-21.98469,-47.34121
+SCCI,PUQ,President Carlos Ibáñez International Airport,Punta Arenas,CL,SA,large_airport,3,9154,-53.00260,-70.85460
+UNOO,OMS,Omsk Central Airport,Omsk,RU,AS,large_airport,3,9435,54.96312,73.31242
+UUEE,SVO,Sheremetyevo International Airport,Moscow,RU,EU,large_airport,3,12139,55.97686,37.41121
+UWGG,GOJ,Nizhny Novgorod / Strigino International Airport,Nizhny Novgorod,RU,EU,large_airport,4,9843,56.22735,43.78515
+UWOR,OSW,Orsk Airport,Orsk,RU,AS,medium_airport,4,9514,51.07250,58.59560
+VHHH,HKG,Hong Kong International Airport,Hong Kong,HK,AS,large_airport,3,12467,22.31184,113.91486
+VIDP,DEL,Indira Gandhi International Airport,New Delhi,IN,AS,large_airport,4,14534,28.55563,77.09519
+VTBL,KKM,Khok Kathiam Airport,Lop Buri,TH,AS,medium_airport,3,7252,14.87462,100.66340
+VTBS,BKK,Suvarnabhumi Airport,Bangkok,TH,AS,large_airport,3,13123,13.68110,100.74700
+WIII,CGK,Soekarno-Hatta International Airport,Jakarta,ID,AS,large_airport,3,12008,-6.12557,106.65600
+WMKK,KUL,Kuala Lumpur International Airport,Sepang,MY,AS,large_airport,3,13530,2.74558,101.71000
+WSAT,TGA,Tengah Air Base,Western Water Catchment,SG,AS,medium_airport,3,8999,1.38756,103.70829
+YBLA,BLN,Benalla Airport,Benalla,AU,OC,medium_airport,4,3422,-36.55190,146.00700
+YBOK,OKY,Oakey Army Aviation Centre,,AU,OC,medium_airport,5,5410,-27.40926,151.73673
+YGEL,GET,Geraldton Airport,Moonyoonooka,AU,OC,medium_airport,3,7838,-28.79610,114.70700
+YKII,KNS,King Island Airport,,AU,OC,medium_airport,3,5198,-39.87750,143.87801
+YKSC,KGC,Kingscote Airport,,AU,OC,medium_airport,3,4600,-35.71390,137.52100
+YLTV,TGN,Latrobe Valley Airport,Morwell,AU,OC,medium_airport,3,4692,-38.21100,146.47082
+YMLT,LST,Launceston Airport,Launceston (Western Junction),AU,OC,medium_airport,3,6499,-41.54494,147.21078
+YMMB,MBW,Melbourne Moorabbin Airport,Melbourne,AU,OC,medium_airport,5,4380,-37.97776,145.09980
+YMTG,MGB,Mount Gambier Airport,Mount Gambier,AU,OC,medium_airport,3,5394,-37.74438,140.78056
+YPEA,,RAAF Base Pearce,Bullsbrook,AU,OC,medium_airport,3,8002,-31.66780,116.01500
+YPIR,PPI,Port Pirie Airport,,AU,OC,medium_airport,3,3507,-33.23890,137.99499
+YPJT,JAD,Perth Jandakot Airport,Perth,AU,OC,medium_airport,3,4948,-32.09750,115.88100
+YPLC,PLO,Port Lincoln Airport,Port Lincoln,AU,OC,medium_airport,3,4918,-34.60530,135.88000
+YREN,RMK,Renmark Airport,,AU,OC,medium_airport,3,5709,-34.19640,140.67400
+YSBK,BWU,Sydney Bankstown Airport,Sydney,AU,OC,medium_airport,3,4644,-33.92362,150.99079
+YSSY,SYD,Sydney Kingsford Smith International Airport,Sydney (Mascot),AU,OC,large_airport,3,12999,-33.94610,151.17700
+YSTW,TMW,Tamworth Airport,Tamworth,AU,OC,medium_airport,4,7218,-31.07790,150.84548
+YSWH,SWH,Swan Hill Airport,,AU,OC,medium_airport,3,4905,-35.37580,143.53300
+YTEM,TEM,Temora Airport,Temora,AU,OC,medium_airport,3,6454,-34.42140,147.51199
+YWSL,SXE,West Sale Airport,Sale,AU,OC,medium_airport,3,5010,-38.09083,146.96534
+ZBAA,PEK,Beijing Capital International Airport,Beijing,CN,AS,large_airport,3,12467,40.07735,116.59670
+ZBAD,PKX,Beijing Daxing International Airport,Beijing,CN,AS,large_airport,4,12467,39.50129,116.41397
+ZGGG,CAN,Guangzhou Baiyun International Airport,Guangzhou (Huadu),CN,AS,large_airport,5,12467,23.39240,113.29900
+ZGSZ,SZX,Shenzhen Bao'an International Airport,Shenzhen,CN,AS,large_airport,3,12467,22.63947,113.80326
+ZHHH,WUH,Wuhan Tianhe International Airport,Wuhan (Huangpi),CN,AS,large_airport,3,11811,30.77480,114.21372
+ZLLL,LHW,Lanzhou Zhongchuan International Airport,Lanzhou (Yongdeng),CN,AS,large_airport,3,13123,36.51520,103.62000
+ZLXY,XIY,Xi'an Xianyang International Airport,Xi'an,CN,AS,large_airport,4,12467,34.44221,108.76238
+ZSPD,PVG,Shanghai Pudong International Airport,Shanghai (Pudong),CN,AS,large_airport,5,13123,31.14340,121.80500
+ZUCK,CKG,Chongqing Jiangbei International Airport,Chongqing,CN,AS,large_airport,4,12467,29.71225,106.65189
+ZULS,LXA,Lhasa Gonggar International Airport,Shannan (Gonggar),CN,AS,large_airport,3,13123,29.29800,90.91195
+ZUTF,TFU,Chengdu Tianfu International Airport,Chengdu (Jianyang),CN,AS,large_airport,3,13123,30.31252,104.44128
+ZWWW,URC,Ürümqi Tianshan International Airport,Ürümqi,CN,AS,large_airport,3,11811,43.91358,87.47937

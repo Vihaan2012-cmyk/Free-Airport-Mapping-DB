@@ -41,7 +41,7 @@ All free, no keys, nothing to install.
 | OpenStreetMap (map API, tiled) | Terminals, buildings, towers, fences, roads, water, construction, deicing | ODbL |
 | OurAirports | Worldwide airport index | public domain |
 | FAA NASR (US only, automatic) | Declared distances, stopways, arresting systems, LAHSO | public domain |
-| Local X-Plane install (optional) | Your own scenery instead of the Gateway: `--xplane-dir`, `--aptdat` | yours |
+| Local X-Plane install (auto-detected) | Fallback for airports the Gateway does not have: Custom Scenery first, then Global Airports; `--xplane-dir` to point elsewhere, `--aptdat` for one file | yours |
 | `overrides/<ICAO>/<layer>.geojson` | Anything to add or replace per airport (hotspots, blind spots) | yours |
 
 The two index files are cached under `%LOCALAPPDATA%\amdbgen\index` and refreshed
@@ -84,6 +84,15 @@ Positional ICAO codes, `--from-file list.txt`, `--simbrief NAME`, or any mix of:
 
 `amdbgen list ...` shows what a selection resolves to, `amdbgen info LFPG` what the
 index knows (runways, Gateway scenery), `amdbgen search heathrow` finds codes.
+`amdbgen list ... --csv file.csv` exports the selection with names, kinds and runway
+counts; edit it in a spreadsheet and feed it back with `--from-file file.csv` (both
+tools take a CSV with an `icao` column or a plain list, and build in file order, so
+the file is a priority list). Ready-made lists are in `lists/`:
+`airports-to-build.csv` (2,572 airports: every large airport, every large/medium one
+named International or with 2+ runways, at least one per country, per Indian state
+and per US state; India first, then the USA) and `three-plus-runways.csv` (365).
+`serve --from-file lists\airports-to-build.csv` serves and builds the list at once.
+`tools/make_build_list.py` regenerates it from `all-large-medium.csv`.
 
 ### Batch control
 

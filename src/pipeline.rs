@@ -109,15 +109,12 @@ struct Prepared {
     country: Option<String>,
 }
 
+/// Source order: an explicit apt.dat file, then the Scenery Gateway (newest community
+/// scenery), then the local X-Plane install for airports the Gateway does not have or
+/// cannot deliver.
 fn fetch_xplane(cfg: &Config, icao: &str, known_scenery: Option<Option<i64>>) -> Result<Option<SourceAirport>> {
     if let Some(f) = &cfg.aptdat_file {
         if let Some(block) = xplane::local::extract_airport_block(f, icao)? {
-            return Ok(Some(xplane::aptdat::parse(&block, Some(icao))?));
-        }
-    }
-    if let Some(root) = &cfg.xplane_dir {
-        if let Some((path, block)) = xplane::local::find_in_root(root, icao)? {
-            log::info!("{icao}: apt.dat from {}", path.display());
             return Ok(Some(xplane::aptdat::parse(&block, Some(icao))?));
         }
     }
@@ -128,7 +125,48 @@ fn fetch_xplane(cfg: &Config, icao: &str, known_scenery: Option<Option<i64>>) ->
             Err(e) => log::warn!("{icao}: gateway failed: {e:#}"),
         }
     }
+    if let Some(root) = &cfg.xplane_dir {
+        match xplane::local::lookup(root, icao) {
+            Ok(Some((path, block))) => {
+                term::step(Some(icao), &format!("Not on the Gateway; using the local X-Plane copy from {}", path.display()));
+                return Ok(Some(xplane::aptdat::parse(&block, Some(icao))?));
+            }
+            Ok(None) => log::info!("{icao}: not in the local X-Plane install either"),
+            Err(e) => log::warn!("{icao}: local X-Plane lookup failed: {e:#}"),
+        }
+    }
     Ok(None)
+}
+
+/// ICAO codes from a text or CSV file. Plain text: codes separated by whitespace,
+/// commas or semicolons, `#` starts a comment. CSV (first line has a header with an
+/// `icao`, `ident` or `idarpt` column): that column only, so a list exported with
+/// `amdbgen list --csv` can be edited in a spreadsheet and fed straight back.
+pub fn read_icao_file(path: &std::path::Path) -> Result<Vec<String>> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let text = text.trim_start_matches('\u{feff}');
+    let first = text.lines().next().unwrap_or("").to_ascii_lowercase();
+    let is_icao = |s: &str| (3..=4).contains(&s.len()) && s.chars().all(|c| c.is_ascii_alphanumeric()) && s.chars().any(|c| c.is_ascii_digit() || c.is_ascii_uppercase() || c.is_ascii_lowercase());
+    let header_cols: Vec<&str> = first.split(',').map(str::trim).collect();
+    if let Some(col) = header_cols.iter().position(|h| matches!(h.trim_matches('"'), "icao" | "ident" | "idarpt" | "icao_code")) {
+        let mut rdr = csv::ReaderBuilder::new().flexible(true).has_headers(true).from_reader(text.as_bytes());
+        let mut out = Vec::new();
+        for rec in rdr.records() {
+            let rec = rec?;
+            if let Some(v) = rec.get(col).map(str::trim) {
+                if is_icao(v) {
+                    out.push(v.to_uppercase());
+                }
+            }
+        }
+        return Ok(out);
+    }
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("");
+        out.extend(line.split(|c: char| c.is_whitespace() || c == ',' || c == ';').map(str::trim).filter(|s| is_icao(s)).map(str::to_uppercase));
+    }
+    Ok(out)
 }
 
 fn prepare(cfg: &Config, idx: &AirportIndex, icao: &str) -> Result<Prepared> {
@@ -579,9 +617,10 @@ pub fn select(cfg: &Config, explicit: &[String], f: &Filter) -> Result<Vec<Strin
         let v: Vec<String> = v.into_iter().skip(f.offset).take(f.limit.unwrap_or(usize::MAX)).collect();
         out.extend(v);
     }
-    out.retain(|i| !f.excluded(i));
-    out.sort();
-    out.dedup();
+    // Explicit codes keep their order (a list file is a priority order); index results
+    // come sorted after them; duplicates keep their first position.
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|i| !f.excluded(i) && seen.insert(i.clone()));
     Ok(out)
 }
 

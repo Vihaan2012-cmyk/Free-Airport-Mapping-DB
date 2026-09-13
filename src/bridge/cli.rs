@@ -31,7 +31,7 @@ struct DataArgs {
     /// Keep nothing on disk for this run (overrides the saved setting).
     #[arg(long = "no-cache")]
     no_cache: bool,
-    /// Optional X-Plane install to read apt.dat from instead of the Gateway.
+    /// X-Plane install used for airports the Gateway does not have (auto-detected when omitted).
     #[arg(long = "xplane-dir")]
     xplane_dir: Option<PathBuf>,
     /// Optional X-Plane earth_aptmeta.dat index.
@@ -61,9 +61,25 @@ struct BulkArgs {
     /// Bulk: rebuild airports that already exist instead of skipping them.
     #[arg(long = "rebuild")]
     rebuild: bool,
+    /// Bulk: ICAO codes from a text file or a CSV with an `icao` column (e.g. from `amdbgen list --csv`).
+    #[arg(long = "from-file", value_name = "FILE")]
+    from_file: Option<PathBuf>,
 }
 
 impl BulkArgs {
+    fn active(&self) -> bool {
+        self.bulk.is_some() || self.from_file.is_some()
+    }
+
+    fn label(&self) -> String {
+        match (&self.bulk, &self.from_file) {
+            (Some(b), Some(f)) => format!("{b} + {}", f.display()),
+            (Some(b), None) => b.clone(),
+            (None, Some(f)) => f.display().to_string(),
+            (None, None) => String::new(),
+        }
+    }
+
     fn filter(&self) -> Result<crate::pipeline::Filter> {
         let mut f = crate::pipeline::Filter { min_runways: Some(self.min_runways), min_runway_ft: self.min_runway_ft, ..Default::default() };
         f.kinds = self.kinds.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
@@ -86,8 +102,11 @@ impl BulkArgs {
     fn resolve(&self, cfg: &Config) -> Result<Vec<String>> {
         let f = self.filter()?;
         let mut out = Vec::new();
+        if let Some(p) = &self.from_file {
+            out.extend(crate::pipeline::read_icao_file(p)?);
+        }
         if f.all {
-            out = crate::pipeline::select(cfg, &[], &crate::pipeline::Filter { all: true, continents: Vec::new(), countries: Vec::new(), ..f.clone() })?;
+            out.extend(crate::pipeline::select(cfg, &[], &crate::pipeline::Filter { all: true, continents: Vec::new(), countries: Vec::new(), ..f.clone() })?);
         } else {
             if !f.continents.is_empty() {
                 out.extend(crate::pipeline::select(cfg, &[], &crate::pipeline::Filter { countries: Vec::new(), ..f.clone() })?);
@@ -96,8 +115,9 @@ impl BulkArgs {
                 out.extend(crate::pipeline::select(cfg, &[], &crate::pipeline::Filter { continents: Vec::new(), ..f.clone() })?);
             }
         }
-        out.sort();
-        out.dedup();
+        // File order is the build order (priority), so dedupe without sorting.
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|i| seen.insert(i.clone()));
         Ok(out)
     }
 }
@@ -222,7 +242,7 @@ fn config(d: &DataArgs, s: &Settings) -> Config {
         http: Http::new(300, 250),
         formats: Formats { geojson: true, pbf: false },
         projection: Projection::Wgs84,
-        xplane_dir: d.xplane_dir.clone(),
+        xplane_dir: d.xplane_dir.clone().or_else(crate::sources::xplane::local::detect_install),
         aptdat_file: None,
         use_gateway: true,
         osm: OsmMode::OsmApi,
@@ -306,12 +326,12 @@ fn serve(a: ServeArgs) -> Result<()> {
     }
     crate::term::info(&format!("Storage: {}", if let Some(o) = &a.data.out { format!("airports in {} (kept, no limit)", o.display()) } else { settings.describe() }));
     let store = make_store(&a.data, &settings)?;
-    if a.bulk.bulk.is_some() {
+    if a.bulk.active() {
         // Resolve now (errors surface before the server starts), build in the background
         // once the server is up so aircraft are served meanwhile.
         let cfg = config(&a.data, &settings);
         let icaos = a.bulk.resolve(&cfg)?;
-        let label = a.bulk.bulk.clone().unwrap_or_default();
+        let label = a.bulk.label();
         let rebuild = a.bulk.rebuild;
         if let Some(limit) = settings.limit_bytes() {
             let need = icaos.len() as u64 * 4 * 1024 * 1024;
@@ -350,7 +370,8 @@ pub fn run() -> Result<()> {
             let settings = effective_settings(&data)?;
             let cfg = config(&data, &settings);
             let mut icaos = icaos;
-            if let Some(label) = bulk.bulk.clone() {
+            if bulk.active() {
+                let label = bulk.label();
                 let sel = bulk.resolve(&cfg)?;
                 run_bulk(&cfg, &sel, bulk.rebuild, &label);
                 if icaos.is_empty() && simbrief.is_none() {
