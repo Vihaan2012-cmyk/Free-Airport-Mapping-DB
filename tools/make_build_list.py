@@ -13,7 +13,8 @@ Included:
   * at least one per Indian state / union territory and per US state.
 Order: India first, then the United States, then everyone else by continent and country.
 
-Usage: python tools/make_build_list.py all.csv airports-to-build.csv
+Usage: python tools/make_build_list.py all.csv airports-to-build.csv [--all]
+  --all keeps every airport of the input (all large and medium), only reordered by priority.
 """
 import csv, re, sys
 from collections import defaultdict
@@ -63,6 +64,10 @@ def priority(r):
         return 1
     return 2
 
+# --all: every large and medium airport, still in priority order (India, USA, rest).
+if "--all" in sys.argv:
+    for r in rows:
+        why[r["icao"]].add(r["kind"].replace("_airport", ""))
 out = [by_icao[i] for i in why]
 out.sort(key=lambda r: (priority(r), r["continent"], r["country"], -r["runways"], r["icao"]))
 with open(dst, "w", newline="", encoding="utf-8") as fh:

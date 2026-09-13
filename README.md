@@ -88,9 +88,10 @@ index knows (runways, Gateway scenery), `amdbgen search heathrow` finds codes.
 counts; edit it in a spreadsheet and feed it back with `--from-file file.csv` (both
 tools take a CSV with an `icao` column or a plain list, and build in file order, so
 the file is a priority list). Ready-made lists are in `lists/`:
-`airports-to-build.csv` (2,572 airports: every large airport, every large/medium one
-named International or with 2+ runways, at least one per country, per Indian state
-and per US state; India first, then the USA) and `three-plus-runways.csv` (365).
+`airports-to-build.csv` (every large and medium airport, 5,075, in priority order:
+India first, then the USA, then the rest by continent) and `three-plus-runways.csv`
+(365). `tools/make_build_list.py` without `--all` makes the shorter 2,572-airport list
+(large, International-named or 2+ runway airports plus one per country and state).
 `serve --from-file lists\airports-to-build.csv` serves and builds the list at once.
 `tools/make_build_list.py` regenerates it from `all-large-medium.csv`.
 
@@ -130,7 +131,8 @@ each airport's source downloads once it is built, and every run ends with
 `bulk-status.csv` next to the airports folder (built / failed / skipped per airport,
 sources used, feature count, error). `amdbgen build --continent europe --min-runways 2`
 does the same outside the bridge. Source order per airport: Scenery Gateway, then the
-local X-Plane install, then OpenStreetMap alone, then OurAirports runway strips.
+local X-Plane install, then OpenStreetMap alone; with no runway anywhere the airport
+is written with only its reference point and the status CSV says so.
 
 The first `serve` asks three questions: keep generated airports and downloads on
 disk, where, and up to how much space (oldest airports are dropped first). Answers
