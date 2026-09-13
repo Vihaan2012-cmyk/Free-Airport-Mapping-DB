@@ -414,8 +414,9 @@ pub fn config(a: &BuildArgs) -> Result<Config> {
     let osm = match a.osm.to_ascii_lowercase().as_str() {
         "osmapi" | "api" | "osm" => OsmMode::OsmApi,
         "overpass" => OsmMode::Overpass,
+        "both" | "mixed" => OsmMode::Both,
         "off" | "none" => OsmMode::Off,
-        other => return Err(anyhow!("unknown --osm mode {other}")),
+        other => return Err(anyhow!("unknown --osm mode {other} (osmapi|overpass|both|off)")),
     };
     let faa = match a.faa.to_ascii_lowercase().as_str() {
         "auto" => FaaMode::Auto,
@@ -452,6 +453,7 @@ pub fn config(a: &BuildArgs) -> Result<Config> {
         overpass_mirrors: mirrors,
         aptmeta: ix.aptmeta.clone(),
         ourairports: !ix.no_ourairports,
+        faa_amdb: !matches!(faa, FaaMode::Off),
         faa,
         overrides_dir: a.overrides.clone(),
         radius_km: a.radius_km,

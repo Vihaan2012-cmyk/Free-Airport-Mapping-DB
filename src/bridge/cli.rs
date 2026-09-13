@@ -67,9 +67,46 @@ struct BulkArgs {
     /// Bulk: delete each airport's source downloads (OSM extract, Gateway scenery) as soon as it is built.
     #[arg(long = "discard-downloads")]
     discard_downloads: bool,
-    /// Bulk: airports fetched from OpenStreetMap at the same time (the main speed lever).
-    #[arg(long = "jobs", short = 'j', default_value_t = 6, value_name = "N")]
+    /// Bulk: airports fetched from OpenStreetMap at the same time (with `--osm both`, half go to each service).
+    #[arg(long = "jobs", short = 'j', default_value_t = 4, value_name = "N")]
     jobs: usize,
+    /// Bulk: delete every generated airport, cached download and the old status file before starting.
+    #[arg(long = "fresh")]
+    fresh: bool,
+    /// Bulk: OpenStreetMap source: both (alternate map API and Overpass, each the other's fallback), osmapi, or overpass.
+    #[arg(long = "osm", default_value = "both", value_name = "MODE")]
+    osm: String,
+}
+
+fn osm_mode(s: &str) -> Result<OsmMode> {
+    Ok(match s.to_ascii_lowercase().as_str() {
+        "both" | "mixed" => OsmMode::Both,
+        "overpass" => OsmMode::Overpass,
+        "osmapi" | "api" | "osm" => OsmMode::OsmApi,
+        other => return Err(anyhow!("--osm must be both, osmapi or overpass, not {other}")),
+    })
+}
+
+/// Wipe the generated airports and downloads before a fresh bulk run.
+fn wipe_cache(cfg: &Config) {
+    let mut removed = 0usize;
+    if let Ok(rd) = std::fs::read_dir(&cfg.out) {
+        for e in rd.flatten() {
+            let p = e.path();
+            let ok = if p.is_dir() { std::fs::remove_dir_all(&p).is_ok() } else { std::fs::remove_file(&p).is_ok() };
+            if ok {
+                removed += 1;
+            }
+        }
+    }
+    if let Some(dl) = cfg.cache.root() {
+        let _ = std::fs::remove_dir_all(dl);
+        let _ = std::fs::create_dir_all(dl);
+    }
+    if let Some(parent) = cfg.out.parent() {
+        let _ = std::fs::remove_file(parent.join("bulk-status.csv"));
+    }
+    crate::term::warn(&format!("--fresh: removed {removed} entries from {} and emptied the download cache", cfg.out.display()));
 }
 
 /// Remove cached downloads belonging to these airports (files named `<ICAO>.*` or `<ICAO>_*`).
@@ -345,6 +382,7 @@ fn config(d: &DataArgs, s: &Settings) -> Config {
         layers: crate::model::ALL_LAYERS.to_vec(),
         index_cache: Cache::for_index(false),
         osm_parallel: 2,
+        faa_amdb: true,
     }
 }
 
@@ -420,6 +458,10 @@ fn serve(a: ServeArgs) -> Result<()> {
         // once the server is up so aircraft are served meanwhile.
         let mut cfg = config(&a.data, &settings);
         cfg.osm_parallel = a.bulk.jobs.max(1);
+        cfg.osm = osm_mode(&a.bulk.osm)?;
+        if a.bulk.fresh {
+            wipe_cache(&cfg);
+        }
         let icaos = a.bulk.resolve(&cfg)?;
         let label = a.bulk.label();
         let rebuild = a.bulk.rebuild;
@@ -461,6 +503,12 @@ pub fn run() -> Result<()> {
             let settings = effective_settings(&data)?;
             let mut cfg = config(&data, &settings);
             cfg.osm_parallel = bulk.jobs.max(1);
+            if bulk.active() {
+                cfg.osm = osm_mode(&bulk.osm)?;
+            }
+            if bulk.fresh && bulk.active() {
+                wipe_cache(&cfg);
+            }
             let mut icaos = icaos;
             if bulk.active() {
                 let label = bulk.label();

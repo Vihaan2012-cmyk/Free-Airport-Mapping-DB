@@ -246,6 +246,8 @@ pub mod source {
     pub const OURAIRPORTS: &str = "ourairports";
     pub const APTMETA: &str = "aptmeta";
     pub const FAA_NASR: &str = "faa_nasr";
+    /// FAA open airport-mapping layers (hotspots and DO-272 pavement, US only).
+    pub const FAA_AMDB: &str = "faa_amdb";
     pub const DERIVED: &str = "derived";
     pub const OVERRIDE: &str = "override";
 }

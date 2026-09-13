@@ -28,6 +28,10 @@ pub enum OsmMode {
     OsmApi,
     /// Overpass only.
     Overpass,
+    /// Alternate: even airports of a batch go to the map API first, odd ones to
+    /// Overpass first, each with the other as fallback. Twice the throughput and
+    /// neither service carries the whole load.
+    Both,
     Off,
 }
 
@@ -63,6 +67,9 @@ pub struct Config {
     /// Airports fetched from OpenStreetMap concurrently (2 for one-off builds, more
     /// for bulk runs; OSM's policy is fine with a few parallel map calls).
     pub osm_parallel: usize,
+    /// Use the FAA's open airport-mapping layers for US airports (hotspots, and
+    /// pavement when no scenery exists).
+    pub faa_amdb: bool,
 }
 
 #[derive(Debug, Default)]
@@ -208,6 +215,11 @@ pub fn read_icao_file(path: &std::path::Path) -> Result<Vec<String>> {
     Ok(out)
 }
 
+/// The airport's country from whatever source already knows it.
+fn country_hint(src: &SourceAirport, entry: &Option<crate::sources::index::IndexEntry>) -> Option<String> {
+    src.header.country.clone().or_else(|| entry.as_ref().and_then(|e| e.country.clone()))
+}
+
 fn prepare(cfg: &Config, idx: &AirportIndex, icao: &str) -> Result<Prepared> {
     let icao = icao.to_uppercase();
     let mut src = SourceAirport::new(&icao);
@@ -226,6 +238,22 @@ fn prepare(cfg: &Config, idx: &AirportIndex, icao: &str) -> Result<Prepared> {
         src = merged;
     } else {
         term::warn(&format!("[{icao}] No X-Plane scenery on the Gateway; runways and taxiways will come from OpenStreetMap"));
+    }
+    // FAA airport mapping (US only): hotspots always, pavement and buildings only when
+    // no scenery was found, so real scenery is never duplicated. Never fatal.
+    if cfg.faa_amdb && crate::sources::faa_amdb::covers(&icao, country_hint(&src, &entry).as_deref()) {
+        let no_scenery = src.pavements.is_empty() && src.runways.is_empty();
+        let no_windsock = !src.point_structures.iter().any(|p| p.kind == crate::model::codes::pntsttyp::WINDSOCK);
+        match crate::sources::faa_amdb::fetch(&cfg.http, &cfg.cache, &icao, no_scenery, no_windsock) {
+            Ok(extra) => {
+                let (h, p) = (extra.areas.len(), extra.pavements.len());
+                if h + p + extra.buildings.len() + extra.point_structures.len() > 0 {
+                    term::info(&format!("[{icao}] FAA airport mapping: {h} hotspot(s){}", if p > 0 { format!(", {p} pavement polygons (no scenery available)") } else { String::new() }));
+                    src.absorb(extra);
+                }
+            }
+            Err(e) => log::info!("{icao}: FAA airport mapping unavailable: {e:#}"),
+        }
     }
     if src.header.arp.is_none() && src.runways.is_empty() {
         // Last resort: ask the Gateway for the position.
@@ -473,17 +501,32 @@ pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
             let results: Vec<(String, Result<Store>, f64)> = std::thread::scope(|sc| {
                 let handles: Vec<_> = group
                     .iter()
-                    .map(|p| {
+                    .enumerate()
+                    .map(|(k, p)| {
                         sc.spawn(move || {
                             let t0 = std::time::Instant::now();
-                            let via_api = matches!(cfg.osm, OsmMode::OsmApi);
-                            let result = if via_api {
-                                osm::osmapi::fetch(&cfg.http, &cfg.cache, &p.icao, p.bbox).or_else(|e| {
+                            let api_first = match cfg.osm {
+                                OsmMode::OsmApi => true,
+                                OsmMode::Overpass => false,
+                                OsmMode::Both => k % 2 == 0,
+                                OsmMode::Off => true,
+                            };
+                            // Each airport of a batch starts on a different Overpass
+                            // server (its regional instance first, if it has one), so
+                            // the load spreads instead of queueing on one endpoint.
+                            let eps = osm::overpass::endpoints_for(p.country.as_deref(), k, &cfg.overpass_mirrors);
+                            let via_api = || osm::osmapi::fetch(&cfg.http, &cfg.cache, &p.icao, p.bbox);
+                            let via_overpass = || osm::overpass::fetch(&cfg.http, &cfg.cache, &eps, &p.icao, p.bbox);
+                            let result = if api_first {
+                                via_api().or_else(|e| {
                                     log::warn!("{}: OSM API failed ({e:#}); falling back to Overpass", p.icao);
-                                    osm::overpass::fetch(&cfg.http, &cfg.cache, &cfg.overpass_mirrors, &p.icao, p.bbox)
+                                    via_overpass()
                                 })
                             } else {
-                                osm::overpass::fetch(&cfg.http, &cfg.cache, &cfg.overpass_mirrors, &p.icao, p.bbox)
+                                via_overpass().or_else(|e| {
+                                    log::warn!("{}: Overpass failed ({e:#}); falling back to the OSM API", p.icao);
+                                    via_api()
+                                })
                             };
                             (p.icao.clone(), result, t0.elapsed().as_secs_f64())
                         })

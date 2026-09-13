@@ -166,7 +166,8 @@ pub fn build(ctx: &mut Ctx) {
                     deicing_polys.push((p.clone(), a.name.clone()));
                     ctx.push(AmdbFeature::new(layer, p).with("idapron", opt(a.name.clone())).with("deicegrp", serde_json::Value::Null).with("surftype", opt(a.surface)).with("status", status::OPEN).with("source", a.source));
                 }
-                Layer::Hotspot => ctx.push(AmdbFeature::new(layer, p).with("idhot", opt(a.name.clone())).with("name", opt(a.name.clone())).with("description", serde_json::Value::Null).with("source", a.source)),
+                // `reference` carries the published caution text where a source has one.
+                Layer::Hotspot => ctx.push(AmdbFeature::new(layer, p).with("idhot", opt(a.name.clone())).with("name", opt(a.name.clone())).with("description", opt(a.reference.clone())).with("source", a.source)),
                 _ => ctx.push(AmdbFeature::new(layer, p).with("idrwy", opt(a.reference.clone())).with("idthr", serde_json::Value::Null).with("surftype", opt(a.surface)).with("length", serde_json::Value::Null).with("width", serde_json::Value::Null).with("source", a.source)),
             }
         }

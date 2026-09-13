@@ -8,11 +8,46 @@ use anyhow::{anyhow, Context, Result};
 use geo_types::Coord;
 use serde_json::Value;
 
+/// Overpass endpoints in the order they are tried. Measured 2026-09-13 with an
+/// airport-sized query: VK Maps answered a 30 MB Toronto query in 4.7 s and its wiki
+/// entry states no request limits; kumi took 11 s; the FOSSGIS main instance and
+/// private.coffee were both returning 504 under load, so they sit last as fallbacks.
+/// (Regional instances such as overpass.osm.ch hold one country only and are omitted.)
 pub const DEFAULT_MIRRORS: &[&str] = &[
-    "https://overpass-api.de/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
     "https://overpass.private.coffee/api/interpreter",
 ];
+
+/// Instances that hold one region only. Verified 2026-09-13 to return the same element
+/// counts as the worldwide pool inside their own area (Zurich 4,529; Heathrow 1,730),
+/// so an airport in these countries can be served by its local instance, which keeps
+/// that much load off the shared servers.
+const REGIONAL: &[(&str, &[&str])] = &[
+    ("https://overpass.osm.ch/api/interpreter", &["CH", "LI"]),
+    ("https://overpass.atownsend.org.uk/api/", &["GB", "IE", "IM", "JE", "GG"]),
+];
+
+/// The endpoint order to try for one airport: its regional instance first when there
+/// is one, then the worldwide pool rotated by `seed`, so airports fetched at the same
+/// moment start on different servers instead of queueing on one.
+pub fn endpoints_for(country: Option<&str>, seed: usize, configured: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(c) = country {
+        for (url, countries) in REGIONAL {
+            if countries.iter().any(|x| x.eq_ignore_ascii_case(c)) {
+                out.push((*url).to_string());
+            }
+        }
+    }
+    if !configured.is_empty() {
+        for i in 0..configured.len() {
+            out.push(configured[(seed + i) % configured.len()].clone());
+        }
+    }
+    out
+}
 
 /// Build the Overpass QL query for a bbox (south, west, north, east).
 pub fn query(bbox: (f64, f64, f64, f64)) -> String {
