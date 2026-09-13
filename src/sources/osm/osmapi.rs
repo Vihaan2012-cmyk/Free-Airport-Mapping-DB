@@ -129,7 +129,32 @@ fn split(b: BBox) -> [BBox; 4] {
 /// At most this many map calls in flight process-wide, however many airports are being
 /// fetched at once: the API throttles on bandwidth and tells us when we overdo it.
 const MAX_GLOBAL_CALLS: usize = 6;
+/// After a throttle response, only this many calls at once...
+const THROTTLED_CALLS: usize = 2;
+/// ...for this long.
+const THROTTLE_HOLD: std::time::Duration = std::time::Duration::from_secs(120);
+/// Extra seconds on top of the wait the server asks for.
+const WAIT_BUFFER_SECS: u64 = 2;
 static GATE: (Mutex<usize>, std::sync::Condvar) = (Mutex::new(0), std::sync::Condvar::new());
+static THROTTLED_UNTIL: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+fn current_limit() -> usize {
+    let until = THROTTLED_UNTIL.lock().unwrap();
+    match *until {
+        Some(t) if std::time::Instant::now() < t => THROTTLED_CALLS,
+        _ => MAX_GLOBAL_CALLS,
+    }
+}
+
+/// Note a throttle response: drop to THROTTLED_CALLS for THROTTLE_HOLD.
+fn note_throttled() {
+    let mut until = THROTTLED_UNTIL.lock().unwrap();
+    let was = until.map_or(false, |t| std::time::Instant::now() < t);
+    *until = Some(std::time::Instant::now() + THROTTLE_HOLD);
+    if !was {
+        crate::term::warn(&format!("OpenStreetMap rate limit hit: down to {THROTTLED_CALLS} parallel fetches for {} min", THROTTLE_HOLD.as_secs() / 60));
+    }
+}
 
 struct Slot;
 
@@ -137,8 +162,9 @@ impl Slot {
     fn acquire() -> Slot {
         let (m, cv) = &GATE;
         let mut n = m.lock().unwrap();
-        while *n >= MAX_GLOBAL_CALLS {
-            n = cv.wait(n).unwrap();
+        while *n >= current_limit() {
+            // Re-check every second so a throttle window that expired lets more through.
+            n = cv.wait_timeout(n, std::time::Duration::from_secs(1)).unwrap().0;
         }
         *n += 1;
         Slot
@@ -177,8 +203,9 @@ fn fetch_tile(http: &Http, b: BBox) -> Result<Option<String>> {
                 }
                 let throttled = msg.contains("HTTP 509") || msg.contains("HTTP 429") || msg.contains("too much data");
                 if throttled && attempt < 9 && waited < 600 {
-                    let secs = retry_after_secs(&msg).unwrap_or(15).clamp(2, 120) + 1;
-                    log::info!("OSM API throttled us; waiting {secs}s as asked");
+                    note_throttled();
+                    let secs = retry_after_secs(&msg).unwrap_or(15).clamp(2, 120) + WAIT_BUFFER_SECS;
+                    log::info!("OSM API throttled us; waiting {secs}s (asked + {WAIT_BUFFER_SECS}s buffer)");
                     std::thread::sleep(std::time::Duration::from_secs(secs));
                     waited += secs;
                     continue;
