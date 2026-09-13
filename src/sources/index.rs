@@ -26,6 +26,8 @@ pub struct IndexEntry {
     pub transition_alt_ft: Option<f64>,
     pub transition_level: Option<String>,
     pub kind: Option<String>,
+    /// OurAirports continent code: AF, AN, AS, EU, NA, OC, SA.
+    pub continent: Option<String>,
     /// Recommended Gateway scenery id, when the Gateway list has been loaded.
     pub gateway_scenery: Option<i64>,
     pub source: &'static str,
@@ -123,6 +125,7 @@ impl AirportIndex {
             col("ident"), col("type"), col("name"), col("latitude_deg"), col("longitude_deg"), col("elevation_ft"),
             col("iso_country"), col("iso_region"), col("municipality"), col("gps_code"), col("iata_code"), col("icao_code"),
         );
+        let c_continent = col("continent");
         for rec in rdr.records() {
             let rec = rec?;
             let g = |c: Option<usize>| c.and_then(|i| rec.get(i)).map(|s| s.trim()).filter(|s| !s.is_empty());
@@ -143,12 +146,14 @@ impl AirportIndex {
                 lon,
                 elevation_ft: g(c_elev).and_then(|s| s.parse().ok()),
                 kind: g(c_type).map(str::to_string),
+                continent: g(c_continent).map(str::to_uppercase),
                 source: crate::model::codes::source::OURAIRPORTS,
                 ..Default::default()
             };
             // OurAirports has names/IATA that aptmeta lacks: merge into an existing entry.
             match self.by_icao.get_mut(&e.icao) {
                 Some(existing) => {
+                    if existing.continent.is_none() { existing.continent = e.continent; }
                     if existing.name.is_none() { existing.name = e.name; }
                     if existing.iata.is_none() { existing.iata = e.iata; }
                     if existing.country.is_none() { existing.country = e.country; }

@@ -104,12 +104,20 @@ the aircraft code is untouched: only the address changes.
 
 ```
 amdb-bridge serve                           # redirect + serve; keep it running while the sim is up
+amdb-bridge serve --bulk asia               # ...and build a whole region in the background
 amdb-bridge prefetch EDDF KJFK              # or: --simbrief YOUR_NAME
+amdb-bridge prefetch --bulk DE,AT,CH --min-runways 2 --type large,medium
 amdb-bridge status                          # redirect / certificate / storage / detected aircraft
 amdb-bridge setup                           # change the storage answers given at first run
 amdb-bridge cleanup                         # remove redirect + certificate
 amdb-bridge autostart                       # start with the sim (exe.xml)
 ```
+
+`--bulk` takes continents (africa, antarctica, asia, europe, north-america, oceania,
+south-america), ISO countries, or `all`, comma separated; `--type` (default
+large,medium), `--min-runways` (default 1) and `--min-runway-ft` narrow it down, and
+airports already built are skipped unless `--rebuild`. `amdbgen build --continent
+europe --min-runways 2` does the same outside the bridge.
 
 The first `serve` asks three questions: keep generated airports and downloads on
 disk, where, and up to how much space (oldest airports are dropped first). Answers

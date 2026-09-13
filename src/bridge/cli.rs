@@ -42,10 +42,103 @@ struct DataArgs {
     cache: Option<PathBuf>,
 }
 
+/// Build whole regions ahead of time.
+#[derive(Args, Clone, Default)]
+struct BulkArgs {
+    /// Areas to build: continents (asia, europe, north-america, south-america, africa, oceania),
+    /// ISO countries (DE, IN), or `all`; comma separated. `serve` does this in the background.
+    #[arg(long, value_name = "AREAS")]
+    bulk: Option<String>,
+    /// Bulk filter: airport kinds, comma separated (large, medium, small).
+    #[arg(long = "type", default_value = "large,medium", value_name = "KINDS")]
+    kinds: String,
+    /// Bulk filter: at least this many open runways.
+    #[arg(long = "min-runways", default_value_t = 1, value_name = "N")]
+    min_runways: usize,
+    /// Bulk filter: longest runway at least this long (feet).
+    #[arg(long = "min-runway-ft", value_name = "FEET")]
+    min_runway_ft: Option<f64>,
+    /// Bulk: rebuild airports that already exist instead of skipping them.
+    #[arg(long = "rebuild")]
+    rebuild: bool,
+}
+
+impl BulkArgs {
+    fn filter(&self) -> Result<crate::pipeline::Filter> {
+        let mut f = crate::pipeline::Filter { min_runways: Some(self.min_runways), min_runway_ft: self.min_runway_ft, ..Default::default() };
+        f.kinds = self.kinds.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
+        for area in self.bulk.as_deref().unwrap_or("").split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            if area.eq_ignore_ascii_case("all") || area.eq_ignore_ascii_case("world") {
+                f.all = true;
+            } else if let Some(code) = crate::pipeline::continent_code(area) {
+                f.continents.push(code.to_string());
+            } else if area.len() == 2 && area.chars().all(|c| c.is_ascii_alphabetic()) {
+                f.countries.push(area.to_uppercase());
+            } else {
+                return Err(anyhow!("--bulk: unknown area {area:?} (continent name, 2-letter country code, or all)"));
+            }
+        }
+        // Continents and countries are a union, not an intersection.
+        Ok(f)
+    }
+
+    /// The ICAO codes the bulk selection resolves to.
+    fn resolve(&self, cfg: &Config) -> Result<Vec<String>> {
+        let f = self.filter()?;
+        let mut out = Vec::new();
+        if f.all {
+            out = crate::pipeline::select(cfg, &[], &crate::pipeline::Filter { all: true, continents: Vec::new(), countries: Vec::new(), ..f.clone() })?;
+        } else {
+            if !f.continents.is_empty() {
+                out.extend(crate::pipeline::select(cfg, &[], &crate::pipeline::Filter { countries: Vec::new(), ..f.clone() })?);
+            }
+            if !f.countries.is_empty() {
+                out.extend(crate::pipeline::select(cfg, &[], &crate::pipeline::Filter { continents: Vec::new(), ..f.clone() })?);
+            }
+        }
+        out.sort();
+        out.dedup();
+        Ok(out)
+    }
+}
+
+/// Build a list of airports in chunks, skipping what already exists unless asked to rebuild.
+fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str) {
+    let todo: Vec<String> = icaos.iter().filter(|i| rebuild || !cfg.out.join(i).join("manifest.json").is_file()).cloned().collect();
+    let skipped = icaos.len() - todo.len();
+    crate::term::start(&format!("Bulk build {label}: {} airport(s){}", todo.len(), if skipped > 0 { format!(", {skipped} already built") } else { String::new() }));
+    if todo.is_empty() {
+        return;
+    }
+    let t0 = std::time::Instant::now();
+    let (mut built, mut failed) = (0usize, 0usize);
+    const CHUNK: usize = 6;
+    for (n, part) in todo.chunks(CHUNK).enumerate() {
+        match crate::pipeline::run(cfg, part) {
+            Ok(s) => {
+                built += s.built.len();
+                failed += s.failed.len();
+            }
+            Err(e) => {
+                crate::term::warn(&format!("bulk chunk failed: {e:#}"));
+                failed += part.len();
+            }
+        }
+        let done = (n + 1) * CHUNK;
+        let done = done.min(todo.len());
+        let per = t0.elapsed().as_secs_f64() / done as f64;
+        let eta = per * (todo.len() - done) as f64;
+        crate::term::info(&format!("Bulk {label}: {done}/{} done ({built} built, {failed} failed), about {} left", todo.len(), crate::term::human_secs(eta)));
+    }
+    crate::term::success(&format!("Bulk build {label} finished: {built} built, {failed} failed, {skipped} skipped, in {}", crate::term::human_secs(t0.elapsed().as_secs_f64())));
+}
+
 #[derive(Args, Clone)]
 struct ServeArgs {
     #[command(flatten)]
     data: DataArgs,
+    #[command(flatten)]
+    bulk: BulkArgs,
     /// HTTPS port for the redirected Navigraph host (the aircraft use 443).
     #[arg(long = "https-port", default_value_t = super::DEFAULT_HTTPS_PORT)]
     https_port: u16,
@@ -68,6 +161,8 @@ enum Cmd {
     Prefetch {
         #[command(flatten)]
         data: DataArgs,
+        #[command(flatten)]
+        bulk: BulkArgs,
         icaos: Vec<String>,
         /// Also the airports of your latest SimBrief OFP (username or pilot id).
         #[arg(long)]
@@ -211,6 +306,25 @@ fn serve(a: ServeArgs) -> Result<()> {
     }
     crate::term::info(&format!("Storage: {}", if let Some(o) = &a.data.out { format!("airports in {} (kept, no limit)", o.display()) } else { settings.describe() }));
     let store = make_store(&a.data, &settings)?;
+    if a.bulk.bulk.is_some() {
+        // Resolve now (errors surface before the server starts), build in the background
+        // once the server is up so aircraft are served meanwhile.
+        let cfg = config(&a.data, &settings);
+        let icaos = a.bulk.resolve(&cfg)?;
+        let label = a.bulk.bulk.clone().unwrap_or_default();
+        let rebuild = a.bulk.rebuild;
+        if let Some(limit) = settings.limit_bytes() {
+            let need = icaos.len() as u64 * 4 * 1024 * 1024;
+            if a.data.out.is_none() && need > limit {
+                crate::term::warn(&format!("Bulk {label} needs roughly {} but the cache limit is {} MB: older airports will be pruned as it goes (raise it with `setup`)", crate::term::human_bytes(need), settings.limit_mb));
+            }
+        }
+        crate::term::info(&format!("Bulk {label}: {} airport(s) selected; building in the background", icaos.len()));
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            run_bulk(&cfg, &icaos, rebuild, &label);
+        });
+    }
     let result = server::serve(store, server::Listen { http_port: if a.http_port == 0 { None } else { Some(a.http_port) }, https });
     if !a.no_hosts {
         let _ = hosts::remove();
@@ -232,17 +346,24 @@ pub fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Serve(a) => serve(a),
-        Cmd::Prefetch { data, icaos, simbrief } => {
+        Cmd::Prefetch { data, bulk, icaos, simbrief } => {
             let settings = effective_settings(&data)?;
             let cfg = config(&data, &settings);
             let mut icaos = icaos;
+            if let Some(label) = bulk.bulk.clone() {
+                let sel = bulk.resolve(&cfg)?;
+                run_bulk(&cfg, &sel, bulk.rebuild, &label);
+                if icaos.is_empty() && simbrief.is_none() {
+                    return Ok(());
+                }
+            }
             if let Some(user) = &simbrief {
                 let ofp = crate::sources::simbrief::fetch(&cfg.http, user)?;
                 crate::term::info(&format!("SimBrief {}: {}", ofp.flight.clone().unwrap_or_else(|| user.clone()), ofp.icaos().join(" → ")));
                 icaos.extend(ofp.icaos());
             }
             if icaos.is_empty() {
-                return Err(anyhow!("give ICAO codes or --simbrief to prefetch"));
+                return Err(anyhow!("give ICAO codes, --simbrief or --bulk AREA to prefetch"));
             }
             let store = make_store(&data, &settings)?;
             for i in icaos {

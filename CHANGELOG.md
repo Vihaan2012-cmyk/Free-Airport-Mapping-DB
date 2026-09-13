@@ -17,7 +17,10 @@
   IATA, name search, exclusions and paging; `--skip-existing`, `--retry-failed`,
   `--dry-run`, `--clean`, `--chunk`, `--fail-fast`, `--zip`, `--report`; `list`, `info`,
   `search`, `view`, `stats`, `zip`, `clean`, `layers`, `codes`.
-- `amdb-bridge`: first-run storage setup (cache on/off, folder, size limit with oldest-
+- Bulk builds: `amdb-bridge serve --bulk asia` (background) / `prefetch --bulk`, by
+  continent, country or `all`, filtered by `--type`, `--min-runways`, `--min-runway-ft`;
+  `amdbgen --continent`, `--min-runways`.
+- `amdb-bridge`: patches the GM5 A220 moving map automatically; first-run storage setup (cache on/off, folder, size limit with oldest-
   first pruning; `setup`, `--no-cache`); request logging; CORS preflight for clients
   that send an Authorization header; EPSG:4326 default projection like Navigraph;
   `/v1/nearest` for moving maps without a sim-side airport search; iniBuilds A350 EFB

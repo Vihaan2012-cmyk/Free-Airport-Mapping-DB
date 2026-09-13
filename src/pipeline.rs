@@ -491,6 +491,10 @@ pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
 #[derive(Debug, Clone, Default)]
 pub struct Filter {
     pub country: Option<String>,
+    /// Any of these ISO countries.
+    pub countries: Vec<String>,
+    /// Any of these continent codes (AF, AN, AS, EU, NA, OC, SA).
+    pub continents: Vec<String>,
     pub region: Option<String>,
     pub prefix: Option<String>,
     pub all: bool,
@@ -501,6 +505,8 @@ pub struct Filter {
     /// OurAirports kinds, matched as substrings ("large" matches "large_airport").
     pub kinds: Vec<String>,
     pub min_runway_ft: Option<f64>,
+    /// At least this many open runways (OurAirports data).
+    pub min_runways: Option<usize>,
     pub iata: Vec<String>,
     /// Case-insensitive substring of the name or city.
     pub search: Option<String>,
@@ -512,12 +518,27 @@ pub struct Filter {
 
 impl Filter {
     pub fn needs_index(&self) -> bool {
-        self.country.is_some() || self.region.is_some() || self.prefix.is_some() || self.all || self.near.is_some() || self.bbox.is_some() || !self.kinds.is_empty() || self.min_runway_ft.is_some() || !self.iata.is_empty() || self.search.is_some()
+        self.country.is_some() || !self.countries.is_empty() || !self.continents.is_empty() || self.region.is_some() || self.prefix.is_some() || self.all || self.near.is_some() || self.bbox.is_some() || !self.kinds.is_empty() || self.min_runway_ft.is_some() || self.min_runways.is_some() || !self.iata.is_empty() || self.search.is_some()
     }
 
     fn excluded(&self, icao: &str) -> bool {
         self.exclude.iter().any(|x| if x.len() >= 4 { icao.eq_ignore_ascii_case(x) } else { icao.to_uppercase().starts_with(&x.to_uppercase()) })
     }
+}
+
+/// Continent code for a name or code the user typed ("asia", "AS", "north-america", "na").
+pub fn continent_code(s: &str) -> Option<&'static str> {
+    let k: String = s.trim().to_ascii_lowercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    Some(match k.as_str() {
+        "af" | "africa" => "AF",
+        "an" | "antarctica" => "AN",
+        "as" | "asia" => "AS",
+        "eu" | "europe" => "EU",
+        "na" | "northamerica" | "north" => "NA",
+        "oc" | "oceania" | "australia" | "pacific" => "OC",
+        "sa" | "southamerica" | "south" => "SA",
+        _ => return None,
+    })
 }
 
 /// Great-circle distance in km.
@@ -538,6 +559,9 @@ pub fn select(cfg: &Config, explicit: &[String], f: &Filter) -> Result<Vec<Strin
             .by_icao
             .values()
             .filter(|e| f.country.as_deref().map_or(true, |c| e.country.as_deref().map_or(false, |x| x.eq_ignore_ascii_case(c))))
+            .filter(|e| f.countries.is_empty() || e.country.as_deref().map_or(false, |x| f.countries.iter().any(|c| c.eq_ignore_ascii_case(x))))
+            .filter(|e| f.continents.is_empty() || e.continent.as_deref().map_or(false, |x| f.continents.iter().any(|c| c.eq_ignore_ascii_case(x))))
+            .filter(|e| f.min_runways.map_or(true, |min| idx.runways.get(&e.icao).map_or(false, |rs| rs.iter().filter(|r| !r.closed).count() >= min)))
             .filter(|e| f.region.as_deref().map_or(true, |r| e.region.as_deref().map_or(false, |x| x.to_uppercase().starts_with(&r.to_uppercase()))))
             .filter(|e| f.prefix.as_deref().map_or(true, |p| e.icao.starts_with(&p.to_uppercase())))
             .filter(|e| f.near.map_or(true, |(lat, lon, km)| haversine_km(lat, lon, e.lat, e.lon) <= km))

@@ -135,6 +135,12 @@ pub struct SelectArgs {
     /// Only airports with an open runway at least this long (feet, OurAirports data).
     #[arg(long = "min-runway-ft", value_name = "FEET")]
     min_runway_ft: Option<f64>,
+    /// Only airports with at least this many open runways.
+    #[arg(long = "min-runways", value_name = "N")]
+    min_runways: Option<usize>,
+    /// All airports on these continents: africa, antarctica, asia, europe, north-america, oceania, south-america (or AF/AN/AS/EU/NA/OC/SA), comma separated.
+    #[arg(long, value_name = "NAMES")]
+    continent: Option<String>,
     /// Select by IATA code(s), comma separated (e.g. CDG,ORY).
     #[arg(long)]
     iata: Option<String>,
@@ -177,8 +183,14 @@ impl SelectArgs {
             }
             None => None,
         };
+        let mut continents = Vec::new();
+        for c in list(&self.continent) {
+            continents.push(pipeline::continent_code(&c).ok_or_else(|| anyhow!("unknown continent {c} (africa, antarctica, asia, europe, north-america, oceania, south-america)"))?.to_string());
+        }
         Ok(Filter {
             country: self.country.clone(),
+            countries: Vec::new(),
+            continents,
             region: self.region.clone(),
             prefix: self.prefix.clone(),
             all: self.all,
@@ -186,6 +198,7 @@ impl SelectArgs {
             bbox,
             kinds: list(&self.kinds),
             min_runway_ft: self.min_runway_ft,
+            min_runways: self.min_runways,
             iata: list(&self.iata),
             search: self.search.clone(),
             exclude: list(&self.exclude),
