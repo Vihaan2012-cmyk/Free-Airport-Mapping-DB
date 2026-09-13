@@ -68,7 +68,7 @@ struct BulkArgs {
     #[arg(long = "discard-downloads")]
     discard_downloads: bool,
     /// Bulk: airports fetched from OpenStreetMap at the same time (the main speed lever).
-    #[arg(long = "jobs", short = 'j', default_value_t = 4, value_name = "N")]
+    #[arg(long = "jobs", short = 'j', default_value_t = 6, value_name = "N")]
     jobs: usize,
 }
 

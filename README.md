@@ -126,7 +126,7 @@ amdb-bridge autostart                       # start with the sim (exe.xml)
 `--bulk` takes continents (africa, antarctica, asia, europe, north-america, oceania,
 south-america), ISO countries, or `all`, comma separated; `--type` (default
 large,medium), `--min-runways` (default 1) and `--min-runway-ft` narrow it down, and
-`-j N` sets how many airports are fetched from OpenStreetMap at once (default 4; the
+`-j N` sets how many airports are fetched from OpenStreetMap at once (default 6; the
 main speed lever), airports already built are skipped unless `--rebuild`, `--discard-downloads` deletes
 each airport's source downloads once it is built, and every run ends with
 `bulk-status.csv` next to the airports folder (built / failed / skipped per airport,
