@@ -40,6 +40,9 @@ struct DataArgs {
     /// Optional on-disk download cache.
     #[arg(long)]
     cache: Option<PathBuf>,
+    /// Seconds to wait on one source before moving to the next (default 120).
+    #[arg(long, value_name = "SECONDS")]
+    timeout: Option<u64>,
 }
 
 /// Build whole regions ahead of time.
@@ -67,8 +70,9 @@ struct BulkArgs {
     /// Bulk: delete each airport's source downloads (OSM extract, Gateway scenery) as soon as it is built.
     #[arg(long = "discard-downloads")]
     discard_downloads: bool,
-    /// Bulk: airports fetched from OpenStreetMap at the same time (with `--osm both`, half go to each service).
-    #[arg(long = "jobs", short = 'j', default_value_t = 4, value_name = "N")]
+    /// Bulk: airports fetched at the same time. Each one starts on a different OSM source,
+    /// so the default keeps the map API and every Overpass endpoint busy at once.
+    #[arg(long = "jobs", short = 'j', default_value_t = 6, value_name = "N")]
     jobs: usize,
     /// Bulk: delete every generated airport, cached download and the old status file before starting.
     #[arg(long = "fresh")]
@@ -364,7 +368,10 @@ fn config(d: &DataArgs, s: &Settings) -> Config {
     Config {
         out: d.out.clone().unwrap_or_else(|| s.airports_dir()),
         cache: Cache::new(d.cache.clone().or_else(|| s.downloads_dir()), false, false),
-        http: Http::new(300, 250),
+        // A deadline per request, not per airport: public Overpass servers queue work
+        // and can sit on a query for many minutes. Giving up at two minutes and moving
+        // to the next source in the pool is far quicker than waiting one out.
+        http: Http::new(d.timeout.unwrap_or(120), 250),
         formats: Formats { geojson: true, pbf: false },
         projection: Projection::Wgs84,
         xplane_dir: d.xplane_dir.clone().or_else(crate::sources::xplane::local::detect_install),
