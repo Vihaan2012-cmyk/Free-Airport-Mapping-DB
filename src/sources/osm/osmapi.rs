@@ -126,19 +126,68 @@ fn split(b: BBox) -> [BBox; 4] {
     [(s, w, ms, me), (s, me, ms, e), (ms, w, n, me), (ms, me, n, e)]
 }
 
-/// Fetch one tile; `Ok(None)` means "too many nodes, split further".
+/// At most this many map calls in flight process-wide, however many airports are being
+/// fetched at once: the API throttles on bandwidth and tells us when we overdo it.
+const MAX_GLOBAL_CALLS: usize = 6;
+static GATE: (Mutex<usize>, std::sync::Condvar) = (Mutex::new(0), std::sync::Condvar::new());
+
+struct Slot;
+
+impl Slot {
+    fn acquire() -> Slot {
+        let (m, cv) = &GATE;
+        let mut n = m.lock().unwrap();
+        while *n >= MAX_GLOBAL_CALLS {
+            n = cv.wait(n).unwrap();
+        }
+        *n += 1;
+        Slot
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let (m, cv) = &GATE;
+        *m.lock().unwrap() -= 1;
+        cv.notify_one();
+    }
+}
+
+/// Seconds the server asked us to wait ("Please try again in 11 seconds").
+fn retry_after_secs(msg: &str) -> Option<u64> {
+    let i = msg.find("try again in ")?;
+    msg[i + 13..].split_whitespace().next()?.parse::<u64>().ok()
+}
+
+/// Fetch one tile; `Ok(None)` means "too many nodes, split further". A bandwidth
+/// throttle (HTTP 509 / 429) is obeyed: wait the time the server names, then retry.
 fn fetch_tile(http: &Http, b: BBox) -> Result<Option<String>> {
-    match http.get_text_once(&url(b)) {
-        Ok(t) => Ok(Some(t)),
-        Err(e) => {
-            let msg = format!("{e:#}");
-            if msg.contains("HTTP 400") || msg.contains("too many nodes") {
-                Ok(None)
-            } else {
-                Err(e)
+    let mut waited = 0u64;
+    for attempt in 0..10 {
+        let result = {
+            let _slot = Slot::acquire();
+            http.get_text_once(&url(b))
+        };
+        match result {
+            Ok(t) => return Ok(Some(t)),
+            Err(e) => {
+                let msg = format!("{e:#}");
+                if msg.contains("HTTP 400") || msg.contains("too many nodes") {
+                    return Ok(None);
+                }
+                let throttled = msg.contains("HTTP 509") || msg.contains("HTTP 429") || msg.contains("too much data");
+                if throttled && attempt < 9 && waited < 600 {
+                    let secs = retry_after_secs(&msg).unwrap_or(15).clamp(2, 120) + 1;
+                    log::info!("OSM API throttled us; waiting {secs}s as asked");
+                    std::thread::sleep(std::time::Duration::from_secs(secs));
+                    waited += secs;
+                    continue;
+                }
+                return Err(e);
             }
         }
     }
+    Err(anyhow!("OSM API kept throttling"))
 }
 
 /// Fetch everything in `bbox`, tiling as needed, into one merged store.
