@@ -102,6 +102,43 @@ pub fn fmt_n(n: usize) -> String {
     out
 }
 
+/// Serialises index.json updates across threads and processes' threads.
+static INDEX_WRITE: Mutex<()> = Mutex::new(());
+
+/// Airports currently being built somewhere in this process, so the bridge can wait
+/// for a bulk worker instead of building the same airport a second time.
+static IN_PROGRESS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+struct InProgress(Vec<String>);
+
+impl InProgress {
+    fn register(icaos: &[String]) -> InProgress {
+        let up: Vec<String> = icaos.iter().map(|s| s.to_uppercase()).collect();
+        IN_PROGRESS.lock().unwrap().extend(up.iter().cloned());
+        InProgress(up)
+    }
+}
+
+impl Drop for InProgress {
+    fn drop(&mut self) {
+        let mut g = IN_PROGRESS.lock().unwrap();
+        for i in &self.0 {
+            if let Some(pos) = g.iter().position(|x| x == i) {
+                g.swap_remove(pos);
+            }
+        }
+    }
+}
+
+/// True while another thread is building this airport.
+pub fn is_building(icao: &str) -> bool {
+    let up = icao.to_uppercase();
+    IN_PROGRESS.lock().unwrap().iter().any(|x| *x == up)
+}
+
+/// How many airports the OpenStreetMap stage fetches concurrently.
+pub const OSM_PARALLEL: usize = 2;
+
 struct Prepared {
     icao: String,
     src: SourceAirport,
@@ -401,7 +438,11 @@ fn empty_reason(layer: Layer, src: &SourceAirport) -> String {
 pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
     let idx = load_index(cfg)?;
     let summary = Mutex::new(Summary::default());
-    let index_file = Mutex::new(Index::load_or_new(&cfg.out, cfg.projection.name()));
+    // Entries for index.json are collected here and merged under a lock at the end, so
+    // several `run`s in different threads (bulk workers + the bridge) cannot clobber
+    // each other's entries.
+    let index_file: Mutex<Vec<IndexAirport>> = Mutex::new(Vec::new());
+    let _guard = InProgress::register(icaos);
 
     term::start(&format!("Fetching sources for {} airport{}", icaos.len(), if icaos.len() == 1 { "" } else { "s" }));
     let t_all = std::time::Instant::now();
@@ -421,23 +462,38 @@ pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
     // Phase B: OSM, one airport at a time (public endpoints throttle parallel use).
     let mut stores: HashMap<String, Store> = HashMap::new();
     if !matches!(cfg.osm, OsmMode::Off) {
-        for p in &prepared {
-            let t0 = std::time::Instant::now();
-            let via_api = matches!(cfg.osm, OsmMode::OsmApi);
-            let result = if via_api {
-                osm::osmapi::fetch(&cfg.http, &cfg.cache, &p.icao, p.bbox).or_else(|e| {
-                    log::warn!("{}: OSM API failed ({e:#}); falling back to Overpass", p.icao);
-                    osm::overpass::fetch(&cfg.http, &cfg.cache, &cfg.overpass_mirrors, &p.icao, p.bbox)
-                })
-            } else {
-                osm::overpass::fetch(&cfg.http, &cfg.cache, &cfg.overpass_mirrors, &p.icao, p.bbox)
-            };
-            match result {
-                Ok(s) => {
-                    term::info(&format!("[{}] OpenStreetMap: {} nodes, {} ways in {}", p.icao, fmt_n(s.nodes.len()), fmt_n(s.ways.len()), term::human_secs(t0.elapsed().as_secs_f64())));
-                    stores.insert(p.icao.clone(), s);
+        // OSM_PARALLEL airports at a time: the public API copes with a couple of parallel
+        // map calls, and the wait for the server is most of an airport's build time.
+        for group in prepared.chunks(OSM_PARALLEL) {
+            let results: Vec<(String, Result<Store>, f64)> = std::thread::scope(|sc| {
+                let handles: Vec<_> = group
+                    .iter()
+                    .map(|p| {
+                        sc.spawn(move || {
+                            let t0 = std::time::Instant::now();
+                            let via_api = matches!(cfg.osm, OsmMode::OsmApi);
+                            let result = if via_api {
+                                osm::osmapi::fetch(&cfg.http, &cfg.cache, &p.icao, p.bbox).or_else(|e| {
+                                    log::warn!("{}: OSM API failed ({e:#}); falling back to Overpass", p.icao);
+                                    osm::overpass::fetch(&cfg.http, &cfg.cache, &cfg.overpass_mirrors, &p.icao, p.bbox)
+                                })
+                            } else {
+                                osm::overpass::fetch(&cfg.http, &cfg.cache, &cfg.overpass_mirrors, &p.icao, p.bbox)
+                            };
+                            (p.icao.clone(), result, t0.elapsed().as_secs_f64())
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().expect("osm fetch thread")).collect()
+            });
+            for (icao, result, secs) in results {
+                match result {
+                    Ok(s) => {
+                        term::info(&format!("[{icao}] OpenStreetMap: {} nodes, {} ways in {}", fmt_n(s.nodes.len()), fmt_n(s.ways.len()), term::human_secs(secs)));
+                        stores.insert(icao, s);
+                    }
+                    Err(e) => log::warn!("{icao}: OSM unavailable: {e:#}"),
                 }
-                Err(e) => log::warn!("{}: OSM unavailable: {e:#}", p.icao),
             }
         }
     }
@@ -491,7 +547,7 @@ pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
                 if gj > 0 { term::file(Some(&icao), &format!("{shown}*.geojson"), &format!("{} layers, {}", cfg.layers.len(), term::human_bytes(gj))); }
                 if pb > 0 { term::file(Some(&icao), &format!("{shown}*.pbf"), &format!("{} layers, {}", cfg.layers.len(), term::human_bytes(pb))); }
                 term::file(Some(&icao), &format!("{shown}manifest.json"), "sources, counts, warnings");
-                index_file.lock().unwrap().upsert(IndexAirport {
+                index_file.lock().unwrap().push(IndexAirport {
                     icao: icao.clone(),
                     iata: m.iata.clone(),
                     name: m.name.clone(),
@@ -511,7 +567,14 @@ pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
             }
         }
     });
-    index_file.lock().unwrap().write(&cfg.out).context("write index")?;
+    {
+        let _lock = INDEX_WRITE.lock().unwrap();
+        let mut idx = Index::load_or_new(&cfg.out, cfg.projection.name());
+        for a in index_file.into_inner().unwrap() {
+            idx.upsert(a);
+        }
+        idx.write(&cfg.out).context("write index")?;
+    }
     let summary = summary.into_inner().unwrap();
     let _ = std::io::Write::flush(&mut std::io::stdout());
     println!();

@@ -44,7 +44,14 @@ impl Http {
             match f() {
                 Ok(v) => return Ok(v),
                 Err(e) => {
-                    log::warn!("{what}: attempt {} failed: {e:#}", attempt + 1);
+                    // A 4xx other than "slow down" / timeout is a definite answer: no retry.
+                    let msg = format!("{e:#}");
+                    let definite = msg.contains("HTTP 4") && !msg.contains("HTTP 408") && !msg.contains("HTTP 429");
+                    if definite {
+                        log::info!("{what}: {msg}");
+                        return Err(e);
+                    }
+                    log::warn!("{what}: attempt {} failed: {msg}", attempt + 1);
                     last_err = Some(e);
                     std::thread::sleep(delay);
                     delay *= 2;

@@ -109,6 +109,15 @@ impl Store {
             return Ok(a.clone());
         }
         let dir = self.out.join(&icao);
+        // A bulk worker may be on this airport right now: wait for it rather than
+        // building the same folder twice.
+        if pipeline::is_building(&icao) {
+            crate::term::info(&format!("[{icao}] Bulk build is already working on {icao}; waiting for it"));
+            let t0 = std::time::Instant::now();
+            while pipeline::is_building(&icao) && t0.elapsed().as_secs() < 900 {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        }
         if !dir.join("manifest.json").is_file() {
             crate::term::start(&format!("[{icao}] First request for {icao}: building it now"));
             let summary = pipeline::run(&self.cfg, &[icao.clone()])?;
