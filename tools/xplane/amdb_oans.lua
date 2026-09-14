@@ -14,6 +14,8 @@ local BRIDGE = "http://127.0.0.1:8770/" --@BRIDGE@
 
 local RANGES_NM = { 0.25, 0.5, 1, 2, 4 }
 local BAR_H = 34                  -- height of the control bar, px
+local HEADER_H = 22               -- readout strip across the top of the map
+local FONT_H = 13                 -- fallback glyph height if ImGui cannot measure
 local POLL_S = 4                  -- seconds between "which airport am I near" checks (a tiny reply)
 
 -- Airbus OANS depiction: black ground, grey pavement (aprons darker than taxiways),
@@ -21,11 +23,15 @@ local POLL_S = 4                  -- seconds between "which airport am I near" c
 -- pavement, yellow taxiway and stand guidance lines, red-orange holding positions,
 -- terminals cyan and other buildings blue. ImGui packs colours as 0xAABBGGRR.
 local function rgb(r, g, b) return 0xFF000000 + b * 0x10000 + g * 0x100 + r end
+local function rgba(r, g, b, a) return a * 0x1000000 + b * 0x10000 + g * 0x100 + r end
 local C = {
-    bg = rgb(0, 0, 0),
+    bg = rgb(0, 0, 0), hdr = rgba(0, 0, 0, 205), tick = rgb(210, 210, 210), amber = rgb(255, 180, 0),
     apron = rgb(0x54, 0x54, 0x54), taxiway = rgb(0x8f, 0x8f, 0x8f),
     runway = rgb(0x80, 0x80, 0x80), rwyext = rgb(0x80, 0x80, 0x80), runway_far = rgb(255, 255, 255),
-    building = rgb(0x32, 0x86, 0xda), terminal = rgb(0, 255, 255),
+    -- Terminals and buildings read as cyan and blue, but a step down in brightness: at a
+    -- big airport these cover much of the screen, and at full saturation they glare and
+    -- flatten everything drawn over them. The labels keep the bright cyan.
+    building = rgb(0x28, 0x5f, 0x9c), terminal = rgb(0, 0xa6, 0xa6),
     shoulder = rgb(0x85, 0x45, 0x1d), rwyedge = rgb(255, 255, 255),
     guide = rgb(255, 255, 0), guidefar = rgb(0x66, 0x66, 0x66), exit = rgb(255, 255, 0),
     stand = rgb(255, 255, 0), hold = rgb(255, 0x2f, 0), rwycl = rgb(255, 255, 255),
@@ -35,7 +41,8 @@ local C = {
 }
 local FILLS = { "apron", "taxiway", "rwyext", "runway", "building", "terminal" }
 -- Drawn in this order; widths in pixels. Stand lines only at the two closest ranges.
-local LINES = { { "shoulder", 2.5 }, { "rwyedge", 1.2 }, { "stand", 1.6 }, { "guidefar", 2.2 }, { "guide", 1.85 }, { "exit", 1.85 }, { "hold", 3.0 }, { "rwycl", 1.5 } }
+local LINES = { { "rwyedge", 1.2 }, { "stand", 1.6 }, { "guidefar", 2.2 }, { "guide", 1.85 }, { "exit", 1.85 }, { "hold", 3.0 }, { "rwycl", 1.5 } }
+local SHOULDER_W = 6.0            -- drawn before the fills, which then cover its inner half
 local FAR_RANGE = 4               -- from this range index up: runways white, guidance lines grey (declutter)
 local TWY, RWY, STAND, TERM = 1, 2, 3, 4
 local LABEL_MAX_RANGE = { [TWY] = 3, [RWY] = 5, [STAND] = 1, [TERM] = 3 }
@@ -146,9 +153,19 @@ end
 -- ---------------------------------------------------------------- drawing
 local function draw(w, h)
     local mh = h - BAR_H
-    imgui.DrawList_AddRectFilled(0, 0, w, mh, C.bg)
+    local txt, rect = imgui.DrawList_AddText, imgui.DrawList_AddRectFilled
+    -- Real glyph metrics where ImGui will give them: guessed widths leave labels visibly
+    -- off-centre and their boxes the wrong size.
+    local function tsize(s)
+        if imgui.CalcTextSize then
+            local ok, a, b = pcall(imgui.CalcTextSize, s)
+            if ok and type(a) == "number" then return a, (type(b) == "number" and b or FONT_H) end
+        end
+        return #s * 7, FONT_H
+    end
+    rect(0, 0, w, mh, C.bg)
     if not ap then
-        imgui.DrawList_AddText(12, 12, C.dim, status)
+        txt(w / 2 - tsize(status) / 2, mh / 2 - 7, C.dim, status)
         return
     end
 
@@ -195,6 +212,31 @@ local function draw(w, h)
     local nv = 0                    -- estimated ImGui vertices this frame
 
     local tri = imgui.DrawList_AddTriangleFilled
+    local line = imgui.DrawList_AddLine
+
+    -- The shoulder goes down first, as a wide line along the pavement boundary: the fills
+    -- then cover its inner half, leaving a band outside the pavement the way the OANS
+    -- draws it. Stroked over the top it would instead eat into the pavement edge.
+    if not (skip_l and skip_l.shoulder) then
+        for _, t in ipairs(vis) do
+            if nv >= MAX_VERTS then break end
+            local ls = t.l and t.l.shoulder
+            if ls then
+                for _, pl in ipairs(ls) do
+                    local px, py = P(pl[1], pl[2])
+                    for i = 3, #pl, 2 do
+                        local qx, qy = P(pl[i], pl[i + 1])
+                        if math.max(px, qx) >= 0 and math.min(px, qx) <= w and math.max(py, qy) >= 0 and math.min(py, qy) <= mh then
+                            line(px, py, qx, qy, C.shoulder, SHOULDER_W)
+                            nv = nv + 8
+                        end
+                        px, py = qx, qy
+                    end
+                end
+            end
+        end
+    end
+
     for _, layer in ipairs(FILLS) do
         if not (skip_f and skip_f[layer]) then
             local col = C[layer]
@@ -218,7 +260,6 @@ local function draw(w, h)
         end
     end
 
-    local line = imgui.DrawList_AddLine
     for _, spec in ipairs(LINES) do
         local layer, thick = spec[1], spec[2]
         if not (skip_l and skip_l[layer]) and (layer ~= "stand" or eff_i <= 2) then
@@ -244,42 +285,45 @@ local function draw(w, h)
         end
     end
 
-    -- Labels: yellow taxiway letters, white runway numbers in a black box, cyan terminal
-    -- names, small grey stand numbers. A one-pixel black shadow keeps text legible on
-    -- grey pavement.
-    local txt, rect = imgui.DrawList_AddText, imgui.DrawList_AddRectFilled
-    local function label(x, y, col, s)
-        local half = #s * 3.5
-        txt(x - half + 1, y - 6, C.shadow, s)
-        txt(x - half, y - 7, col, s)
-        nv = nv + #s * 8                      -- a glyph quad each, drawn twice
+    -- Labels: white runway numbers in a black box, yellow taxiway letters, cyan terminal
+    -- names, small grey stand numbers, each with a one-pixel shadow so it stays legible on
+    -- grey pavement. Most important kind first, and a label that would land on one already
+    -- drawn is dropped: that, far more than colour, is what keeps the picture readable.
+    local placed = {}
+    local function label(x, y, col, s, big)
+        local sc = big and 1.7 or 1.0
+        local lw, lh = tsize(s)
+        lw, lh = lw * sc, lh * sc
+        local x0, y0, x1, y1 = x - lw / 2, y - lh / 2, x + lw / 2, y + lh / 2
+        if x0 < 2 or y0 < HEADER_H + 2 or x1 > w - 2 or y1 > mh - 2 then return end
+        for i = 1, #placed do
+            local r = placed[i]
+            if x0 < r[3] and x1 > r[1] and y0 < r[4] and y1 > r[2] then return end
+        end
+        placed[#placed + 1] = { x0 - 3, y0 - 2, x1 + 3, y1 + 2 }
+        if big then
+            rect(x0 - 5, y0 - 3, x1 + 5, y1 + 3, C.rwy_box)
+            if imgui.SetWindowFontScale then imgui.SetWindowFontScale(sc) end
+            txt(x0, y0, col, s)
+            if imgui.SetWindowFontScale then imgui.SetWindowFontScale(1.0) end
+            nv = nv + #s * 4 + 6
+        else
+            txt(x0 + 1, y0 + 1, C.shadow, s)
+            txt(x0, y0, col, s)
+            nv = nv + #s * 8                  -- a glyph quad each, drawn twice
+        end
     end
-    for _, kind in ipairs({ STAND, TERM, TWY, RWY }) do
+    local LABEL_COL = { [RWY] = C.rwy_txt, [TWY] = C.twy_txt, [TERM] = C.term_txt, [STAND] = C.std_txt }
+    for _, kind in ipairs({ RWY, TWY, TERM, STAND }) do
         if eff_i <= LABEL_MAX_RANGE[kind] then
+            local col = LABEL_COL[kind]
             for _, t in ipairs(vis) do
                 local tx = t.t
                 if tx then
                     for i = 1, #tx, 4 do
                         if tx[i + 3] == kind then
                             local sx, sy = P(tx[i], tx[i + 1])
-                            if sx > 0 and sx < w and sy > 0 and sy < mh then
-                                local s = tx[i + 2]
-                                if kind == TWY then
-                                    label(sx, sy, C.twy_txt, s)
-                                elseif kind == RWY then
-                                    -- Runway numbers are the biggest text on the OANS.
-                                    local half = #s * 5.5
-                                    rect(sx - half - 5, sy - 12, sx + half + 5, sy + 12, C.rwy_box)
-                                    if imgui.SetWindowFontScale then imgui.SetWindowFontScale(1.6) end
-                                    txt(sx - half, sy - 11, C.rwy_txt, s)
-                                    if imgui.SetWindowFontScale then imgui.SetWindowFontScale(1.0) end
-                                    nv = nv + #s * 4 + 6
-                                elseif kind == STAND then
-                                    label(sx, sy, C.std_txt, s)
-                                else
-                                    label(sx, sy, C.term_txt, s)
-                                end
-                            end
+                            label(sx, sy, col, tx[i + 2], kind == RWY)
                         end
                     end
                 end
@@ -287,16 +331,40 @@ local function draw(w, h)
         end
     end
 
-    -- Range arc ahead of the aircraft, ARC only.
+    -- ARC: the range arc with a compass scale, and a broken half-range arc, as on the ND.
     if not plan then
         local rpx = RANGES_NM[range_i] * 1852 * scale
+        local function pt(a, r)
+            local d = math.rad(a)
+            return ax + math.sin(d) * r, ay - math.cos(d) * r
+        end
         local ppx, ppy
         for a = -60, 60, 3 do
-            local r = math.rad(a)
-            local x, y = ax + math.sin(r) * rpx, ay - math.cos(r) * rpx
-            if ppx then line(ppx, ppy, x, y, C.ring, 1.0) end
+            local x, y = pt(a, rpx)
+            if ppx then line(ppx, ppy, x, y, C.ring, 1.2) end
             ppx, ppy = x, y
         end
+        ppx = nil
+        for a = -60, 60, 6 do
+            local x, y = pt(a, rpx * 0.5)
+            if ppx and a % 12 == 0 then line(ppx, ppy, x, y, C.dim, 1.0) end
+            ppx, ppy = x, y
+        end
+        for a = -60, 60, 10 do
+            local major = a % 30 == 0
+            local x1, y1 = pt(a, rpx)
+            local x2, y2 = pt(a, rpx + (major and 11 or 6))
+            line(x1, y1, x2, y2, C.tick, major and 1.6 or 1.0)
+            -- Only the inner three fit on the page at this window size.
+            if major and math.abs(a) <= 30 then
+                local s = string.format("%03d", math.floor(amdb_hdg + a + 0.5) % 360)
+                local hx, hy = pt(a, rpx + 24)
+                local lw = tsize(s)
+                txt(hx - lw / 2 + 1, hy - 6, C.shadow, s)
+                txt(hx - lw / 2, hy - 7, C.tick, s)
+            end
+        end
+        nv = nv + 700
     end
 
     -- Ownship: fixed and nose-up in ARC; at its real position, rotated to heading, in PLAN.
@@ -304,13 +372,28 @@ local function draw(w, h)
     if plan then sx, sy = P(px_ac, py_ac) end
     local rot = plan and math.rad(amdb_hdg) or 0
     local rc, rs = math.cos(rot), math.sin(rot)
-    local function seg(x1, y1, x2, y2)
-        line(sx + x1 * rc - y1 * rs, sy + x1 * rs + y1 * rc, sx + x2 * rc - y2 * rs, sy + x2 * rs + y2 * rc, C.own, 3.0)
+    local function seg(x1, y1, x2, y2, t)
+        line(sx + x1 * rc - y1 * rs, sy + x1 * rs + y1 * rc, sx + x2 * rc - y2 * rs, sy + x2 * rs + y2 * rc, C.own, t or 2.6)
     end
-    seg(0, -14, 0, 12); seg(-13, -1, 13, -1); seg(-5, 11, 5, 11)
+    seg(0, -15, 0, 13, 3.0)                        -- fuselage
+    seg(0, -3, -14, 7); seg(0, -3, 14, 7)          -- swept wings
+    seg(0, 10, -6, 15); seg(0, 10, 6, 15)          -- tailplane
+    nv = nv + 48
 
-    txt(10, 8, C.ring, plan and "PLAN" or string.format("ARC  %s NM", tostring(RANGES_NM[range_i])))
-    txt(10, 24, C.dim, status)
+    -- Readout strip, so nothing is printed straight onto the map.
+    rect(0, 0, w, HEADER_H, C.hdr)
+    txt(8, 4, C.ring, plan and "PLAN" or string.format("ARC %s NM", tostring(RANGES_NM[range_i])))
+    local hs = string.format("HDG %03d", math.floor(amdb_hdg + 0.5) % 360)
+    txt(w / 2 - tsize(hs) / 2, 4, C.ring, hs)
+    local rs2 = ap.icao or ""
+    txt(w - tsize(rs2) - 8, 4, C.dim, rs2)
+    -- Anything the map cannot say for itself: a build in progress, or the bridge gone away
+    -- while an airport is still on screen.
+    local note = want_icao and ("BUILDING " .. want_icao) or (status:sub(1, 4) ~= (ap.icao or "") and status or nil)
+    if note then
+        txt(w / 2 - tsize(note) / 2, HEADER_H + 7, C.amber, note)
+    end
+    nv = nv + 160
 
     -- Keep the next frame inside the index limit: shed a level of detail when this one ran
     -- close to the budget, and take it back once there is comfortable room again.

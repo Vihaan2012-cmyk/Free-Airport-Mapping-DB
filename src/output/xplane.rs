@@ -132,6 +132,43 @@ fn decode_entities(s: &str) -> String {
     s.replace("&quot;", "\"").replace("&apos;", "'").replace("&#39;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
 }
 
+/// OpenStreetMap names a structure as precisely as the mapper liked: "Terminal 3 Gate
+/// L2C", "Terminal 3 (Building #8)". Printed verbatim they bury the close-in view, and
+/// several of them name the same terminal. Cut back to the landmark so the callers'
+/// de-duplication collapses them to one label per terminal.
+fn tidy_name(s: &str) -> String {
+    let mut t = s.trim();
+    for cut in [" Gate ", " (", ", "] {
+        if let Some(i) = t.find(cut) {
+            t = t[..i].trim_end();
+        }
+    }
+    if t.chars().count() > 20 {
+        return t.chars().take(20).collect::<String>().trim_end().to_string();
+    }
+    t.to_string()
+}
+
+/// A stand is labelled with its designator, the way it is called on the radio and printed
+/// on the OANS: "E15B", not OpenStreetMap's "Terminal 2 Gate E15B". Stands that are not
+/// gates keep their name, shortened.
+fn tidy_stand(s: &str) -> String {
+    let mut t = s.trim();
+    if let Some(i) = t.rfind(" (") {
+        t = t[..i].trim_end();
+    }
+    if let Some(i) = t.rfind(" Gate ") {
+        let tail = t[i + 6..].trim();
+        if !tail.is_empty() {
+            t = tail;
+        }
+    }
+    if t.chars().count() > 12 {
+        return t.chars().take(12).collect::<String>().trim_end().to_string();
+    }
+    t.to_string()
+}
+
 /// A Lua string literal.
 fn lua_str(s: &str) -> String {
     let mut o = String::with_capacity(s.len() + 2);
@@ -416,11 +453,14 @@ pub fn render(dir: &Path) -> Result<String> {
             continue;
         }
         g.fill(if terminal { "terminal" } else { "building" }, &f.geom);
-        if let (Some(name), Some(c)) = (name, f.geom.centroid()) {
-            let at = g.project(c.0);
-            let e = named.entry(name).or_insert((-1.0, at));
-            if area > e.0 {
-                *e = (area, at);
+        if let (Some(raw), Some(c)) = (name, f.geom.centroid()) {
+            let key = tidy_name(&raw);
+            if !key.is_empty() {
+                let at = g.project(c.0);
+                let e = named.entry(key).or_insert((-1.0, at));
+                if area > e.0 {
+                    *e = (area, at);
+                }
             }
         }
     }
@@ -474,7 +514,7 @@ pub fn render(dir: &Path) -> Result<String> {
     for f in load_layer(dir, "parkingstandlocation") {
         let (Geometry::Point(p), Some(id)) = (&f.geom, prop_str(&f.props, "idstd")) else { continue };
         let at = g.project(p.0);
-        g.label(at, &id, STAND);
+        g.label(at, &tidy_stand(&id), STAND);
     }
 
     let mut s = String::with_capacity(1 << 20);
@@ -676,6 +716,26 @@ mod tests {
             assert!(longest < 400.0, "triangle spans {longest:.0} m: {t:?}");
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stands_are_labelled_with_their_designator() {
+        assert_eq!(tidy_stand("Terminal 2 Gate E15B"), "E15B");
+        assert_eq!(tidy_stand("Terminal 1 Gate C4"), "C4");
+        assert_eq!(tidy_stand("Terminal 2 Gate E13 (2)"), "E13");
+        assert_eq!(tidy_stand("United Maint. (4)"), "United Maint", "13 chars, cut to the 12-char cap");
+        assert_eq!(tidy_stand("Fed Ex 9"), "Fed Ex 9");
+        assert_eq!(tidy_stand("A12"), "A12");
+    }
+
+    #[test]
+    fn structure_names_are_cut_back_to_the_landmark() {
+        assert_eq!(tidy_name("Terminal 3 Gate L2C"), "Terminal 3");
+        assert_eq!(tidy_name("Terminal 3 (Building #8)"), "Terminal 3");
+        assert_eq!(tidy_name("Terminal 2 Gate E1A"), "Terminal 2");
+        assert_eq!(tidy_name("Roman C. Pucinski Tower"), "Roman C. Pucinski To");
+        assert_eq!(tidy_name("  Terminal 5  "), "Terminal 5");
+        assert_eq!(tidy_name("Gatehouse"), "Gatehouse", "only a separate word Gate cuts");
     }
 
     #[test]

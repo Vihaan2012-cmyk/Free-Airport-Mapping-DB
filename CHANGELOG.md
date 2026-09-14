@@ -1,11 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-09-14)
 
 - X-Plane 12: an A380-style airport moving map as a FlyWithLua script that fetches from
   the bridge, which builds the nearest airport on demand (`amdb-bridge serve --xplane`
   installs the script and serves the `/xp/` route). `amdbgen xplane` also writes the same
   compact Lua data (triangulated, simplified, tiled) as files for offline use.
+- X-Plane moving map, closer to the Airbus depiction: the shoulder is laid down before the
+  pavement so it reads as a band outside it rather than eating the edge; labels are
+  measured with real glyph metrics and collision-culled in priority order instead of
+  overprinting one another; ARC gains a compass scale and a broken half-range arc; the
+  ownship is a swept-wing symbol; and a readout strip carries mode, range, heading and
+  airport, so nothing is printed straight onto the map.
 - FAA open airport-mapping layers for US airports: hotspots with their published caution
   text, and pavement when no scenery exists.
 - OSM: every source at once. The map API and each Overpass endpoint form a pool worked by
