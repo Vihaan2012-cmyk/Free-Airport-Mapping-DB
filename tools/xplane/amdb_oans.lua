@@ -16,23 +16,29 @@ local RANGES_NM = { 0.25, 0.5, 1, 2, 4 }
 local BAR_H = 34                  -- height of the control bar, px
 local POLL_S = 4                  -- seconds between "which airport am I near" checks (a tiny reply)
 
--- A380 OANS palette. ImGui packs colours as 0xAABBGGRR (alpha, blue, green, red).
+-- Airbus OANS depiction: black ground, grey pavement (aprons darker than taxiways),
+-- runways grey with a white edge, a brown shoulder strip around the outside of all
+-- pavement, yellow taxiway and stand guidance lines, red-orange holding positions,
+-- terminals cyan and other buildings blue. ImGui packs colours as 0xAABBGGRR.
 local function rgb(r, g, b) return 0xFF000000 + b * 0x10000 + g * 0x100 + r end
 local C = {
     bg = rgb(0, 0, 0),
-    apron = rgb(64, 64, 64), taxiway = rgb(90, 90, 90), rwyext = rgb(46, 46, 46),
-    runway = rgb(32, 32, 32), building = rgb(74, 74, 74), terminal = rgb(120, 120, 120),
-    edge = rgb(110, 110, 110),
-    guide = rgb(0, 200, 0), exit = rgb(0, 200, 0), stand = rgb(0, 150, 190), hold = rgb(255, 60, 60),
-    rwycl = rgb(232, 232, 232),
-    twy_bg = rgb(255, 210, 0), twy_fg = rgb(0, 0, 0), rwy_txt = rgb(255, 255, 255),
-    std_txt = rgb(184, 184, 184), term_txt = rgb(220, 220, 220),
-    own = rgb(255, 210, 0), ring = rgb(232, 232, 232), dim = rgb(150, 150, 150),
+    apron = rgb(0x54, 0x54, 0x54), taxiway = rgb(0x8f, 0x8f, 0x8f),
+    runway = rgb(0x80, 0x80, 0x80), rwyext = rgb(0x80, 0x80, 0x80), runway_far = rgb(255, 255, 255),
+    building = rgb(0x32, 0x86, 0xda), terminal = rgb(0, 255, 255),
+    shoulder = rgb(0x85, 0x45, 0x1d), rwyedge = rgb(255, 255, 255),
+    guide = rgb(255, 255, 0), guide_far = rgb(0x66, 0x66, 0x66), exit = rgb(255, 255, 0),
+    stand = rgb(255, 255, 0), hold = rgb(255, 0x2f, 0), rwycl = rgb(255, 255, 255),
+    twy_txt = rgb(255, 255, 0), rwy_txt = rgb(255, 255, 255), rwy_box = rgb(0, 0, 0),
+    std_txt = rgb(200, 200, 200), term_txt = rgb(0, 255, 255), shadow = rgb(0, 0, 0),
+    own = rgb(255, 255, 0), ring = rgb(255, 255, 255), dim = rgb(150, 150, 150),
 }
 local FILLS = { "apron", "taxiway", "rwyext", "runway", "building", "terminal" }
-local LINES = { { "edge", 1.0 }, { "stand", 1.0 }, { "guide", 1.5 }, { "exit", 1.5 }, { "hold", 2.6 }, { "rwycl", 1.2 } }
+-- Drawn in this order; widths in pixels. Stand lines only at the two closest ranges.
+local LINES = { { "shoulder", 2.5 }, { "rwyedge", 1.2 }, { "stand", 1.6 }, { "guide", 1.85 }, { "exit", 1.85 }, { "hold", 3.0 }, { "rwycl", 1.5 } }
+local FAR_RANGE = 4               -- from this range index up: runways white, guidance lines grey (declutter)
 local TWY, RWY, STAND, TERM = 1, 2, 3, 4
-local LABEL_MAX_RANGE = { [TWY] = 3, [RWY] = 5, [STAND] = 1, [TERM] = 4 }
+local LABEL_MAX_RANGE = { [TWY] = 3, [RWY] = 5, [STAND] = 1, [TERM] = 3 }
 
 -- ---------------------------------------------------------------- state
 local wnd = nil
@@ -151,6 +157,12 @@ local function draw(w, h)
         local dx, dy = x - cox, y - coy
         return ax + (dx * cs - dy * sn) * scale, ay - (dx * sn + dy * cs) * scale
     end
+    -- Declutter by what is actually on screen: the range whose pixel scale this view
+    -- matches (PLAN of a big field is like ARC at 4 NM, of a small one like 1 NM).
+    local eff_i = 1
+    for i = 1, #RANGES_NM do
+        if scale <= (mh * 0.70) / (RANGES_NM[i] * 1852) * 1.05 then eff_i = i end
+    end
 
     local far = math.max(ax, w - ax, ay, mh - ay) * 1.42 / scale
     local x0, x1, y0, y1 = cox - far, cox + far, coy - far, coy + far
@@ -160,9 +172,11 @@ local function draw(w, h)
         if b[3] >= x0 and b[1] <= x1 and b[4] >= y0 and b[2] <= y1 then vis[#vis + 1] = t end
     end
 
+    local far_mode = eff_i >= FAR_RANGE
     local tri = imgui.DrawList_AddTriangleFilled
     for _, layer in ipairs(FILLS) do
         local col = C[layer]
+        if far_mode and layer == "runway" then col = C.runway_far end
         for _, t in ipairs(vis) do
             local f = t.f and t.f[layer]
             if f then
@@ -179,8 +193,9 @@ local function draw(w, h)
     local line = imgui.DrawList_AddLine
     for _, spec in ipairs(LINES) do
         local layer, thick = spec[1], spec[2]
-        if layer ~= "stand" or range_i <= 2 then
+        if layer ~= "stand" or eff_i <= 2 then
             local col = C[layer]
+            if far_mode and (layer == "guide" or layer == "exit") then col = C.guide_far end
             for _, t in ipairs(vis) do
                 local ls = t.l and t.l[layer]
                 if ls then
@@ -197,9 +212,17 @@ local function draw(w, h)
         end
     end
 
+    -- Labels: yellow taxiway letters, white runway numbers in a black box, cyan terminal
+    -- names, small grey stand numbers. A one-pixel black shadow keeps text legible on
+    -- grey pavement.
     local txt, rect = imgui.DrawList_AddText, imgui.DrawList_AddRectFilled
-    for _, kind in ipairs({ STAND, TWY, TERM, RWY }) do
-        if range_i <= LABEL_MAX_RANGE[kind] then
+    local function label(x, y, col, s)
+        local half = #s * 3.5
+        txt(x - half + 1, y - 6, C.shadow, s)
+        txt(x - half, y - 7, col, s)
+    end
+    for _, kind in ipairs({ STAND, TERM, TWY, RWY }) do
+        if eff_i <= LABEL_MAX_RANGE[kind] then
             for _, t in ipairs(vis) do
                 local tx = t.t
                 if tx then
@@ -208,16 +231,19 @@ local function draw(w, h)
                             local sx, sy = P(tx[i], tx[i + 1])
                             if sx > 0 and sx < w and sy > 0 and sy < mh then
                                 local s = tx[i + 2]
-                                local half = #s * 3.5
                                 if kind == TWY then
-                                    rect(sx - half - 3, sy - 8, sx + half + 3, sy + 8, C.twy_bg)
-                                    txt(sx - half, sy - 7, C.twy_fg, s)
+                                    label(sx, sy, C.twy_txt, s)
                                 elseif kind == RWY then
-                                    txt(sx - half, sy - 7, C.rwy_txt, s)
+                                    -- Runway numbers are the biggest text on the OANS.
+                                    local half = #s * 5.5
+                                    rect(sx - half - 5, sy - 12, sx + half + 5, sy + 12, C.rwy_box)
+                                    if imgui.SetWindowFontScale then imgui.SetWindowFontScale(1.6) end
+                                    txt(sx - half, sy - 11, C.rwy_txt, s)
+                                    if imgui.SetWindowFontScale then imgui.SetWindowFontScale(1.0) end
                                 elseif kind == STAND then
-                                    txt(sx - half, sy - 7, C.std_txt, s)
+                                    label(sx, sy, C.std_txt, s)
                                 else
-                                    txt(sx - half, sy - 7, C.term_txt, s)
+                                    label(sx, sy, C.term_txt, s)
                                 end
                             end
                         end

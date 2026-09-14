@@ -12,8 +12,8 @@
 
 use crate::geom::LocalFrame;
 use anyhow::{anyhow, Context, Result};
-use geo::{Centroid, Simplify, TriangulateEarcut};
-use geo_types::{Coord, Geometry, LineString, Polygon};
+use geo::{Centroid, Contains, Simplify, TriangulateEarcut};
+use geo_types::{Coord, Geometry, LineString, MultiPolygon, Polygon};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -171,37 +171,120 @@ impl Grid {
         self.frame.forward(c.x, c.y)
     }
 
+    /// Project a source polygon into clean metre-frame polygons. A ring that is not
+    /// inside the exterior is not a hole (a runway written as two rectangles in one
+    /// Polygon, say): it becomes its own polygon. Fed straight to ear-cutting, such a
+    /// "hole" spans triangles right across the airport.
+    fn clean(&self, p: &Polygon<f64>) -> Vec<Polygon<f64>> {
+        let f = &self.frame;
+        let proj = |ls: &LineString<f64>| {
+            let mut pts: Vec<Coord<f64>> = Vec::with_capacity(ls.0.len());
+            for c in &ls.0 {
+                let m = f.forward(c.x, c.y);
+                if m.x.abs() > MAX_M || m.y.abs() > MAX_M {
+                    continue;
+                }
+                if pts.last().map_or(true, |l| dist(*l, m) > 0.05) {
+                    pts.push(m);
+                }
+            }
+            if pts.len() >= 3 && pts.first() != pts.last() {
+                pts.push(pts[0]);
+            }
+            LineString(pts).simplify(SIMPLIFY_M)
+        };
+        let ext = proj(p.exterior());
+        if ext.0.len() < 4 {
+            return vec![];
+        }
+        let shell = Polygon::new(ext.clone(), vec![]);
+        let mut holes = Vec::new();
+        let mut extra = Vec::new();
+        for r in p.interiors() {
+            let ring = proj(r);
+            if ring.0.len() < 4 {
+                continue;
+            }
+            if shell.contains(&ring.0[0]) {
+                holes.push(ring);
+            } else {
+                extra.push(Polygon::new(ring, vec![]));
+            }
+        }
+        let mut out = vec![Polygon::new(ext, holes)];
+        out.extend(extra);
+        out
+    }
+
     /// Triangulate a filled layer. Each triangle goes to the tile of its centroid, which
     /// grows to the triangle's full extent so large ones are never culled too early.
     fn fill(&mut self, layer: &'static str, g: &Geometry<f64>) {
-        for p in polygons(g) {
-            let f = &self.frame;
-            let proj = |ls: &LineString<f64>| LineString(ls.0.iter().map(|c| f.forward(c.x, c.y)).collect::<Vec<_>>());
-            let pm = Polygon::new(proj(p.exterior()), p.interiors().iter().map(proj).collect()).simplify(SIMPLIFY_M);
-            for t in pm.earcut_triangles() {
-                let corners = [t.v1(), t.v2(), t.v3()];
-                // Drop any triangle with a stray far-off vertex (bad source geometry),
-                // else it fans across the whole map.
-                if corners.iter().any(|c| c.x.abs() > MAX_M || c.y.abs() > MAX_M) {
-                    continue;
-                }
-                let v = corners.map(|c| (c.x.round() as i64, c.y.round() as i64));
-                // Rounding to metres can flatten a sliver to nothing; skip those.
-                let area2 = (v[1].0 - v[0].0) * (v[2].1 - v[0].1) - (v[2].0 - v[0].0) * (v[1].1 - v[0].1);
-                if area2 == 0 {
-                    continue;
-                }
-                let (cx, cy) = ((corners[0].x + corners[1].x + corners[2].x) / 3.0, (corners[0].y + corners[1].y + corners[2].y) / 3.0);
-                let tile = self.tiles.entry(key(cx, cy)).or_default();
-                for &(x, y) in &v {
-                    tile.grow(x, y);
-                }
-                let buf = tile.fill.entry(layer).or_default();
-                for &(x, y) in &v {
-                    buf.push(x);
-                    buf.push(y);
+        for src in polygons(g) {
+            for pm in self.clean(src) {
+                for t in pm.earcut_triangles() {
+                    let corners = [t.v1(), t.v2(), t.v3()];
+                    let (cx, cy) = ((corners[0].x + corners[1].x + corners[2].x) / 3.0, (corners[0].y + corners[1].y + corners[2].y) / 3.0);
+                    // Ear-cutting a self-intersecting ring yields triangles outside it;
+                    // keep only those whose centre is really inside the polygon.
+                    if !pm.contains(&Coord { x: cx, y: cy }) {
+                        continue;
+                    }
+                    let v = corners.map(|c| (c.x.round() as i64, c.y.round() as i64));
+                    // Rounding to metres can flatten a sliver to nothing; skip those.
+                    let area2 = (v[1].0 - v[0].0) * (v[2].1 - v[0].1) - (v[2].0 - v[0].0) * (v[1].1 - v[0].1);
+                    if area2 == 0 {
+                        continue;
+                    }
+                    let tile = self.tiles.entry(key(cx, cy)).or_default();
+                    for &(x, y) in &v {
+                        tile.grow(x, y);
+                    }
+                    let buf = tile.fill.entry(layer).or_default();
+                    for &(x, y) in &v {
+                        buf.push(x);
+                        buf.push(y);
+                    }
                 }
             }
+        }
+    }
+
+    /// Outline the outer boundary of a set of polygons after unioning them, so that
+    /// seams between adjacent elements (taxiway pieces, runway sections) do not show:
+    /// the OANS shoulder look around taxiways, and the white edge around runways.
+    fn outline_union(&mut self, layer: &'static str, polys: &[Polygon<f64>]) {
+        let merged: MultiPolygon<f64> = crate::geom::ops::union_all(polys);
+        for p in &merged.0 {
+            for ring in std::iter::once(p.exterior()).chain(p.interiors()) {
+                self.piece_line(layer, &ring.0);
+            }
+        }
+    }
+
+    /// A polyline already in the metre frame, cut into tile-sized pieces.
+    fn piece_line(&mut self, layer: &'static str, pts: &[Coord<f64>]) {
+        let mut piece: Vec<Coord<f64>> = Vec::new();
+        let mut len = 0.0;
+        for &c in pts {
+            match piece.last() {
+                None => piece.push(c),
+                Some(&last) => {
+                    let d = dist(last, c);
+                    if d < 1.0 {
+                        continue;
+                    }
+                    piece.push(c);
+                    len += d;
+                    if len >= MAX_PIECE {
+                        self.piece(layer, &piece);
+                        piece = vec![c];
+                        len = 0.0;
+                    }
+                }
+            }
+        }
+        if piece.len() >= 2 {
+            self.piece(layer, &piece);
         }
     }
 
@@ -248,16 +331,6 @@ impl Grid {
             flat.push(y);
         }
         tile.line.entry(layer).or_default().push(flat);
-    }
-
-    /// Emit a polygon's rings as edge lines, so filled pavement gets a defined boundary
-    /// (the taxiway/runway shoulder look).
-    fn outline(&mut self, layer: &'static str, g: &Geometry<f64>) {
-        for p in polygons(g) {
-            for ring in std::iter::once(p.exterior()).chain(p.interiors()) {
-                self.line(layer, &Geometry::LineString(ring.clone()));
-            }
-        }
     }
 
     fn label(&mut self, at: Coord<f64>, text: &str, kind: u8) {
@@ -310,6 +383,9 @@ pub fn render(dir: &Path) -> Result<String> {
     let my = frame.forward(lon0, lat0 + d).y / d;
     let mut g = Grid { frame, tiles: BTreeMap::new() };
 
+    // Pavement fills, plus the cleaned polygons kept for the outlines below.
+    let mut pavement: Vec<Polygon<f64>> = Vec::new();
+    let mut runways: Vec<Polygon<f64>> = Vec::new();
     for (file, layer) in [
         ("apronelement", "apron"),
         ("deicingarea", "apron"),
@@ -321,22 +397,37 @@ pub fn render(dir: &Path) -> Result<String> {
     ] {
         for f in load_layer(dir, file) {
             g.fill(layer, &f.geom);
+            for p in polygons(&f.geom) {
+                let cleaned = g.clean(p);
+                if layer == "runway" {
+                    runways.extend(cleaned.iter().cloned());
+                }
+                pavement.extend(cleaned);
+            }
         }
     }
-    // Edge outlines give the pavement a defined boundary (the shoulder look).
-    for file in ["taxiwayelement", "runwayelement", "runwaydisplacedarea", "apronelement"] {
-        for f in load_layer(dir, file) {
-            g.outline("edge", &f.geom);
-        }
-    }
+    // The OANS draws a shoulder strip around the outside of all pavement, and a white
+    // edge around each runway. Both come from the union, so seams between adjacent
+    // elements never show.
+    g.outline_union("shoulder", &pavement);
+    g.outline_union("rwyedge", &runways);
+    // Only landmarks carry a name in the data (terminals, tower, hangars). A terminal
+    // split into several polygons is labelled once, on its largest part.
+    let mut named: BTreeMap<String, (f64, Coord<f64>)> = BTreeMap::new();
     for f in load_layer(dir, "verticalpolygonalstructure") {
         let terminal = prop_f64(&f.props, "plysttyp") == Some(1.0);
         g.fill(if terminal { "terminal" } else { "building" }, &f.geom);
-        // Only landmarks carry a name in the data (terminals, tower, hangars).
         if let (Some(name), Some(c)) = (prop_str(&f.props, "name"), f.geom.centroid()) {
+            let area = polygons(&f.geom).iter().map(|p| geo::Area::unsigned_area(*p)).sum::<f64>();
             let at = g.project(c.0);
-            g.label(at, &name, TERM);
+            let e = named.entry(name).or_insert((-1.0, at));
+            if area > e.0 {
+                *e = (area, at);
+            }
         }
+    }
+    for (name, (_, at)) in named {
+        g.label(at, &name, TERM);
     }
 
     let guides = load_layer(dir, "taxiwayguidanceline");
@@ -552,6 +643,37 @@ mod tests {
         let s = std::fs::read_to_string(&p).unwrap();
         assert!(s.contains(r#"local BRIDGE = "http://127.0.0.1:8770/" --@BRIDGE@"#), "trailing slash added");
         assert_eq!(s.matches("local BRIDGE").count(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_disjoint_ring_is_not_a_hole() {
+        // KJFK runway 13L/31R: one Polygon holding two separate rectangles. Ear-cutting
+        // that as exterior+hole spans triangles across the airport (3.7 km edges).
+        let root = std::env::temp_dir().join(format!("amdbgen-xph-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let ap = root.join("TEST");
+        std::fs::create_dir_all(&ap).unwrap();
+        std::fs::write(ap.join("manifest.json"), r#"{"icao":"TEST","name":"t","arp":[50.0,8.0]}"#).unwrap();
+        std::fs::write(
+            ap.join("runwayelement.geojson"),
+            r#"{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"idrwy":"09/27"},
+               "geometry":{"type":"Polygon","coordinates":[
+                 [[7.990,50.0000],[7.995,50.0000],[7.995,50.0004],[7.990,50.0004],[7.990,50.0000]],
+                 [[8.020,50.0100],[8.025,50.0100],[8.025,50.0104],[8.020,50.0104],[8.020,50.0100]]]}}]}"#,
+        )
+        .unwrap();
+        let lua = render(&ap).unwrap();
+        let line = lua.lines().find(|l| l.contains("runway={")).unwrap_or("");
+        // Two rectangles -> four triangles; every edge under 400 m.
+        let nums: Vec<i64> = line.split("runway={").nth(1).unwrap().split('}').next().unwrap().split(',').filter_map(|s| s.trim().parse().ok()).collect();
+        let tris = nums.len() / 6;
+        assert!(tris >= 2, "expected triangles, got {tris} in {line}");
+        for t in nums.chunks(6) {
+            let e = |a: usize, b: usize| (((t[a] - t[b]).pow(2) + (t[a + 1] - t[b + 1]).pow(2)) as f64).sqrt();
+            let longest = e(0, 2).max(e(2, 4)).max(e(4, 0));
+            assert!(longest < 400.0, "triangle spans {longest:.0} m: {t:?}");
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 
