@@ -53,6 +53,22 @@ enum Cmd {
     Chart(PreviewArgs),
     /// Write an OANS-style moving-map preview (viewer.html) for a built airport.
     View(PreviewArgs),
+    /// Write X-Plane OANS data (<ICAO>/oans.lua and index.lua) for the FlyWithLua moving map, and optionally install the script.
+    Xplane {
+        /// ICAO codes (looked up under --dir) or airport folders. Default: every built airport.
+        targets: Vec<String>,
+        #[arg(long, default_value = "out")]
+        dir: PathBuf,
+        /// Every airport in --dir (the default when no targets are given).
+        #[arg(long)]
+        all: bool,
+        /// Also copy the FlyWithLua script into X-Plane, pointing it at --dir.
+        #[arg(long)]
+        install: bool,
+        /// X-Plane 12 root for --install (default: auto-detected).
+        #[arg(long = "xplane-dir")]
+        xplane_dir: Option<PathBuf>,
+    },
     /// Per-layer feature counts, sources and file sizes of built airports.
     Stats {
         /// ICAO codes (looked up under --dir) or airport folders. Default: every airport in --dir.
@@ -913,6 +929,7 @@ pub fn run() -> Result<()> {
             Ok(())
         }
         Cmd::View(p) => preview_cmd(p, Preview::Viewer),
+        Cmd::Xplane { targets, dir, all, install, xplane_dir } => xplane_cmd(targets, dir, all, install, xplane_dir),
         Cmd::Stats { targets, dir } => stats_cmd(targets, dir),
         Cmd::Zip { icaos, dir, all } => zip_cmd(icaos, dir, all),
         Cmd::Clean { icaos, dir, all } => clean_cmd(icaos, dir, all),
@@ -925,6 +942,40 @@ pub fn run() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// X-Plane OANS data for built airports, the index, and optionally the script install.
+fn xplane_cmd(targets: Vec<String>, dir: PathBuf, all: bool, install: bool, xplane_dir: Option<PathBuf>) -> Result<()> {
+    let targets = if all || targets.is_empty() { built_airports(&dir) } else { targets };
+    if targets.is_empty() {
+        return Err(anyhow!("no built airports in {}", dir.display()));
+    }
+    let t0 = std::time::Instant::now();
+    let (mut ok, mut bytes) = (0usize, 0u64);
+    for t in &targets {
+        let folder = resolve_target(&dir, t);
+        match crate::output::xplane::write(&folder) {
+            Ok(n) => {
+                ok += 1;
+                bytes += n;
+            }
+            Err(e) => term::warn(&format!("[{t}] {e:#}")),
+        }
+    }
+    let indexed = crate::output::xplane::write_index(&dir)?;
+    term::success(&format!(
+        "X-Plane OANS data for {ok} airport(s), {} in {} ({indexed} in the index)",
+        term::human_bytes(bytes),
+        term::human_secs(t0.elapsed().as_secs_f64())
+    ));
+    if install {
+        let root = xplane_dir.or_else(crate::sources::xplane::local::detect_install).ok_or_else(|| anyhow!("X-Plane 12 not found; pass --xplane-dir"))?;
+        // An absolute path the script can open, without Windows' \\?\ prefix.
+        let data = if dir.is_absolute() { dir.clone() } else { std::env::current_dir()?.join(&dir) };
+        let p = crate::output::xplane::install_script(&root, &data)?;
+        term::file(None, &p.display().to_string(), "FlyWithLua script installed; open it from Plugins > FlyWithLua > Macros > AMDB OANS");
+    }
+    Ok(())
 }
 
 fn preview_cmd(p: PreviewArgs, kind: Preview) -> Result<()> {

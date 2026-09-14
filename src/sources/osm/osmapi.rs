@@ -31,7 +31,9 @@ pub fn parse_xml(text: &str, st: &mut Store) -> Result<()> {
     let mut cur_rel: Option<Relation> = None;
     let mut cur_node: Option<(i64, Tags)> = None;
     let attr = |e: &quick_xml::events::BytesStart, name: &str| -> Option<String> {
-        e.attributes().flatten().find(|a| a.key.as_ref() == name).map(|a| a.value.to_string())
+        // Unescaped: the raw bytes keep XML entities, so a name like "E/F & Link" arrived
+        // as "E/F &amp; Link" in every output. Fall back to the raw text if it is malformed.
+        e.attributes().flatten().find(|a| a.key.as_ref() == name).map(|a| a.normalized_value(quick_xml::XmlVersion::Implicit1_0).map(|v| v.into_owned()).unwrap_or_else(|_| a.value.to_string()))
     };
     loop {
         let ev = r.read_event().context("osm xml")?;
@@ -272,6 +274,17 @@ pub fn fetch(http: &Http, cache: &Cache, icao: &str, bbox: BBox) -> Result<Store
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_xml_entities_in_tag_values() {
+        let xml = r#"<?xml version="1.0"?><osm version="0.6">
+          <node id="1" lat="28.5" lon="77.1"/><node id="2" lat="28.6" lon="77.2"/>
+          <way id="10"><nd ref="1"/><nd ref="2"/><tag k="name" v="Concourse E/F &amp; Link &quot;B&quot; &lt;x&gt;"/></way>
+        </osm>"#;
+        let mut st = Store::default();
+        parse_xml(xml, &mut st).unwrap();
+        assert_eq!(st.ways[&10].tags["name"], r#"Concourse E/F & Link "B" <x>"#);
+    }
 
     #[test]
     fn parses_osm_xml() {

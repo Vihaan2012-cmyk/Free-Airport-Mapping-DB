@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- X-Plane 12: an A380-style airport moving map as a FlyWithLua script. `amdbgen xplane`
+  writes compact per-airport Lua data (triangulated, simplified, tiled) and `--install`
+  puts the script in X-Plane pointing at it.
+- FAA open airport-mapping layers for US airports: hotspots with their published caution
+  text, and pavement when no scenery exists.
+- OSM: every source at once. The map API and each Overpass endpoint form a pool worked by
+  a shared queue, with regional instances for their own countries and a per-source
+  deadline (about 4x faster bulk builds).
+- Fixed: OSM names fetched through the map API kept XML entities ("E/F &amp; Link").
+
 ## 0.1.0 (2026-09-13)
 
 - `amdbgen`: builds all 45 DO-272 / AMXM airport-mapping layers for any airport from

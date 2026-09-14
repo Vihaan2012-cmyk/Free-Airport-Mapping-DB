@@ -158,6 +158,23 @@ subscription, so `serve` rewrites that one handler; backup kept, `unpatch` resto
 package folder must sort after `synaptic-aircraft-a220`, e.g. `zzz-gm5-a220-amm`,
 which `tools/port_a220_amm.py` does for you).
 
+## X-Plane 12
+
+An A380-style airport moving map in a floating window, drawn by a FlyWithLua script
+from the same data. Needs [FlyWithLua NG+](https://forums.x-plane.org/index.php?/files/file/82888-flywithlua-ng-next-generation-plus-edition-for-x-plane-12-win-lin-mac/).
+
+```
+amdbgen xplane --all --dir out --install     # data for every built airport + install the script
+```
+
+In the sim: Plugins > FlyWithLua > FlyWithLua Macros > **AMDB OANS**, or bind a key to
+`amdb/oans/toggle`. It loads the nearest airport by itself; `+` and `-` change the
+range (0.25 to 4 NM), and ARC / PLAN switches between heading-up and north-up.
+
+`xplane` writes `<ICAO>/oans.lua` (integer metres from the reference point, polygons
+already triangulated, bucketed into 300 m tiles) and an `index.lua`, so the script only
+draws what is on screen. Run it again after building more airports.
+
 ## Charts and previews
 
 ```
@@ -175,7 +192,8 @@ table, frequencies, scale bar; portrait or landscape to fit the field.
 - `src/geom` local metre projection, Bézier tessellation, buffers, boolean ops
 - `src/sources` xplane (gateway, local, apt.dat), osm (map API, Overpass, tags), index, faa, simbrief, overrides
 - `src/build` conflation and derivation: runways, markings, pavement, lines, stands, ASRN, structures, signs
-- `src/output` GeoJSON, Geobuf, manifest, PDF chart, HTML preview
+- `src/output` GeoJSON, Geobuf, manifest, PDF chart, HTML preview, X-Plane Lua data
+- `tools/xplane` the FlyWithLua moving-map script
 - `src/bridge` server, Navigraph-schema compat, hosts redirect, TLS, patcher, settings
 - `src/pipeline.rs` fetch, merge, build, validate, write
 
