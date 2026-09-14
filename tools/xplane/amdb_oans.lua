@@ -14,8 +14,7 @@ local BRIDGE = "http://127.0.0.1:8770/" --@BRIDGE@
 
 local RANGES_NM = { 0.25, 0.5, 1, 2, 4 }
 local BAR_H = 34                  -- height of the control bar, px
-local REFETCH_S = 20              -- ask the bridge for the nearest airport at least this often
-local LEAVE_M = 9000              -- ...or as soon as we are this far from the loaded one
+local POLL_S = 4                  -- seconds between "which airport am I near" checks (a tiny reply)
 
 -- A380 OANS palette. ImGui colours are 0xAABBGGRR.
 local C = {
@@ -33,11 +32,13 @@ local LABEL_MAX_RANGE = { [TWY] = 3, [RWY] = 5, [STAND] = 1, [TERM] = 4 }
 -- ---------------------------------------------------------------- state
 local wnd = nil
 local ap = nil           -- the loaded airport table from the bridge
+local ap_icao = nil      -- the airport currently drawn
+local want_icao = nil    -- nearest airport the bridge last reported, if not yet loaded
 local range_i = 2
 local plan = false
 local status = "starting"
 local last_err = nil
-local fetch_at = 0       -- next os.clock() at which to ask the bridge
+local poll_at = 0        -- next os.clock() at which to poll the bridge
 local http = nil
 
 -- ---------------------------------------------------------------- datarefs
@@ -53,52 +54,58 @@ bind("amdb_lon", "sim/flightmodel/position/longitude")
 bind("amdb_hdg", "sim/flightmodel/position/true_psi", "sim/flightmodel/position/psi")
 
 -- ---------------------------------------------------------------- bridge
--- A short blocking GET on loopback: the bridge answers at once (it builds airports on
--- a background thread and replies "building" until one is ready), so this never stalls.
-local function fetch()
+-- Short blocking GETs on loopback. The frequent one (`get_json`) returns a tiny reply;
+-- the heavy airport data is fetched only when the nearest airport changes.
+local function req(url)
     if not http then
         local ok, mod = pcall(require, "socket.http")
-        if not ok then status = "FlyWithLua socket module missing"; return end
+        if not ok then return nil, "FlyWithLua socket module missing" end
         http = mod
         http.TIMEOUT = 3
     end
-    local url = string.format("%sxp/nearest?lat=%.6f&lon=%.6f", BRIDGE, amdb_lat, amdb_lon)
     local body, code = http.request(url)
-    if not body or code ~= 200 then
-        status = "bridge not running - start:  amdb-bridge serve --xplane"
+    if not body or code ~= 200 then return nil, "bridge not running - start:  amdb-bridge serve --xplane" end
+    local chunk = loadstring(body)
+    if not chunk then return nil, "bad data from bridge" end
+    local ok, t = pcall(chunk)
+    if not ok or type(t) ~= "table" then return nil, "bad data from bridge" end
+    return t
+end
+
+-- Which airport are we near? A tiny reply, safe to poll often.
+local function poll()
+    local t, err = req(string.format("%sxp/nearest?lat=%.6f&lon=%.6f", BRIDGE, amdb_lat, amdb_lon))
+    if not t then status = err; return end
+    if not t.icao then
+        want_icao = nil
+        if not ap then status = "no airport near you" end
         return
     end
-    local chunk = loadstring(body)
-    if not chunk then status = "bad data from bridge"; return end
-    local ok, t = pcall(chunk)
-    if not ok or type(t) ~= "table" then status = "bad data from bridge"; last_err = tostring(t); return end
-    if t.building then
-        status = "building " .. tostring(t.building) .. " ..."   -- keep the previous airport on screen
-    elseif t.icao then
-        ap = t
-        status = t.icao .. "  " .. (t.name or "")
+    if t.icao == ap_icao then return end          -- already drawing it
+    want_icao = t.icao
+    -- Fetch the full data (builds on demand: returns {building=...} until ready).
+    local d, derr = req(BRIDGE .. "xp/" .. t.icao)
+    if not d then status = derr; return end
+    if d.building then
+        status = "building " .. tostring(d.building) .. " ..."   -- keep the previous airport on screen
+    elseif d.icao then
+        ap = d
+        ap_icao = d.icao
+        want_icao = nil
+        status = d.icao .. "  " .. (d.name or "")
         last_err = nil
-    else
-        status = "no airport near you"
     end
 end
 
--- Once a second while the window is open: refetch when we have nothing, are far from
--- the loaded airport, or the timer is up (to notice a change of airport).
+-- Every few seconds while the window is open.
 function amdb_tick()
     if not wnd then return end
-    local now = os.clock()
-    local want = (ap == nil)
-    if ap then
-        local dlon = (amdb_lon - ap.lon) * ap.mx
-        local dlat = (amdb_lat - ap.lat) * ap.my
-        if dlon * dlon + dlat * dlat > LEAVE_M * LEAVE_M then want = true end
-    end
-    if want or now >= fetch_at then
-        fetch_at = now + (ap and REFETCH_S or 3)
-        local ok, e = pcall(fetch)
-        if not ok then last_err = tostring(e) end
-    end
+    local now = os.time()   -- wall-clock seconds
+    -- Poll faster while we are waiting on a build, slower once an airport is drawn.
+    if now < poll_at then return end
+    poll_at = now + ((ap and not want_icao) and POLL_S or 2)
+    local ok, e = pcall(poll)
+    if not ok then last_err = tostring(e) end
 end
 
 -- ---------------------------------------------------------------- drawing
@@ -251,7 +258,7 @@ end
 -- ---------------------------------------------------------------- window
 function amdb_open()
     if wnd then return end
-    fetch_at = 0
+    poll_at = 0
     wnd = float_wnd_create(560, 620, 1, true)
     float_wnd_set_title(wnd, "AMDB OANS")
     float_wnd_set_imgui_builder(wnd, "amdb_build")

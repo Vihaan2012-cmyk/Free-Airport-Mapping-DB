@@ -223,16 +223,24 @@ fn lua_q(s: &str) -> String {
 /// (`return {...}`) the FlyWithLua script loads: the airport when built, or
 /// `{building="ICAO"}` while a background build runs.
 fn handle_xp(store: Arc<Store>, req: Request, rest: &str, params: &Map<String, Value>) {
-    let icao = if rest.eq_ignore_ascii_case("nearest") {
+    // `nearest` is the frequent poll: it returns only the ICAO of the nearest airport
+    // (a tiny reply, no build), so the script fetches the heavy data just once per
+    // airport, when the ICAO changes.
+    if rest.eq_ignore_ascii_case("nearest") {
         let num = |k: &str| params.get(k).and_then(Value::as_str).and_then(|s| s.parse::<f64>().ok());
-        match (num("lat"), num("lon")) {
-            (Some(lat), Some(lon)) if lat.abs() <= 90.0 && lon.abs() <= 180.0 => match store.nearest(lat, lon, 80.0, 1).first().and_then(|r| r.get("idarpt")).and_then(Value::as_str) {
-                Some(i) => i.to_string(),
-                None => return respond_text(req, 200, "return {}\n"),
+        return match (num("lat"), num("lon")) {
+            (Some(lat), Some(lon)) if lat.abs() <= 90.0 && lon.abs() <= 180.0 => match store.nearest(lat, lon, 80.0, 1).into_iter().next() {
+                Some(r) => {
+                    let icao = r.get("idarpt").and_then(Value::as_str).unwrap_or("");
+                    let name = r.get("name").and_then(Value::as_str).unwrap_or("");
+                    respond_text(req, 200, &format!("return {{icao={},name={}}}\n", lua_q(icao), lua_q(name)))
+                }
+                None => respond_text(req, 200, "return {}\n"),
             },
-            _ => return respond_text(req, 400, "return {error=\"need lat and lon\"}\n"),
-        }
-    } else if rest.len() == 4 && rest.chars().all(|c| c.is_ascii_alphanumeric()) {
+            _ => respond_text(req, 400, "return {error=\"need lat and lon\"}\n"),
+        };
+    }
+    let icao = if rest.len() == 4 && rest.chars().all(|c| c.is_ascii_alphanumeric()) {
         rest.to_uppercase()
     } else {
         return respond_text(req, 404, "return {}\n");
