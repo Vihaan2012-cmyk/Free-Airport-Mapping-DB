@@ -12,7 +12,7 @@
 
 use crate::geom::LocalFrame;
 use anyhow::{anyhow, Context, Result};
-use geo::{Centroid, Contains, Simplify, TriangulateEarcut};
+use geo::{Area, Centroid, Contains, Simplify, TriangulateEarcut};
 use geo_types::{Coord, Geometry, LineString, MultiPolygon, Polygon};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -26,9 +26,19 @@ const TILE: f64 = 300.0;
 const MAX_M: f64 = 20000.0;
 /// Long lines are cut into pieces this long so each lands in the tile it crosses.
 const MAX_PIECE: f64 = 150.0;
-/// Douglas-Peucker tolerance, metres. Sub-pixel at the closest OANS range, so bends stay
-/// smooth, while most redundant bezier points are dropped for fewer draw calls.
-const SIMPLIFY_M: f64 = 0.3;
+/// Douglas-Peucker tolerance, metres. Still sub-pixel at the closest OANS range (0.25 NM
+/// is about 0.9 px/m), so curves stay smooth, while the dense points left by tessellating
+/// the source beziers are dropped: fewer triangles and segments per frame.
+const SIMPLIFY_M: f64 = 1.0;
+/// Sheds and service huts are not part of the OANS depiction, and at a big airport there
+/// are hundreds of them. Keep terminals, named landmarks, and anything this size or over.
+const MIN_BUILDING_M2: f64 = 300.0;
+/// The shoulder and runway-edge outlines are decorative bands a couple of pixels wide, and
+/// they come from the boundary of a union, which is very dense. A coarser tolerance is
+/// invisible and saves thousands of segments a frame.
+const OUTLINE_SIMPLIFY_M: f64 = 2.0;
+/// Guidance lines for the wide view, where a metre is a fraction of a pixel.
+const FAR_SIMPLIFY_M: f64 = 20.0;
 /// Label kinds, matching the constants in the script.
 const TWY: u8 = 1;
 const RWY: u8 = 2;
@@ -256,7 +266,7 @@ impl Grid {
         let merged: MultiPolygon<f64> = crate::geom::ops::union_all(polys);
         for p in &merged.0 {
             for ring in std::iter::once(p.exterior()).chain(p.interiors()) {
-                self.piece_line(layer, &ring.0);
+                self.piece_line(layer, &ring.simplify(OUTLINE_SIMPLIFY_M).0);
             }
         }
     }
@@ -290,31 +300,14 @@ impl Grid {
 
     /// A line layer, cut into short pieces with near-duplicate points dropped.
     fn line(&mut self, layer: &'static str, g: &Geometry<f64>) {
+        self.line_tol(layer, g, SIMPLIFY_M);
+    }
+
+    /// The same, simplified at `tol` metres.
+    fn line_tol(&mut self, layer: &'static str, g: &Geometry<f64>, tol: f64) {
         for ls in lines(g) {
-            let pts: Vec<Coord<f64>> = LineString(ls.0.iter().map(|c| self.project(*c)).collect::<Vec<_>>()).simplify(SIMPLIFY_M).0;
-            let mut piece: Vec<Coord<f64>> = Vec::new();
-            let mut len = 0.0;
-            for c in pts {
-                match piece.last() {
-                    None => piece.push(c),
-                    Some(&last) => {
-                        let d = dist(last, c);
-                        if d < 1.5 {
-                            continue;
-                        }
-                        piece.push(c);
-                        len += d;
-                        if len >= MAX_PIECE {
-                            self.piece(layer, &piece);
-                            piece = vec![c];
-                            len = 0.0;
-                        }
-                    }
-                }
-            }
-            if piece.len() >= 2 {
-                self.piece(layer, &piece);
-            }
+            let pts: Vec<Coord<f64>> = LineString(ls.0.iter().map(|c| self.project(*c)).collect::<Vec<_>>()).simplify(tol).0;
+            self.piece_line(layer, &pts);
         }
     }
 
@@ -416,9 +409,14 @@ pub fn render(dir: &Path) -> Result<String> {
     let mut named: BTreeMap<String, (f64, Coord<f64>)> = BTreeMap::new();
     for f in load_layer(dir, "verticalpolygonalstructure") {
         let terminal = prop_f64(&f.props, "plysttyp") == Some(1.0);
+        let name = prop_str(&f.props, "name");
+        // Projected area, so the threshold is real square metres.
+        let area: f64 = polygons(&f.geom).into_iter().flat_map(|p| g.clean(p)).map(|p| p.unsigned_area()).sum();
+        if !terminal && name.is_none() && area < MIN_BUILDING_M2 {
+            continue;
+        }
         g.fill(if terminal { "terminal" } else { "building" }, &f.geom);
-        if let (Some(name), Some(c)) = (prop_str(&f.props, "name"), f.geom.centroid()) {
-            let area = polygons(&f.geom).iter().map(|p| geo::Area::unsigned_area(*p)).sum::<f64>();
+        if let (Some(name), Some(c)) = (name, f.geom.centroid()) {
             let at = g.project(c.0);
             let e = named.entry(name).or_insert((-1.0, at));
             if area > e.0 {
@@ -433,6 +431,9 @@ pub fn render(dir: &Path) -> Result<String> {
     let guides = load_layer(dir, "taxiwayguidanceline");
     for f in &guides {
         g.line("guide", &f.geom);
+        // The wide view draws the taxiway network alone, at a scale where fine detail is
+        // sub-pixel: a coarse copy keeps a whole big airport inside the vertex budget.
+        g.line_tol("guidefar", &f.geom, FAR_SIMPLIFY_M);
     }
     for (file, layer) in [("standguidanceline", "stand"), ("runwayexitline", "exit"), ("taxiwayholdingposition", "hold"), ("paintedcenterline", "rwycl")] {
         for f in load_layer(dir, file) {

@@ -27,7 +27,7 @@ local C = {
     runway = rgb(0x80, 0x80, 0x80), rwyext = rgb(0x80, 0x80, 0x80), runway_far = rgb(255, 255, 255),
     building = rgb(0x32, 0x86, 0xda), terminal = rgb(0, 255, 255),
     shoulder = rgb(0x85, 0x45, 0x1d), rwyedge = rgb(255, 255, 255),
-    guide = rgb(255, 255, 0), guide_far = rgb(0x66, 0x66, 0x66), exit = rgb(255, 255, 0),
+    guide = rgb(255, 255, 0), guidefar = rgb(0x66, 0x66, 0x66), exit = rgb(255, 255, 0),
     stand = rgb(255, 255, 0), hold = rgb(255, 0x2f, 0), rwycl = rgb(255, 255, 255),
     twy_txt = rgb(255, 255, 0), rwy_txt = rgb(255, 255, 255), rwy_box = rgb(0, 0, 0),
     std_txt = rgb(200, 200, 200), term_txt = rgb(0, 255, 255), shadow = rgb(0, 0, 0),
@@ -35,10 +35,26 @@ local C = {
 }
 local FILLS = { "apron", "taxiway", "rwyext", "runway", "building", "terminal" }
 -- Drawn in this order; widths in pixels. Stand lines only at the two closest ranges.
-local LINES = { { "shoulder", 2.5 }, { "rwyedge", 1.2 }, { "stand", 1.6 }, { "guide", 1.85 }, { "exit", 1.85 }, { "hold", 3.0 }, { "rwycl", 1.5 } }
+local LINES = { { "shoulder", 2.5 }, { "rwyedge", 1.2 }, { "stand", 1.6 }, { "guidefar", 2.2 }, { "guide", 1.85 }, { "exit", 1.85 }, { "hold", 3.0 }, { "rwycl", 1.5 } }
 local FAR_RANGE = 4               -- from this range index up: runways white, guidance lines grey (declutter)
 local TWY, RWY, STAND, TERM = 1, 2, 3, 4
 local LABEL_MAX_RANGE = { [TWY] = 3, [RWY] = 5, [STAND] = 1, [TERM] = 3 }
+
+-- ImGui packs one window's geometry into 16-bit indices, so a draw list that goes past
+-- 65,535 vertices wraps around and scatters triangles across the window. Stay well under
+-- it: cull to what is actually on screen, and drop detail in steps when a frame runs big.
+-- Level 1 is everything; 2 drops shoulders and plain buildings; 3 is the Airbus wide-view
+-- depiction, white runways and grey guidance lines only.
+local MAX_VERTS = 56000
+local SKIP_FILL = {
+    [2] = { building = true },
+    [3] = { apron = true, taxiway = true, building = true, terminal = true },
+}
+local SKIP_LINE = {
+    [1] = { guidefar = true },
+    [2] = { shoulder = true, guidefar = true },
+    [3] = { shoulder = true, rwyedge = true, stand = true, exit = true, hold = true, rwycl = true, guide = true },
+}
 
 -- ---------------------------------------------------------------- state
 local wnd = nil
@@ -47,6 +63,7 @@ local ap_icao = nil      -- the airport currently drawn
 local want_icao = nil    -- nearest airport the bridge last reported, if not yet loaded
 local range_i = 2
 local plan = false
+local quality = 1        -- declutter level, raised automatically if a frame runs near MAX_VERTS
 local status = "starting"
 local last_err = nil
 local poll_at = 0        -- next os.clock() at which to poll the bridge
@@ -173,18 +190,29 @@ local function draw(w, h)
     end
 
     local far_mode = eff_i >= FAR_RANGE
+    local q = far_mode and 3 or quality
+    local skip_f, skip_l = SKIP_FILL[q], SKIP_LINE[q]
+    local nv = 0                    -- estimated ImGui vertices this frame
+
     local tri = imgui.DrawList_AddTriangleFilled
     for _, layer in ipairs(FILLS) do
-        local col = C[layer]
-        if far_mode and layer == "runway" then col = C.runway_far end
-        for _, t in ipairs(vis) do
-            local f = t.f and t.f[layer]
-            if f then
-                for i = 1, #f, 6 do
-                    local px, py = P(f[i], f[i + 1])
-                    local qx, qy = P(f[i + 2], f[i + 3])
-                    local rx, ry = P(f[i + 4], f[i + 5])
-                    tri(px, py, qx, qy, rx, ry, col)
+        if not (skip_f and skip_f[layer]) then
+            local col = C[layer]
+            if q >= 3 and layer == "runway" then col = C.runway_far end
+            for _, t in ipairs(vis) do
+                if nv >= MAX_VERTS then break end
+                local f = t.f and t.f[layer]
+                if f then
+                    for i = 1, #f, 6 do
+                        local px, py = P(f[i], f[i + 1])
+                        local qx, qy = P(f[i + 2], f[i + 3])
+                        local rx, ry = P(f[i + 4], f[i + 5])
+                        -- Tiles are only a coarse prefilter; draw what really lands on screen.
+                        if math.max(px, qx, rx) >= 0 and math.min(px, qx, rx) <= w and math.max(py, qy, ry) >= 0 and math.min(py, qy, ry) <= mh then
+                            tri(px, py, qx, qy, rx, ry, col)
+                            nv = nv + 6
+                        end
+                    end
                 end
             end
         end
@@ -193,17 +221,21 @@ local function draw(w, h)
     local line = imgui.DrawList_AddLine
     for _, spec in ipairs(LINES) do
         local layer, thick = spec[1], spec[2]
-        if layer ~= "stand" or eff_i <= 2 then
+        if not (skip_l and skip_l[layer]) and (layer ~= "stand" or eff_i <= 2) then
             local col = C[layer]
-            if far_mode and (layer == "guide" or layer == "exit") then col = C.guide_far end
+            local cost = thick > 1.0 and 8 or 6      -- ImGui verts per antialiased segment
             for _, t in ipairs(vis) do
+                if nv >= MAX_VERTS then break end
                 local ls = t.l and t.l[layer]
                 if ls then
                     for _, pl in ipairs(ls) do
                         local px, py = P(pl[1], pl[2])
                         for i = 3, #pl, 2 do
                             local qx, qy = P(pl[i], pl[i + 1])
-                            line(px, py, qx, qy, col, thick)
+                            if math.max(px, qx) >= 0 and math.min(px, qx) <= w and math.max(py, qy) >= 0 and math.min(py, qy) <= mh then
+                                line(px, py, qx, qy, col, thick)
+                                nv = nv + cost
+                            end
                             px, py = qx, qy
                         end
                     end
@@ -220,6 +252,7 @@ local function draw(w, h)
         local half = #s * 3.5
         txt(x - half + 1, y - 6, C.shadow, s)
         txt(x - half, y - 7, col, s)
+        nv = nv + #s * 8                      -- a glyph quad each, drawn twice
     end
     for _, kind in ipairs({ STAND, TERM, TWY, RWY }) do
         if eff_i <= LABEL_MAX_RANGE[kind] then
@@ -240,6 +273,7 @@ local function draw(w, h)
                                     if imgui.SetWindowFontScale then imgui.SetWindowFontScale(1.6) end
                                     txt(sx - half, sy - 11, C.rwy_txt, s)
                                     if imgui.SetWindowFontScale then imgui.SetWindowFontScale(1.0) end
+                                    nv = nv + #s * 4 + 6
                                 elseif kind == STAND then
                                     label(sx, sy, C.std_txt, s)
                                 else
@@ -277,6 +311,14 @@ local function draw(w, h)
 
     txt(10, 8, C.ring, plan and "PLAN" or string.format("ARC  %s NM", tostring(RANGES_NM[range_i])))
     txt(10, 24, C.dim, status)
+
+    -- Keep the next frame inside the index limit: shed a level of detail when this one ran
+    -- close to the budget, and take it back once there is comfortable room again.
+    if nv > MAX_VERTS * 0.92 then
+        quality = math.min(3, quality + 1)
+    elseif nv < MAX_VERTS * 0.45 and quality > 1 then
+        quality = quality - 1
+    end
 end
 
 function amdb_build(wnd_in, x, y)

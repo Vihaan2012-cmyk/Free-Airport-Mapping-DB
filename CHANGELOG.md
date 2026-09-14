@@ -11,6 +11,13 @@
 - OSM: every source at once. The map API and each Overpass endpoint form a pool worked by
   a shared queue, with regional instances for their own countries and a per-source
   deadline (about 4x faster bulk builds).
+- Fixed: the X-Plane moving map scattered white triangles across the window at big
+  airports. ImGui indexes one draw list with 16-bit integers, so a frame over 65,535
+  vertices wrapped around; a full Kennedy frame needed 110,352. Frames now cull to what is
+  really on screen, shed detail in steps as the range widens (the wide view is the Airbus
+  depiction: white runways and a grey taxiway network), and stay inside a vertex budget.
+- Fixed: runways and taxiways written as several rings in one polygon were ear-cut as if
+  the extra rings were holes, spanning triangles across the airport.
 - Fixed: OSM names fetched through the map API kept XML entities ("E/F &amp; Link").
 
 ## 0.1.0 (2026-09-13)
