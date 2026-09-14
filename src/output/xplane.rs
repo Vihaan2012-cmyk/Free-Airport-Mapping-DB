@@ -20,6 +20,10 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 const TILE: f64 = 300.0;
+/// Anything farther than this from the reference point is a data error (a stray OSM
+/// node), not a real airport feature; dropping it prevents triangles and lines from
+/// fanning across the whole map. The largest airports are under 8 km from their ARP.
+const MAX_M: f64 = 20000.0;
 /// Long lines are cut into pieces this long so each lands in the tile it crosses.
 const MAX_PIECE: f64 = 150.0;
 /// Douglas-Peucker tolerance, metres. Sub-pixel at the closest OANS range, so bends stay
@@ -176,6 +180,11 @@ impl Grid {
             let pm = Polygon::new(proj(p.exterior()), p.interiors().iter().map(proj).collect()).simplify(SIMPLIFY_M);
             for t in pm.earcut_triangles() {
                 let corners = [t.v1(), t.v2(), t.v3()];
+                // Drop any triangle with a stray far-off vertex (bad source geometry),
+                // else it fans across the whole map.
+                if corners.iter().any(|c| c.x.abs() > MAX_M || c.y.abs() > MAX_M) {
+                    continue;
+                }
                 let v = corners.map(|c| (c.x.round() as i64, c.y.round() as i64));
                 // Rounding to metres can flatten a sliver to nothing; skip those.
                 let area2 = (v[1].0 - v[0].0) * (v[2].1 - v[0].1) - (v[2].0 - v[0].0) * (v[1].1 - v[0].1);
@@ -227,6 +236,9 @@ impl Grid {
     }
 
     fn piece(&mut self, layer: &'static str, pts: &[Coord<f64>]) {
+        if pts.iter().any(|c| c.x.abs() > MAX_M || c.y.abs() > MAX_M) {
+            return;
+        }
         let tile = self.tiles.entry(key(pts[0].x, pts[0].y)).or_default();
         let mut flat = Vec::with_capacity(pts.len() * 2);
         for c in pts {
@@ -250,7 +262,7 @@ impl Grid {
 
     fn label(&mut self, at: Coord<f64>, text: &str, kind: u8) {
         let text = decode_entities(text.trim());
-        if text.is_empty() {
+        if text.is_empty() || at.x.abs() > MAX_M || at.y.abs() > MAX_M {
             return;
         }
         let (x, y) = (at.x.round() as i64, at.y.round() as i64);
