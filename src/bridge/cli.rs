@@ -505,14 +505,14 @@ fn serve(a: ServeArgs) -> Result<()> {
     result
 }
 
-fn communities(extra: &[PathBuf]) -> Vec<PathBuf> {
-    let mut v = patcher::detect_community_dirs();
-    for e in extra {
-        if !v.contains(e) {
-            v.push(e.clone());
-        }
+/// The Community folders to act on: exactly the ones named on the command line, or every
+/// one detected on this machine when none were named. Naming a folder means only that
+/// folder, so `patch --community X` cannot quietly rewrite every other install as well.
+fn communities(chosen: &[PathBuf]) -> Vec<PathBuf> {
+    if !chosen.is_empty() {
+        return chosen.to_vec();
     }
-    v
+    patcher::detect_community_dirs()
 }
 
 pub fn run() -> Result<()> {

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Fixed: `patch --community DIR` and `unpatch --community DIR` also acted on every other
+  Community folder found on the machine, because the named folder was added to the
+  detected ones instead of replacing them. Naming a folder now means only that folder.
+
 ## 0.2.0 (2026-09-14)
 
 - X-Plane 12: an A380-style airport moving map as a FlyWithLua script that fetches from
