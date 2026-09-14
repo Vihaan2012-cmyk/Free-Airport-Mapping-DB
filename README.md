@@ -158,6 +158,29 @@ subscription, so `serve` rewrites that one handler; backup kept, `unpatch` resto
 package folder must sort after `synaptic-aircraft-a220`, e.g. `zzz-gm5-a220-amm`,
 which `tools/port_a220_amm.py` does for you).
 
+## Airport moving map for the A220 (MSFS)
+
+An airport moving map for the Synaptic A220, as its own Community package rather than a
+patch of anyone else's add-on. It reads straight from a running `amdb-bridge` over HTTP,
+so it needs no Navigraph account, no hosts-file redirect, no certificate and no
+administrator rights. MSFS 2020 and 2024 both work from the one folder.
+
+```
+python tools/build_a220_amm.py            # install into every sim found
+python tools/build_a220_amm.py --uninstall  # remove it, restoring anything it displaced
+amdb-bridge serve --no-hosts --no-patch   # then leave this running while you fly
+```
+
+Releases ship the same package with an `install.bat` for people who would rather not
+clone the repository. It draws 22 layers in the aircraft's own palette — runway markings,
+shoulders, service roads, stand areas, guidance lines, holding positions, structures and
+hotspots — with runway designators boxed and turned along the runway, and stand numbers
+that thin out as the range widens. The map appears by itself once you are on the ground;
+`L:AMDB_AMM_VISIBLE` and `L:AMDB_AMM_RANGE` are bindable if you want manual control.
+
+Only one package can override the A220's display units, so remove any other A220 moving
+map first. `install.bat` does that for you and keeps the displaced copy in `_disabled`.
+
 ## X-Plane 12
 
 An A380-style airport moving map in a floating window, drawn by a FlyWithLua script
