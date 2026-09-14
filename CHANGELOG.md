@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-- X-Plane 12: an A380-style airport moving map as a FlyWithLua script. `amdbgen xplane`
-  writes compact per-airport Lua data (triangulated, simplified, tiled) and `--install`
-  puts the script in X-Plane pointing at it.
+- X-Plane 12: an A380-style airport moving map as a FlyWithLua script that fetches from
+  the bridge, which builds the nearest airport on demand (`amdb-bridge serve --xplane`
+  installs the script and serves the `/xp/` route). `amdbgen xplane` also writes the same
+  compact Lua data (triangulated, simplified, tiled) as files for offline use.
 - FAA open airport-mapping layers for US airports: hotspots with their published caution
   text, and pavement when no scenery exists.
 - OSM: every source at once. The map API and each Overpass endpoint form a pool worked by

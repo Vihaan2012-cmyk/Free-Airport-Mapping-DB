@@ -300,6 +300,9 @@ struct ServeArgs {
     /// Do not patch the iniBuilds A350 EFB (its OANS then needs a Navigraph subscription).
     #[arg(long = "no-patch")]
     no_patch: bool,
+    /// Also serve X-Plane 12: install the FlyWithLua moving-map script and build airports for it on demand.
+    #[arg(long = "xplane")]
+    xplane: bool,
 }
 
 #[derive(Subcommand)]
@@ -484,6 +487,16 @@ fn serve(a: ServeArgs) -> Result<()> {
             std::thread::sleep(std::time::Duration::from_secs(3));
             run_bulk(&cfg, &icaos, rebuild, &label, discard.as_deref());
         });
+    }
+    if a.xplane {
+        let port = if a.http_port == 0 { super::DEFAULT_PORT } else { a.http_port };
+        match crate::sources::xplane::local::detect_install() {
+            Some(root) => match crate::output::xplane::install_script(&root, &format!("http://127.0.0.1:{port}")) {
+                Ok(p) => crate::term::success(&format!("X-Plane moving map installed: {} - open it from Plugins > FlyWithLua > Macros > AMDB OANS", p.display())),
+                Err(e) => crate::term::warn(&format!("could not install the X-Plane script: {e:#}")),
+            },
+            None => crate::term::warn("--xplane: no X-Plane 12 install found; the /xp/ route still works if you install tools/xplane/amdb_oans.lua yourself"),
+        }
     }
     let result = server::serve(store, server::Listen { http_port: if a.http_port == 0 { None } else { Some(a.http_port) }, https });
     if !a.no_hosts {

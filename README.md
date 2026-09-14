@@ -161,19 +161,23 @@ which `tools/port_a220_amm.py` does for you).
 ## X-Plane 12
 
 An A380-style airport moving map in a floating window, drawn by a FlyWithLua script
-from the same data. Needs [FlyWithLua NG+](https://forums.x-plane.org/index.php?/files/file/82888-flywithlua-ng-next-generation-plus-edition-for-x-plane-12-win-lin-mac/).
+that fetches from the running bridge (which builds the airport you are at on demand,
+exactly like it does for MSFS). Needs [FlyWithLua NG+](https://forums.x-plane.org/index.php?/files/file/82888-flywithlua-ng-next-generation-plus-edition-for-x-plane-12-win-lin-mac/).
 
 ```
-amdbgen xplane --all --dir out --install     # data for every built airport + install the script
+amdb-bridge serve --xplane          # installs the script and serves X-Plane on demand
 ```
 
-In the sim: Plugins > FlyWithLua > FlyWithLua Macros > **AMDB OANS**, or bind a key to
-`amdb/oans/toggle`. It loads the nearest airport by itself; `+` and `-` change the
-range (0.25 to 4 NM), and ARC / PLAN switches between heading-up and north-up.
+Then in the sim: Plugins > FlyWithLua > FlyWithLua Macros > **AMDB OANS**, or bind a key
+to `amdb/oans/toggle`. It shows the nearest airport by itself, building it if needed;
+`+` and `-` change the range (0.25 to 4 NM), and ARC / PLAN switches between heading-up
+and north-up. Keep `amdb-bridge serve --xplane` running while you fly.
 
-`xplane` writes `<ICAO>/oans.lua` (integer metres from the reference point, polygons
-already triangulated, bucketed into 300 m tiles) and an `index.lua`, so the script only
-draws what is on screen. Run it again after building more airports.
+The script asks the bridge's `/xp/nearest?lat&lon` route, which returns the airport as a
+Lua chunk (integer metres from the reference point, polygons already triangulated,
+bucketed into 300 m tiles) or `{building="ICAO"}` while a background build runs, so the
+sim never stalls. `amdbgen xplane --all --dir out` also writes the same data as files
+for offline use.
 
 ## Charts and previews
 

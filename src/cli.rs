@@ -970,10 +970,9 @@ fn xplane_cmd(targets: Vec<String>, dir: PathBuf, all: bool, install: bool, xpla
     ));
     if install {
         let root = xplane_dir.or_else(crate::sources::xplane::local::detect_install).ok_or_else(|| anyhow!("X-Plane 12 not found; pass --xplane-dir"))?;
-        // An absolute path the script can open, without Windows' \\?\ prefix.
-        let data = if dir.is_absolute() { dir.clone() } else { std::env::current_dir()?.join(&dir) };
-        let p = crate::output::xplane::install_script(&root, &data)?;
-        term::file(None, &p.display().to_string(), "FlyWithLua script installed; open it from Plugins > FlyWithLua > Macros > AMDB OANS");
+        // The moving map fetches from the running bridge (start it with `amdb-bridge serve --xplane`).
+        let p = crate::output::xplane::install_script(&root, "http://127.0.0.1:8770")?;
+        term::file(None, &p.display().to_string(), "FlyWithLua script installed; start `amdb-bridge serve --xplane`, then open it from Plugins > FlyWithLua > Macros > AMDB OANS");
     }
     Ok(())
 }

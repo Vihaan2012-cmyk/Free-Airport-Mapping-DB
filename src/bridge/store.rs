@@ -10,7 +10,7 @@ use crate::sources::index::AirportIndex;
 use anyhow::{anyhow, Context, Result};
 use geo_types::{Coord, Geometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -40,6 +40,16 @@ pub struct Store {
     index: AirportIndex,
     loaded: Mutex<HashMap<String, Arc<AirportData>>>,
     building: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Airports the X-Plane route has a background build running for.
+    xp_building: Mutex<HashSet<String>>,
+}
+
+/// State of an airport for the X-Plane moving map.
+pub enum XpState {
+    /// Built; the folder holds the layer files to render.
+    Ready(PathBuf),
+    /// A background build is running; ask again shortly.
+    Building,
 }
 
 fn project_to_local(frame: &LocalFrame, g: &Geometry<f64>) -> Geometry<f64> {
@@ -60,7 +70,7 @@ fn project_to_local(frame: &LocalFrame, g: &Geometry<f64>) -> Geometry<f64> {
 impl Store {
     pub fn new(cfg: Config) -> Result<Store> {
         let index = pipeline::load_index(&cfg)?;
-        Ok(Store { out: cfg.out.clone(), cfg, index, retention: Retention::KeepAll, loaded: Mutex::new(HashMap::new()), building: Mutex::new(HashMap::new()) })
+        Ok(Store { out: cfg.out.clone(), cfg, index, retention: Retention::KeepAll, loaded: Mutex::new(HashMap::new()), building: Mutex::new(HashMap::new()), xp_building: Mutex::new(HashSet::new()) })
     }
 
     /// Airports offered to the client: everything already generated plus every
@@ -193,5 +203,29 @@ impl Store {
 
     pub fn loaded_count(&self) -> usize {
         self.loaded.lock().unwrap().len()
+    }
+
+    /// For the X-Plane route: the airport's folder if built, otherwise start a
+    /// background build (once) and report Building. The build keeps its files on disk
+    /// so the moving map can be rendered from them, regardless of the cache retention
+    /// used for the aircraft OANS route.
+    pub fn xplane_state(self: &Arc<Self>, icao: &str) -> XpState {
+        let icao = icao.to_uppercase();
+        let dir = self.out.join(&icao);
+        if dir.join("manifest.json").is_file() {
+            return XpState::Ready(dir);
+        }
+        let mut building = self.xp_building.lock().unwrap();
+        if building.insert(icao.clone()) {
+            let me = self.clone();
+            std::thread::spawn(move || {
+                crate::term::start(&format!("[{icao}] X-Plane requested {icao}: building it now"));
+                if let Err(e) = crate::pipeline::run(&me.cfg, std::slice::from_ref(&icao)) {
+                    log::error!("{icao}: X-Plane build failed: {e:#}");
+                }
+                me.xp_building.lock().unwrap().remove(&icao);
+            });
+        }
+        XpState::Building
     }
 }

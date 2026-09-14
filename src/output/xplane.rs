@@ -33,7 +33,7 @@ const TERM: u8 = 4;
 
 /// The FlyWithLua script, embedded so `amdbgen xplane --install` needs no checkout.
 pub const SCRIPT: &str = include_str!("../../tools/xplane/amdb_oans.lua");
-const DATA_DIR_MARK: &str = "--@DATA_DIR@";
+const BRIDGE_MARK: &str = "--@BRIDGE@";
 
 struct Feat {
     geom: Geometry<f64>,
@@ -261,6 +261,15 @@ fn join_into(s: &mut String, v: &[i64]) {
 
 /// Write `<dir>/oans.lua` for one built airport folder. Returns the file size in bytes.
 pub fn write(dir: &Path) -> Result<u64> {
+    let s = render(dir)?;
+    let out = dir.join("oans.lua");
+    std::fs::write(&out, &s).with_context(|| format!("write {}", out.display()))?;
+    Ok(s.len() as u64)
+}
+
+/// The Lua moving-map data for one built airport folder, as a `return {...}` chunk.
+/// Used both by [`write`] and, live, by the bridge's `/xp/` route.
+pub fn render(dir: &Path) -> Result<String> {
     let text = std::fs::read_to_string(dir.join("manifest.json")).with_context(|| format!("read {}/manifest.json (is it a built airport?)", dir.display()))?;
     let manifest: Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).context("parse manifest.json")?;
     let folder = dir.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
@@ -400,9 +409,7 @@ pub fn write(dir: &Path) -> Result<u64> {
         s.push_str("} end)()\n");
     }
     s.push_str("return A\n");
-    let out = dir.join("oans.lua");
-    std::fs::write(&out, &s).with_context(|| format!("write {}", out.display()))?;
-    Ok(s.len() as u64)
+    Ok(s)
 }
 
 /// Rebuild `<root>/index.lua` from every airport folder that has an `oans.lua`. The
@@ -434,19 +441,17 @@ pub fn write_index(root: &Path) -> Result<usize> {
     Ok(rows.len())
 }
 
-/// Copy the FlyWithLua script into an X-Plane install, pointing it at `data_dir`.
-pub fn install_script(xplane_root: &Path, data_dir: &Path) -> Result<PathBuf> {
+/// Copy the FlyWithLua script into an X-Plane install, pointing it at the bridge's
+/// base URL (e.g. `http://127.0.0.1:8770/`).
+pub fn install_script(xplane_root: &Path, bridge_url: &str) -> Result<PathBuf> {
     let scripts = xplane_root.join("Resources").join("plugins").join("FlyWithLua").join("Scripts");
     if !scripts.is_dir() {
         return Err(anyhow!("FlyWithLua is not installed in {} (no {})", xplane_root.display(), scripts.display()));
     }
-    let mut dir = data_dir.display().to_string().replace('\\', "/");
-    if let Some(stripped) = dir.strip_prefix("//?/") {
-        dir = stripped.to_string();
-    }
+    let url = if bridge_url.ends_with('/') { bridge_url.to_string() } else { format!("{bridge_url}/") };
     let script: String = SCRIPT
         .lines()
-        .map(|l| if l.contains(DATA_DIR_MARK) { format!("local DATA_DIR = {} {DATA_DIR_MARK}", lua_str(&dir)) } else { l.to_string() })
+        .map(|l| if l.contains(BRIDGE_MARK) { format!("local BRIDGE = {} {BRIDGE_MARK}", lua_str(&url)) } else { l.to_string() })
         .collect::<Vec<_>>()
         .join("\n")
         + "\n";
@@ -510,15 +515,15 @@ mod tests {
     }
 
     #[test]
-    fn installs_script_with_the_data_folder() {
+    fn installs_script_pointing_at_the_bridge() {
         let root = std::env::temp_dir().join(format!("amdbgen-xpi-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        assert!(install_script(&root, Path::new("D:\\data")).is_err(), "no FlyWithLua, no install");
+        assert!(install_script(&root, "http://127.0.0.1:8770").is_err(), "no FlyWithLua, no install");
         std::fs::create_dir_all(root.join("Resources/plugins/FlyWithLua/Scripts")).unwrap();
-        let p = install_script(&root, Path::new("D:\\OANS Cache\\airports")).unwrap();
+        let p = install_script(&root, "http://127.0.0.1:8770").unwrap();
         let s = std::fs::read_to_string(&p).unwrap();
-        assert!(s.contains(r#"local DATA_DIR = "D:/OANS Cache/airports" --@DATA_DIR@"#));
-        assert_eq!(s.matches("local DATA_DIR").count(), 1);
+        assert!(s.contains(r#"local BRIDGE = "http://127.0.0.1:8770/" --@BRIDGE@"#), "trailing slash added");
+        assert_eq!(s.matches("local BRIDGE").count(), 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 

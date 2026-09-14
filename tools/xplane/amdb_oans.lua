@@ -1,124 +1,104 @@
 -- AMDB OANS - an A380-style airport moving map for X-Plane 12 (FlyWithLua NG+)
 --
--- Draws the airport you are at from amdbgen data: pavement, runways, terminals,
+-- Draws the airport you are at from amdb-bridge: pavement, runways, terminals,
 -- taxiway guidance lines, holding positions, and taxiway, runway, stand and terminal
 -- labels, with your aircraft on it. Heading-up ARC view like the A380 OANS, or
--- north-up PLAN.
+-- north-up PLAN. Nothing is stored locally; the running bridge builds the nearest
+-- airport on demand and sends it here.
 --
--- Open it from Plugins > FlyWithLua > FlyWithLua Macros > "AMDB OANS", or bind a key
--- to the command "amdb/oans/toggle". The data comes from `amdbgen xplane`, which also
--- installs this script and sets the data folder on the next line.
+-- Start the bridge with:  amdb-bridge serve --xplane
+-- Then in the sim: Plugins > FlyWithLua > FlyWithLua Macros > "AMDB OANS", or bind a
+-- key to the command "amdb/oans/toggle".
 
-local DATA_DIR = "D:/OANS Cache/airports" --@DATA_DIR@
+local BRIDGE = "http://127.0.0.1:8770/" --@BRIDGE@
 
-local LOAD_RADIUS_M = 12000      -- load an airport when its reference point is this close
 local RANGES_NM = { 0.25, 0.5, 1, 2, 4 }
-local BAR_H = 34                 -- height of the control bar, px
+local BAR_H = 34                  -- height of the control bar, px
+local REFETCH_S = 20              -- ask the bridge for the nearest airport at least this often
+local LEAVE_M = 9000              -- ...or as soon as we are this far from the loaded one
 
 -- A380 OANS palette. ImGui colours are 0xAABBGGRR.
 local C = {
-    bg       = 0xFF000000,
-    apron    = 0xFF505050,
-    taxiway  = 0xFF686868,
-    rwyext   = 0xFF383838,
-    runway   = 0xFF262626,
-    building = 0xFF705A48,
-    terminal = 0xFFC8C800,
-    stand    = 0xFF0090B0,
-    guide    = 0xFF00D8FF,
-    exit     = 0xFF00D8FF,
-    hold     = 0xFF2828FF,
-    rwycl    = 0xFFE8E8E8,
-    twy_bg   = 0xFF00D8FF,
-    twy_fg   = 0xFF000000,
-    rwy_txt  = 0xFFFFFFFF,
-    std_txt  = 0xFFB8B8B8,
-    term_txt = 0xFFC8C800,
-    own      = 0xFF00D8FF,
-    ring     = 0xFFE8E8E8,
-    dim      = 0xFF909090,
+    bg = 0xFF000000, apron = 0xFF505050, taxiway = 0xFF686868, rwyext = 0xFF383838,
+    runway = 0xFF262626, building = 0xFF705A48, terminal = 0xFFC8C800, stand = 0xFF0090B0,
+    guide = 0xFF00D8FF, exit = 0xFF00D8FF, hold = 0xFF2828FF, rwycl = 0xFFE8E8E8,
+    twy_bg = 0xFF00D8FF, twy_fg = 0xFF000000, rwy_txt = 0xFFFFFFFF, std_txt = 0xFFB8B8B8,
+    term_txt = 0xFFC8C800, own = 0xFF00D8FF, ring = 0xFFE8E8E8, dim = 0xFF909090,
 }
-
--- Drawn bottom to top.
 local FILLS = { "apron", "taxiway", "rwyext", "runway", "building", "terminal" }
 local LINES = { { "stand", 1.0 }, { "guide", 1.6 }, { "exit", 1.6 }, { "hold", 2.6 }, { "rwycl", 1.2 } }
--- Label kinds from the data file, and the widest range (index into RANGES_NM) each shows at.
 local TWY, RWY, STAND, TERM = 1, 2, 3, 4
 local LABEL_MAX_RANGE = { [TWY] = 3, [RWY] = 5, [STAND] = 1, [TERM] = 4 }
 
 -- ---------------------------------------------------------------- state
 local wnd = nil
-local index = nil        -- flat: icao, lat, lon, icao, lat, lon, ...
-local ap = nil           -- the loaded airport table
-local ap_icao = nil
+local ap = nil           -- the loaded airport table from the bridge
 local range_i = 2
 local plan = false
 local status = "starting"
 local last_err = nil
+local fetch_at = 0       -- next os.clock() at which to ask the bridge
+local http = nil
 
 -- ---------------------------------------------------------------- datarefs
 local function bind(name, ...)
     for _, path in ipairs({ ... }) do
-        if pcall(dataref, name, path) then return true end
+        if pcall(dataref, name, path) then return end
     end
     _G[name] = 0
     logMsg("AMDB OANS: no dataref for " .. name)
-    return false
 end
 bind("amdb_lat", "sim/flightmodel/position/latitude")
 bind("amdb_lon", "sim/flightmodel/position/longitude")
 bind("amdb_hdg", "sim/flightmodel/position/true_psi", "sim/flightmodel/position/psi")
 
--- ---------------------------------------------------------------- data
-local function load_index()
-    local ok, t = pcall(dofile, DATA_DIR .. "/index.lua")
-    if ok and type(t) == "table" then
-        index = t
-        status = string.format("%d airports available", math.floor(#t / 3))
+-- ---------------------------------------------------------------- bridge
+-- A short blocking GET on loopback: the bridge answers at once (it builds airports on
+-- a background thread and replies "building" until one is ready), so this never stalls.
+local function fetch()
+    if not http then
+        local ok, mod = pcall(require, "socket.http")
+        if not ok then status = "FlyWithLua socket module missing"; return end
+        http = mod
+        http.TIMEOUT = 3
+    end
+    local url = string.format("%sxp/nearest?lat=%.6f&lon=%.6f", BRIDGE, amdb_lat, amdb_lon)
+    local body, code = http.request(url)
+    if not body or code ~= 200 then
+        status = "bridge not running - start:  amdb-bridge serve --xplane"
+        return
+    end
+    local chunk = loadstring(body)
+    if not chunk then status = "bad data from bridge"; return end
+    local ok, t = pcall(chunk)
+    if not ok or type(t) ~= "table" then status = "bad data from bridge"; last_err = tostring(t); return end
+    if t.building then
+        status = "building " .. tostring(t.building) .. " ..."   -- keep the previous airport on screen
+    elseif t.icao then
+        ap = t
+        status = t.icao .. "  " .. (t.name or "")
+        last_err = nil
     else
-        index = {}
-        status = "no data in " .. DATA_DIR .. ": run  amdbgen xplane --all"
-        last_err = tostring(t)
+        status = "no airport near you"
     end
 end
 
-local function nearest()
-    if not index then return nil end
-    local lat, lon = amdb_lat, amdb_lon
-    local cl = math.cos(math.rad(lat))
-    local best, bd = nil, LOAD_RADIUS_M * LOAD_RADIUS_M
-    for i = 1, #index, 3 do
-        local dlon = index[i + 2] - lon
-        if dlon > 180 then dlon = dlon - 360 elseif dlon < -180 then dlon = dlon + 360 end
-        local dx = dlon * 111195 * cl
-        local dy = (index[i + 1] - lat) * 111195
-        local d = dx * dx + dy * dy
-        if d < bd then bd, best = d, index[i] end
-    end
-    return best
-end
-
--- Once a second while the window is open: load the nearest airport when it changes.
+-- Once a second while the window is open: refetch when we have nothing, are far from
+-- the loaded airport, or the timer is up (to notice a change of airport).
 function amdb_tick()
     if not wnd then return end
-    if not index then load_index() end
-    local icao = nearest()
-    if icao and icao ~= ap_icao then
-        local ok, t = pcall(dofile, DATA_DIR .. "/" .. icao .. "/oans.lua")
-        ap_icao = icao           -- do not retry a missing file every second
-        if ok and type(t) == "table" then
-            ap = t
-            status = icao .. "  " .. (t.name or "")
-            last_err = nil
-        else
-            ap = nil
-            status = icao .. ": no OANS data (run  amdbgen xplane " .. icao .. ")"
-            last_err = tostring(t)
-        end
-    elseif not icao and not ap then
-        status = string.format("no airport within %d NM", math.floor(LOAD_RADIUS_M / 1852))
+    local now = os.clock()
+    local want = (ap == nil)
+    if ap then
+        local dlon = (amdb_lon - ap.lon) * ap.mx
+        local dlat = (amdb_lat - ap.lat) * ap.my
+        if dlon * dlon + dlat * dlat > LEAVE_M * LEAVE_M then want = true end
     end
-    -- Leaving an airport keeps it on screen, like the real OANS, until another loads.
+    if want or now >= fetch_at then
+        fetch_at = now + (ap and REFETCH_S or 3)
+        local ok, e = pcall(fetch)
+        if not ok then last_err = tostring(e) end
+    end
 end
 
 -- ---------------------------------------------------------------- drawing
@@ -130,8 +110,6 @@ local function draw(w, h)
         return
     end
 
-    -- Aircraft position in the airport's metre frame (linearised at the reference point,
-    -- which matches amdbgen's projection to well under a metre across an airport).
     local dlon = amdb_lon - ap.lon
     if dlon > 180 then dlon = dlon - 360 elseif dlon < -180 then dlon = dlon + 360 end
     local ox, oy = dlon * ap.mx, (amdb_lat - ap.lat) * ap.my
@@ -153,7 +131,6 @@ local function draw(w, h)
         return ax + (dx * cs - dy * sn) * scale, ay - (dx * sn + dy * cs) * scale
     end
 
-    -- Tiles whose box overlaps what the window can show.
     local far = math.max(ax, w - ax, ay, mh - ay) * 1.42 / scale
     local x0, x1, y0, y1 = ox - far, ox + far, oy - far, oy + far
     local vis = {}
@@ -229,7 +206,6 @@ local function draw(w, h)
         end
     end
 
-    -- Range arc (ARC) or ring (PLAN).
     local rpx = rng_m * scale
     if plan then
         imgui.DrawList_AddCircle(ax, ay, rpx, C.ring, 64, 1.0)
@@ -243,15 +219,12 @@ local function draw(w, h)
         end
     end
 
-    -- Ownship: nose up in ARC, rotated to the heading in PLAN.
     local rot = plan and math.rad(amdb_hdg) or 0
     local rc, rs = math.cos(rot), math.sin(rot)
     local function seg(x1, y1, x2, y2)
         line(ax + x1 * rc - y1 * rs, ay + x1 * rs + y1 * rc, ax + x2 * rc - y2 * rs, ay + x2 * rs + y2 * rc, C.own, 3.0)
     end
-    seg(0, -14, 0, 12)
-    seg(-13, -1, 13, -1)
-    seg(-5, 11, 5, 11)
+    seg(0, -14, 0, 12); seg(-13, -1, 13, -1); seg(-5, 11, 5, 11)
 
     txt(10, 8, C.ring, string.format("%s  %s NM", plan and "PLAN" or "ARC", tostring(RANGES_NM[range_i])))
     txt(10, 24, C.dim, status)
@@ -262,7 +235,6 @@ function amdb_build(wnd_in, x, y)
     local h = (imgui.GetWindowHeight and imgui.GetWindowHeight()) or w
     local ok, err = pcall(draw, w, h)
     if not ok then last_err = tostring(err) end
-    -- Cover anything that spilled below the map, then the controls.
     imgui.DrawList_AddRectFilled(0, h - BAR_H, w, h, C.bg)
     imgui.Dummy(w - 20, h - BAR_H - 12)
     if imgui.Button(" + ") and range_i > 1 then range_i = range_i - 1 end
@@ -279,26 +251,16 @@ end
 -- ---------------------------------------------------------------- window
 function amdb_open()
     if wnd then return end
-    index = nil          -- reread, so newly built airports appear
+    fetch_at = 0
     wnd = float_wnd_create(560, 620, 1, true)
     float_wnd_set_title(wnd, "AMDB OANS")
     float_wnd_set_imgui_builder(wnd, "amdb_build")
     float_wnd_set_onclose(wnd, "amdb_closed")
-    amdb_tick()
 end
 
-function amdb_closed()
-    wnd = nil
-end
-
-function amdb_close()
-    if wnd then float_wnd_destroy(wnd) end
-    wnd = nil
-end
-
-function amdb_toggle()
-    if wnd then amdb_close() else amdb_open() end
-end
+function amdb_closed() wnd = nil end
+function amdb_close() if wnd then float_wnd_destroy(wnd) end wnd = nil end
+function amdb_toggle() if wnd then amdb_close() else amdb_open() end end
 
 do_often("amdb_tick()")
 add_macro("AMDB OANS", "amdb_open()", "amdb_close()", "deactivate")

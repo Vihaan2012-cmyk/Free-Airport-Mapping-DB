@@ -10,7 +10,7 @@
 //! Authorization headers are accepted and ignored.
 
 use super::compat::{feattype, layer_from_client_name, NAVIGRAPH_LAYERS};
-use super::store::{AirportData, Store};
+use super::store::{AirportData, Store, XpState};
 use crate::geom::ops;
 use crate::model::{AmdbFeature, Layer};
 use crate::output::geojson::geometry_to_json;
@@ -193,7 +193,63 @@ fn client_name(agent: &str) -> String {
     }
 }
 
-fn handle(store: &Store, req: Request) {
+/// Plain-text (Lua) response for the X-Plane route.
+fn respond_text(req: Request, status: u16, body: &str) {
+    let mut resp = Response::from_string(body).with_status_code(status);
+    resp.add_header(header("Content-Type", "text/plain; charset=utf-8"));
+    resp.add_header(header("Access-Control-Allow-Origin", "*"));
+    resp.add_header(header("Cache-Control", "no-store"));
+    let _ = req.respond(resp);
+}
+
+/// A Lua double-quoted string.
+fn lua_q(s: &str) -> String {
+    let mut o = String::with_capacity(s.len() + 2);
+    o.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            '\n' => o.push_str("\\n"),
+            c if (c as u32) < 0x20 => {}
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+/// The X-Plane moving map: `/xp/nearest?lat&lon` or `/xp/{ICAO}`. Returns a Lua chunk
+/// (`return {...}`) the FlyWithLua script loads: the airport when built, or
+/// `{building="ICAO"}` while a background build runs.
+fn handle_xp(store: Arc<Store>, req: Request, rest: &str, params: &Map<String, Value>) {
+    let icao = if rest.eq_ignore_ascii_case("nearest") {
+        let num = |k: &str| params.get(k).and_then(Value::as_str).and_then(|s| s.parse::<f64>().ok());
+        match (num("lat"), num("lon")) {
+            (Some(lat), Some(lon)) if lat.abs() <= 90.0 && lon.abs() <= 180.0 => match store.nearest(lat, lon, 80.0, 1).first().and_then(|r| r.get("idarpt")).and_then(Value::as_str) {
+                Some(i) => i.to_string(),
+                None => return respond_text(req, 200, "return {}\n"),
+            },
+            _ => return respond_text(req, 400, "return {error=\"need lat and lon\"}\n"),
+        }
+    } else if rest.len() == 4 && rest.chars().all(|c| c.is_ascii_alphanumeric()) {
+        rest.to_uppercase()
+    } else {
+        return respond_text(req, 404, "return {}\n");
+    };
+    match store.xplane_state(&icao) {
+        XpState::Ready(dir) => match crate::output::xplane::render(&dir) {
+            Ok(s) => {
+                crate::term::success(&format!("[{icao}] Served X-Plane OANS ({})", crate::term::human_bytes(s.len() as u64)));
+                respond_text(req, 200, &s);
+            }
+            Err(e) => respond_text(req, 200, &format!("return {{error={}}}\n", lua_q(&format!("{e:#}")))),
+        },
+        XpState::Building => respond_text(req, 200, &format!("return {{building={}}}\n", lua_q(&icao))),
+    }
+}
+
+fn handle(store: Arc<Store>, req: Request) {
     let url = req.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((&url, ""));
     let params = parse_query(query);
@@ -201,6 +257,11 @@ fn handle(store: &Store, req: Request) {
         let origin = req.headers().iter().find(|h| h.field.equiv("Origin")).map(|h| h.value.as_str().to_string()).unwrap_or_default();
         crate::term::step(None, &format!("OPTIONS {}  CORS preflight from {}", path, if origin.is_empty() { "unknown origin".to_string() } else { origin }));
         respond_json(req, 204, String::new());
+        return;
+    }
+    if let Some(p) = path.find("/xp/") {
+        let rest = path[p + 4..].trim_matches('/').to_string();
+        handle_xp(store, req, &rest, &params);
         return;
     }
     let Some(pos) = path.find("/v1/") else {
@@ -309,7 +370,7 @@ pub fn serve(store: Store, listen: Listen) -> Result<()> {
         handles.push(std::thread::spawn(move || {
             for req in server.incoming_requests() {
                 let st = st.clone();
-                std::thread::spawn(move || handle(&st, req));
+                std::thread::spawn(move || handle(st, req));
             }
         }));
     }
@@ -321,7 +382,7 @@ pub fn serve(store: Store, listen: Listen) -> Result<()> {
         handles.push(std::thread::spawn(move || {
             for req in server.incoming_requests() {
                 let st = st.clone();
-                std::thread::spawn(move || handle(&st, req));
+                std::thread::spawn(move || handle(st, req));
             }
         }));
     }
