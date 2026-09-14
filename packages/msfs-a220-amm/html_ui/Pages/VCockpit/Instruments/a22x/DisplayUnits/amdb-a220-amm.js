@@ -102,20 +102,21 @@
     // at display-unit geometry and risking drawing over the PFD.
     function findPane() {
         const svgs = document.querySelectorAll('svg');
-        let best = null;
-        let bestArea = 0;
+        let best = null, bestArea = 0;
+        let any = null, anyArea = 0;
         for (let i = 0; i < svgs.length; i++) {
             const box = (svgs[i].getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
-            if (box.length !== 4 || !isFinite(box[2]) || !isFinite(box[3])) continue;
-            // A map pane is wide and not very tall; the taller panes are the PFD and EICAS.
-            if (box[3] > 800 || box[2] < 300) continue;
+            if (box.length !== 4 || !isFinite(box[2]) || !isFinite(box[3]) || box[2] < 1 || box[3] < 1) continue;
             const area = box[2] * box[3];
-            if (area > bestArea) {
-                bestArea = area;
-                best = { svg: svgs[i], w: box[2], h: box[3] };
-            }
+            const pane = { svg: svgs[i], w: box[2], h: box[3] };
+            if (area > anyArea) { anyArea = area; any = pane; }
+            // A display pane is wide and not very tall; the A220's are 740 x 340.
+            if (box[3] > 800 || box[2] < 300) continue;
+            if (area > bestArea) { bestArea = area; best = pane; }
         }
-        return best;
+        // If none of them look familiar, take the largest rather than drawing nothing: a
+        // map in the wrong place is something a tester can report, a blank one is not.
+        return best || any;
     }
 
     function ensureCanvas() {
@@ -124,8 +125,11 @@
         if (!pane || !pane.svg.parentElement) return false;
         canvas = document.createElement('canvas');
         canvas.className = 'amdb-amm-canvas';
-        canvas.width = Math.round(pane.w);
-        canvas.height = Math.round(pane.h);
+        // Draw in a fixed 1480-wide space and let the stylesheet stretch the canvas over
+        // the pane. Every type size and line weight below is authored for that space, so
+        // they stay in proportion whatever size the aircraft's pane turns out to be.
+        canvas.width = 1480;
+        canvas.height = Math.max(1, Math.round(1480 * (pane.h / pane.w)));
         const host = pane.svg.parentElement;
         if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
         host.appendChild(canvas);

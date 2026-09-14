@@ -11,7 +11,7 @@
   "globally_overriden_base_sim_files": [
     "html_ui\\Pages\\VCockpit\\Instruments\\a22x\\DisplayUnits\\instrument.html"
   ],
-  "total_package_size": "00000000000000020967",
+  "total_package_size": "00000000000000021529",
   "release_notes": {
     "neutral": {
       "LastUpdate": "Airport moving map for the Synaptic A220, drawn from a local amdb-bridge. No Navigraph account, no hosts-file redirect and no certificate: the map talks to the bridge directly over HTTP.",

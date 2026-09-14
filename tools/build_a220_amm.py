@@ -98,11 +98,47 @@ def community_dirs():
     return out
 
 
+def uninstall(targets, dry_run):
+    """Take the map out again, and put back whatever it displaced."""
+    gone = 0
+    for community in targets:
+        dest = os.path.join(community, FOLDER)
+        if os.path.isdir(dest):
+            print("%s" % dest)
+            if dry_run:
+                print("   [dry-run] would remove")
+            else:
+                shutil.rmtree(dest)
+                print("   removed")
+            gone += 1
+
+        # Anything set aside to make room for this map lives next to Community; put it back.
+        parked = os.path.join(os.path.dirname(community), "_disabled")
+        for other in CONFLICTS:
+            src = os.path.join(parked, other)
+            if os.path.isdir(src) and not os.path.isdir(os.path.join(community, other)):
+                if dry_run:
+                    print("   [dry-run] would restore %s" % other)
+                else:
+                    shutil.move(src, os.path.join(community, other))
+                    print("   restored %s" % other)
+
+    if not gone:
+        print("The map is not installed in any Community folder found.")
+    elif not dry_run:
+        print("\nDone. Restart the sim for the change to take effect.")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="Build and install the A220 airport moving map.")
     ap.add_argument("--to", action="append", metavar="COMMUNITY", help="install into this folder (repeatable); default: every one detected")
     ap.add_argument("--dry-run", action="store_true", help="report what would happen, copy nothing")
+    ap.add_argument("--uninstall", action="store_true", help="remove the map again and put back any package it displaced")
     args = ap.parse_args()
+
+    if args.uninstall:
+        return uninstall(args.to or community_dirs(), args.dry_run)
 
     if not os.path.isdir(SRC):
         print("Package source not found:", SRC)
