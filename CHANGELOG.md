@@ -1,7 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-09-14)
 
+- An airport moving map for the Synaptic A220 in MSFS, as our own package rather than a
+  patch of someone else's: `packages/msfs-a220-amm`, installed by
+  `python tools/build_a220_amm.py`. It draws 22 layers in the aircraft's own palette,
+  including the runway markings, shoulders, service roads and stand areas, with runway
+  designators boxed and turned along the runway, stand numbers that thin out with range,
+  and hotspots outlined. It reads straight from a local `amdb-bridge` over HTTP, so it
+  needs no Navigraph account, no hosts-file redirect, no certificate and no administrator
+  rights. MSFS 2020 and 2024 both work from the one folder.
 - Fixed: `patch --community DIR` and `unpatch --community DIR` also acted on every other
   Community folder found on the machine, because the named folder was added to the
   detected ones instead of replacing them. Naming a folder now means only that folder.

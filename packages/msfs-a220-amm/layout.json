@@ -1,0 +1,29 @@
+{
+  "content": [
+    {
+      "path": "html_ui/pages/vcockpit/instruments/a22x/displayunits/amdb-a220-amm.css",
+      "size": 373,
+      "date": 134338736730091232
+    },
+    {
+      "path": "html_ui/pages/vcockpit/instruments/a22x/displayunits/amdb-a220-amm.js",
+      "size": 17640,
+      "date": 134338747334122736
+    },
+    {
+      "path": "html_ui/pages/vcockpit/instruments/a22x/displayunits/amdb-a220-host.js",
+      "size": 1428,
+      "date": 134338736705340800
+    },
+    {
+      "path": "html_ui/pages/vcockpit/instruments/a22x/displayunits/instrument.html",
+      "size": 740,
+      "date": 134338736643020864
+    },
+    {
+      "path": "manifest.json",
+      "size": 786,
+      "date": 134338747684045968
+    }
+  ]
+}
