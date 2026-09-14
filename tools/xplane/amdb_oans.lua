@@ -16,16 +16,21 @@ local RANGES_NM = { 0.25, 0.5, 1, 2, 4 }
 local BAR_H = 34                  -- height of the control bar, px
 local POLL_S = 4                  -- seconds between "which airport am I near" checks (a tiny reply)
 
--- A380 OANS palette. ImGui colours are 0xAABBGGRR.
+-- A380 OANS palette. ImGui packs colours as 0xAABBGGRR (alpha, blue, green, red).
+local function rgb(r, g, b) return 0xFF000000 + b * 0x10000 + g * 0x100 + r end
 local C = {
-    bg = 0xFF000000, apron = 0xFF505050, taxiway = 0xFF686868, rwyext = 0xFF383838,
-    runway = 0xFF262626, building = 0xFF705A48, terminal = 0xFFC8C800, stand = 0xFF0090B0,
-    guide = 0xFF00D8FF, exit = 0xFF00D8FF, hold = 0xFF2828FF, rwycl = 0xFFE8E8E8,
-    twy_bg = 0xFF00D8FF, twy_fg = 0xFF000000, rwy_txt = 0xFFFFFFFF, std_txt = 0xFFB8B8B8,
-    term_txt = 0xFFC8C800, own = 0xFF00D8FF, ring = 0xFFE8E8E8, dim = 0xFF909090,
+    bg = rgb(0, 0, 0),
+    apron = rgb(64, 64, 64), taxiway = rgb(90, 90, 90), rwyext = rgb(46, 46, 46),
+    runway = rgb(32, 32, 32), building = rgb(74, 74, 74), terminal = rgb(120, 120, 120),
+    edge = rgb(110, 110, 110),
+    guide = rgb(0, 200, 0), exit = rgb(0, 200, 0), stand = rgb(0, 150, 190), hold = rgb(255, 60, 60),
+    rwycl = rgb(232, 232, 232),
+    twy_bg = rgb(255, 210, 0), twy_fg = rgb(0, 0, 0), rwy_txt = rgb(255, 255, 255),
+    std_txt = rgb(184, 184, 184), term_txt = rgb(220, 220, 220),
+    own = rgb(255, 210, 0), ring = rgb(232, 232, 232), dim = rgb(150, 150, 150),
 }
 local FILLS = { "apron", "taxiway", "rwyext", "runway", "building", "terminal" }
-local LINES = { { "stand", 1.0 }, { "guide", 1.6 }, { "exit", 1.6 }, { "hold", 2.6 }, { "rwycl", 1.2 } }
+local LINES = { { "edge", 1.0 }, { "stand", 1.0 }, { "guide", 1.5 }, { "exit", 1.5 }, { "hold", 2.6 }, { "rwycl", 1.2 } }
 local TWY, RWY, STAND, TERM = 1, 2, 3, 4
 local LABEL_MAX_RANGE = { [TWY] = 3, [RWY] = 5, [STAND] = 1, [TERM] = 4 }
 
@@ -89,6 +94,13 @@ local function poll()
     if d.building then
         status = "building " .. tostring(d.building) .. " ..."   -- keep the previous airport on screen
     elseif d.icao then
+        -- Half-extent of the field (metres from the reference point), for PLAN scaling.
+        local ext = 500
+        for _, t in ipairs(d.tiles) do
+            local b = t.b
+            ext = math.max(ext, math.abs(b[1]), math.abs(b[2]), math.abs(b[3]), math.abs(b[4]))
+        end
+        d.ext = ext
         ap = d
         ap_icao = d.icao
         want_icao = nil
@@ -117,29 +129,31 @@ local function draw(w, h)
         return
     end
 
+    -- Aircraft position in the airport's metre frame.
     local dlon = amdb_lon - ap.lon
     if dlon > 180 then dlon = dlon - 360 elseif dlon < -180 then dlon = dlon + 360 end
-    local ox, oy = dlon * ap.mx, (amdb_lat - ap.lat) * ap.my
+    local px_ac, py_ac = dlon * ap.mx, (amdb_lat - ap.lat) * ap.my
 
-    local rng_m = RANGES_NM[range_i] * 1852
-    local ax, ay, scale, psi
+    -- ARC: heading up, centred on and following the aircraft. PLAN: north up, centred on
+    -- the airport, scaled to show the whole field.
+    local ax, ay, scale, psi, cox, coy
     if plan then
         ax, ay = w / 2, mh / 2
-        scale = (math.min(w, mh) * 0.45) / rng_m
-        psi = 0
+        scale = (math.min(w, mh) * 0.46) / ((ap.ext or 2000) + 150)
+        psi, cox, coy = 0, 0, 0
     else
         ax, ay = w / 2, mh * 0.80
-        scale = (mh * 0.70) / rng_m
-        psi = math.rad(amdb_hdg)
+        scale = (mh * 0.70) / (RANGES_NM[range_i] * 1852)
+        psi, cox, coy = math.rad(amdb_hdg), px_ac, py_ac
     end
     local cs, sn = math.cos(psi), math.sin(psi)
     local function P(x, y)
-        local dx, dy = x - ox, y - oy
+        local dx, dy = x - cox, y - coy
         return ax + (dx * cs - dy * sn) * scale, ay - (dx * sn + dy * cs) * scale
     end
 
     local far = math.max(ax, w - ax, ay, mh - ay) * 1.42 / scale
-    local x0, x1, y0, y1 = ox - far, ox + far, oy - far, oy + far
+    local x0, x1, y0, y1 = cox - far, cox + far, coy - far, coy + far
     local vis = {}
     for _, t in ipairs(ap.tiles) do
         local b = t.b
@@ -213,27 +227,29 @@ local function draw(w, h)
         end
     end
 
-    local rpx = rng_m * scale
-    if plan then
-        imgui.DrawList_AddCircle(ax, ay, rpx, C.ring, 64, 1.0)
-    else
-        local px, py
+    -- Range arc ahead of the aircraft, ARC only.
+    if not plan then
+        local rpx = RANGES_NM[range_i] * 1852 * scale
+        local ppx, ppy
         for a = -60, 60, 3 do
             local r = math.rad(a)
             local x, y = ax + math.sin(r) * rpx, ay - math.cos(r) * rpx
-            if px then line(px, py, x, y, C.ring, 1.0) end
-            px, py = x, y
+            if ppx then line(ppx, ppy, x, y, C.ring, 1.0) end
+            ppx, ppy = x, y
         end
     end
 
+    -- Ownship: fixed and nose-up in ARC; at its real position, rotated to heading, in PLAN.
+    local sx, sy = ax, ay
+    if plan then sx, sy = P(px_ac, py_ac) end
     local rot = plan and math.rad(amdb_hdg) or 0
     local rc, rs = math.cos(rot), math.sin(rot)
     local function seg(x1, y1, x2, y2)
-        line(ax + x1 * rc - y1 * rs, ay + x1 * rs + y1 * rc, ax + x2 * rc - y2 * rs, ay + x2 * rs + y2 * rc, C.own, 3.0)
+        line(sx + x1 * rc - y1 * rs, sy + x1 * rs + y1 * rc, sx + x2 * rc - y2 * rs, sy + x2 * rs + y2 * rc, C.own, 3.0)
     end
     seg(0, -14, 0, 12); seg(-13, -1, 13, -1); seg(-5, 11, 5, 11)
 
-    txt(10, 8, C.ring, string.format("%s  %s NM", plan and "PLAN" or "ARC", tostring(RANGES_NM[range_i])))
+    txt(10, 8, C.ring, plan and "PLAN" or string.format("ARC  %s NM", tostring(RANGES_NM[range_i])))
     txt(10, 24, C.dim, status)
 end
 

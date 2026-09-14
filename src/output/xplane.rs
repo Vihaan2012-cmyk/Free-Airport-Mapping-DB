@@ -22,9 +22,9 @@ use std::path::{Path, PathBuf};
 const TILE: f64 = 300.0;
 /// Long lines are cut into pieces this long so each lands in the tile it crosses.
 const MAX_PIECE: f64 = 150.0;
-/// Douglas-Peucker tolerance, metres. Well under a pixel at the closest OANS range, and
-/// it removes most of the dense bezier points, so far fewer draw calls per frame.
-const SIMPLIFY_M: f64 = 0.5;
+/// Douglas-Peucker tolerance, metres. Sub-pixel at the closest OANS range, so bends stay
+/// smooth, while most redundant bezier points are dropped for fewer draw calls.
+const SIMPLIFY_M: f64 = 0.3;
 /// Label kinds, matching the constants in the script.
 const TWY: u8 = 1;
 const RWY: u8 = 2;
@@ -238,6 +238,16 @@ impl Grid {
         tile.line.entry(layer).or_default().push(flat);
     }
 
+    /// Emit a polygon's rings as edge lines, so filled pavement gets a defined boundary
+    /// (the taxiway/runway shoulder look).
+    fn outline(&mut self, layer: &'static str, g: &Geometry<f64>) {
+        for p in polygons(g) {
+            for ring in std::iter::once(p.exterior()).chain(p.interiors()) {
+                self.line(layer, &Geometry::LineString(ring.clone()));
+            }
+        }
+    }
+
     fn label(&mut self, at: Coord<f64>, text: &str, kind: u8) {
         let text = decode_entities(text.trim());
         if text.is_empty() {
@@ -301,6 +311,12 @@ pub fn render(dir: &Path) -> Result<String> {
             g.fill(layer, &f.geom);
         }
     }
+    // Edge outlines give the pavement a defined boundary (the shoulder look).
+    for file in ["taxiwayelement", "runwayelement", "runwaydisplacedarea", "apronelement"] {
+        for f in load_layer(dir, file) {
+            g.outline("edge", &f.geom);
+        }
+    }
     for f in load_layer(dir, "verticalpolygonalstructure") {
         let terminal = prop_f64(&f.props, "plysttyp") == Some(1.0);
         g.fill(if terminal { "terminal" } else { "building" }, &f.geom);
@@ -321,9 +337,9 @@ pub fn render(dir: &Path) -> Result<String> {
         }
     }
 
-    // Taxiway names: one per designator per tile, halfway along its longest guidance
-    // line there, which is roughly where the A380 OANS puts them.
-    let mut best: BTreeMap<(String, (i32, i32)), (f64, Coord<f64>)> = BTreeMap::new();
+    // One label per taxiway designator, halfway along its longest guidance line, as the
+    // OANS places them. (Per-tile labels would repeat the same letter dozens of times.)
+    let mut best: BTreeMap<String, (f64, Coord<f64>)> = BTreeMap::new();
     for f in &guides {
         let Some(id) = prop_str(&f.props, "idlin") else { continue };
         for ls in lines(&f.geom) {
@@ -332,14 +348,14 @@ pub fn render(dir: &Path) -> Result<String> {
                 continue;
             }
             let (len, mid) = midpoint(&pts);
-            let e = best.entry((id.clone(), key(mid.x, mid.y))).or_insert((0.0, mid));
+            let e = best.entry(id.clone()).or_insert((0.0, mid));
             if len > e.0 {
                 *e = (len, mid);
             }
         }
     }
-    for ((id, _), (len, mid)) in best {
-        if len >= 30.0 {
+    for (id, (len, mid)) in best {
+        if len >= 40.0 {
             g.label(mid, &id, TWY);
         }
     }
