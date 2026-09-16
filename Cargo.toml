@@ -1,6 +1,6 @@
 [package]
 name = "amdbgen"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Generates a Navigraph-style Airport Mapping Database (DO-272 / AMXM layers) from free sources"
 license = "MIT"
@@ -12,6 +12,10 @@ path = "src/main.rs"
 [[bin]]
 name = "amdb-bridge"
 path = "src/bin/amdb-bridge.rs"
+
+[[bin]]
+name = "amdb-bridge-gui"
+path = "src/bin/amdb-bridge-gui/main.rs"
 
 [dependencies]
 tiny_http = { version = "0.12", features = ["ssl-rustls"] }
@@ -36,6 +40,14 @@ log = { version = "0.4", features = ["std"] }
 console = "0.16"
 chrono = "0.4"
 
+[target.'cfg(windows)'.dependencies]
+native-windows-gui = { version = "1.0.13", default-features = false, features = ["high-dpi", "tray-notification", "message-window", "list-view", "file-dialog", "notice", "animation-timer", "menu", "frame", "image-list", "textbox", "embed-resource"] }
+winapi = { version = "0.3.9", features = ["synchapi", "handleapi", "winbase", "winerror", "shellapi", "winuser", "securitybaseapi", "sddl", "minwinbase", "winnt", "errhandlingapi"] }
+
+[build-dependencies]
+embed-resource = "3"
+
 [profile.release]
 opt-level = 3
 debug = false
+strip = true

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.0 (2026-09-16)
+
+- **AMDB Bridge, a desktop app, and a Windows installer.** No more terminal: one Start
+  button, a list of the simulators and aircraft found on the computer with their state,
+  install/update/remove for the A220 map, and the options (start with Windows, start
+  with the simulator, keep airports on disk, where and how much). It stays in the
+  notification area while serving, keeps a log in `%LOCALAPPDATA%mdb-bridgeridge.log`,
+  and says in plain words why serving could not start.
+- The installer (`AMDB-Bridge-Setup-0.4.0.exe`) installs per user without administrator
+  rights, puts the A220 map into every MSFS 2020 and 2024 found, and can set up the
+  iniBuilds A350 and FlyByWire A380X in one step. Uninstalling undoes all of it.
+- A350/A380X support is now set up once (one administrator prompt) instead of on every
+  start: the address redirect and certificate stay in place while the option is on, and
+  the app serves those aircraft as a normal user.
+- A220 map: runway designators stay level with the screen at every heading instead of
+  turning with the runway, and the aircraft's own compass rose, FMS MAP flag, NO FLIGHT
+  PLAN message and TCAS panel are hidden while the airport map is drawing.
+- When the port is already taken (usually a second copy running), the app says so at
+  once, and `amdb-bridge serve` says so in plain words instead of a socket error.
+
 ## 0.3.0 (2026-09-14)
 
 - An airport moving map for the Synaptic A220 in MSFS, as our own package rather than a

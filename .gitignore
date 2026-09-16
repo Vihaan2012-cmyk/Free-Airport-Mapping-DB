@@ -5,3 +5,4 @@
 *.log
 *.amdb-bridge.bak
 .amdb-bridge-patches.json
+/dist

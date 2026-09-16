@@ -65,7 +65,7 @@ pub fn is_installed(domain: &str) -> bool {
 }
 
 fn flush_dns() {
-    let _ = std::process::Command::new("ipconfig").arg("/flushdns").output();
+    let _ = super::quiet_command("ipconfig").arg("/flushdns").output();
 }
 
 #[cfg(test)]

@@ -429,16 +429,55 @@ pub fn unpatch(community: &Path) -> Result<usize> {
     Ok(n)
 }
 
-/// Register the bridge in the simulator's exe.xml so it starts with the sim.
-pub fn install_autostart(exe: &Path, args: &str) -> Result<Vec<PathBuf>> {
+/// Every simulator exe.xml that exists on this machine.
+pub fn exe_xml_files() -> Vec<PathBuf> {
     let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
     let roaming = std::env::var("APPDATA").unwrap_or_default();
-    let candidates = [
+    [
         format!("{local}/Packages/Microsoft.FlightSimulator_8wekyb3d8bbwe/LocalCache/exe.xml"),
         format!("{local}/Packages/Microsoft.Limitless_8wekyb3d8bbwe/LocalCache/exe.xml"),
         format!("{roaming}/Microsoft Flight Simulator/exe.xml"),
         format!("{roaming}/Microsoft Flight Simulator 2024/exe.xml"),
-    ];
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .filter(|p| p.is_file())
+    .collect()
+}
+
+/// Is the bridge registered to start with any simulator?
+pub fn autostart_installed() -> bool {
+    exe_xml_files().iter().any(|p| fs::read_to_string(p).map_or(false, |t| t.contains(AUTOSTART_NAME)))
+}
+
+const AUTOSTART_NAME: &str = "<Name>AMDB Bridge</Name>";
+
+/// Remove the bridge's `Launch.Addon` block from every exe.xml. Returns the files changed.
+pub fn remove_autostart() -> Result<Vec<PathBuf>> {
+    let mut changed = Vec::new();
+    for p in exe_xml_files() {
+        let text = fs::read_to_string(&p)?;
+        let Some(name) = text.find(AUTOSTART_NAME) else { continue };
+        let Some(open) = text[..name].rfind("<Launch.Addon>") else { continue };
+        let Some(close_rel) = text[name..].find("</Launch.Addon>") else { continue };
+        let mut end = name + close_rel + "</Launch.Addon>".len();
+        // Take the line break and the indentation before the block with it.
+        let start = text[..open].rfind('\n').map_or(open, |i| i + 1);
+        if text[end..].starts_with("\r\n") {
+            end += 2;
+        } else if text[end..].starts_with('\n') {
+            end += 1;
+        }
+        let new = format!("{}{}", &text[..start], &text[end..]);
+        fs::write(&p, new)?;
+        changed.push(p);
+    }
+    Ok(changed)
+}
+
+/// Register the bridge in the simulator's exe.xml so it starts with the sim.
+pub fn install_autostart(exe: &Path, args: &str) -> Result<Vec<PathBuf>> {
+    let candidates: Vec<String> = exe_xml_files().iter().map(|p| p.display().to_string()).collect();
     let entry = format!(
         "  <Launch.Addon>\n    <Name>AMDB Bridge</Name>\n    <Disabled>False</Disabled>\n    <ManualLoad>False</ManualLoad>\n    <Path>{}</Path>\n    <CommandLine>{}</CommandLine>\n  </Launch.Addon>\n",
         exe.display(),
@@ -451,7 +490,7 @@ pub fn install_autostart(exe: &Path, args: &str) -> Result<Vec<PathBuf>> {
             continue;
         }
         let text = fs::read_to_string(&p)?;
-        if text.contains("<Name>AMDB Bridge</Name>") {
+        if text.contains(AUTOSTART_NAME) {
             continue;
         }
         let Some(pos) = text.rfind("</SimBase.Document>") else { continue };

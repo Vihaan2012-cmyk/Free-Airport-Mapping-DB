@@ -23,8 +23,8 @@ struct Cli {
     cmd: Cmd,
 }
 
-#[derive(Args, Clone)]
-struct DataArgs {
+#[derive(Args, Clone, Default)]
+pub(crate) struct DataArgs {
     /// Directory with generated airports (<ICAO>/...). Default: the cache folder chosen at first run.
     #[arg(long)]
     out: Option<PathBuf>,
@@ -353,7 +353,7 @@ fn effective_settings(d: &DataArgs) -> Result<Settings> {
     Ok(s)
 }
 
-fn make_store(d: &DataArgs, s: &Settings) -> Result<Store> {
+pub(crate) fn make_store(d: &DataArgs, s: &Settings) -> Result<Store> {
     let mut store = Store::new(config(d, s))?;
     store.retention = if d.out.is_some() {
         Retention::KeepAll
@@ -367,7 +367,7 @@ fn make_store(d: &DataArgs, s: &Settings) -> Result<Store> {
     Ok(store)
 }
 
-fn config(d: &DataArgs, s: &Settings) -> Config {
+pub(crate) fn config(d: &DataArgs, s: &Settings) -> Config {
     Config {
         out: d.out.clone().unwrap_or_else(|| s.airports_dir()),
         cache: Cache::new(d.cache.clone().or_else(|| s.downloads_dir()), false, false),

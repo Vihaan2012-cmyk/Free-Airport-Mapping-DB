@@ -15,6 +15,17 @@ use std::sync::OnceLock;
 
 static TERM: OnceLock<Term> = OnceLock::new();
 static VERBOSE: OnceLock<bool> = OnceLock::new();
+static SINK: OnceLock<Sink> = OnceLock::new();
+
+/// Receives every status line as plain text: the label (`info`, `success`, `warn`,
+/// `error`, `start`, `step`) and the message with its `[SCOPE] ` prefix kept.
+pub type Sink = Box<dyn Fn(&str, &str) + Send + Sync>;
+
+/// Also hand every status line to `sink`, for a program with no terminal to print to.
+/// Only the first call takes effect.
+pub fn set_sink(sink: Sink) {
+    let _ = SINK.set(sink);
+}
 
 const CHECK: Emoji = Emoji("✓", "+");
 const PLAY: Emoji = Emoji("▶", ">");
@@ -31,6 +42,13 @@ fn line(symbol: &str, label: &str, colour: fn(&str) -> String, scope: Option<&st
     let scope_txt = scope.map(|s| format!("{} {} ", style(format!("[{s}]")).dim(), SEP)).unwrap_or_default();
     let text = format!("{scope_txt}{} {:<8} {}", colour(symbol), colour(label), msg);
     let _ = term().write_line(&text);
+    if let Some(sink) = SINK.get() {
+        let plain = console::strip_ansi_codes(msg);
+        match scope {
+            Some(s) => sink(label, &format!("[{s}] {plain}")),
+            None => sink(label, &plain),
+        }
+    }
 }
 
 fn green(s: &str) -> String {

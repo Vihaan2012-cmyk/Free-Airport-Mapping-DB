@@ -4,14 +4,14 @@
   "title": "AMDB Airport Moving Map (Synaptic A220)",
   "manufacturer": "",
   "creator": "Free Airport Mapping DB",
-  "package_version": "0.1.0",
+  "package_version": "0.4.0",
   "minimum_game_version": "1.0.0",
   "export_type": "Community",
   "package_order_hint": "INSTRUMENT_PATCH",
   "globally_overriden_base_sim_files": [
     "html_ui\\Pages\\VCockpit\\Instruments\\a22x\\DisplayUnits\\instrument.html"
   ],
-  "total_package_size": "00000000000000021529",
+  "total_package_size": "00000000000000045305",
   "release_notes": {
     "neutral": {
       "LastUpdate": "Airport moving map for the Synaptic A220, drawn from a local amdb-bridge. No Navigraph account, no hosts-file redirect and no certificate: the map talks to the bridge directly over HTTP.",

@@ -12,15 +12,42 @@ A free, worldwide **Airport Mapping Database (AMDB)** for flight simulation: eve
 DO-272 / AMXM layer for any airport, built from open sources, served to aircraft in
 exactly the shape their OANS / ANF / BTV code already expects from Navigraph.
 
-Two binaries:
+Three programs:
 
+- **AMDB Bridge** is the desktop app: install it, press Start, fly. It serves maps to
+  the Synaptic A220, iniBuilds A350, FlyByWire A380X and X-Plane 12.
 - **`amdbgen`** builds the data: 45 layers per airport as GeoJSON and Geobuf PBF.
-- **`amdb-bridge`** serves it through the Navigraph AMDB API surface so aircraft like
-  the FlyByWire A380X show it without any code changes.
+- **`amdb-bridge`** is the command-line server behind the app, for scripting and CI.
 
 ![amdbgen building Frankfurt](docs/cli-a3357c7.svg)
 
-## Quick start
+## Install (Windows)
+
+1. Download **`AMDB-Bridge-Setup-<version>.exe`** from the
+   [latest release](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB/releases/latest)
+   and run it. It installs for your user only, so it needs no administrator rights,
+   except for the optional A350/A380X step described below.
+2. Leave the setup options ticked:
+   - **A220 moving map** copies the map into every Microsoft Flight Simulator 2020 and
+     2024 it finds. If you had the GM5 A220 map, it is set aside and put back on uninstall.
+   - **A350 and A380X** points Navigraph's map server address at your computer and
+     trusts a local certificate, so those aircraft load maps from AMDB Bridge. Windows
+     asks for administrator permission once.
+3. AMDB Bridge opens and starts serving. Load your aircraft. The first visit to an
+   airport takes 20-40 seconds while it is built; after that it is instant.
+
+Closing the window keeps AMDB Bridge running in the notification area. Right-click its
+icon to exit. The window also installs, updates or removes the A220 map, starts with
+Windows or with the simulator, and shows what it is doing.
+
+Uninstalling removes everything it changed outside its own folder: the A220 map (and
+brings back any map it set aside), the start-up entries, the A350 patch, the address
+redirect and the certificate. It asks before deleting the airports it built.
+
+To build the installer yourself: `python tools/make_installer.py` (needs Rust and
+Inno Setup 6).
+
+## Quick start (command line)
 
 ```
 cargo build --release

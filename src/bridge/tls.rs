@@ -6,7 +6,6 @@ use anyhow::{anyhow, Context, Result};
 use rcgen::{BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair, KeyUsagePurpose};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 pub const CA_NAME: &str = "amdb-bridge local CA";
 
@@ -58,7 +57,7 @@ pub fn ensure(domain: &str) -> Result<Material> {
 
 /// Is our CA in the machine trusted-root store?
 pub fn is_trusted() -> bool {
-    Command::new("certutil").args(["-store", "Root"]).output().map(|o| String::from_utf8_lossy(&o.stdout).contains(CA_NAME)).unwrap_or(false)
+    super::quiet_command("certutil").args(["-store", "Root"]).output().map(|o| String::from_utf8_lossy(&o.stdout).contains(CA_NAME)).unwrap_or(false)
 }
 
 /// Install the CA into the LocalMachine Root store (needs elevation).
@@ -67,7 +66,7 @@ pub fn trust(m: &Material) -> Result<()> {
         return Ok(());
     }
     let ca_path = m.dir.join("ca.pem");
-    let out = Command::new("certutil").args(["-addstore", "-f", "Root"]).arg(&ca_path).output().context("run certutil")?;
+    let out = super::quiet_command("certutil").args(["-addstore", "-f", "Root"]).arg(&ca_path).output().context("run certutil")?;
     if !out.status.success() {
         return Err(anyhow!("certutil failed: {}", String::from_utf8_lossy(&out.stdout).trim()));
     }
@@ -80,7 +79,7 @@ pub fn untrust() -> Result<bool> {
     if !is_trusted() {
         return Ok(false);
     }
-    let out = Command::new("certutil").args(["-delstore", "Root", CA_NAME]).output().context("run certutil")?;
+    let out = super::quiet_command("certutil").args(["-delstore", "Root", CA_NAME]).output().context("run certutil")?;
     if !out.status.success() {
         return Err(anyhow!("certutil failed: {}", String::from_utf8_lossy(&out.stdout).trim()));
     }

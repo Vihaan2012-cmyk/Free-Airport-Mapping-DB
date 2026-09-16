@@ -368,39 +368,79 @@ pub struct Listen {
 
 /// Run the server until the process exits.
 pub fn serve(store: Store, listen: Listen) -> Result<()> {
-    let store = Arc::new(store);
-    let mut handles = Vec::new();
+    start(Arc::new(store), listen)?.wait();
+    Ok(())
+}
+
+/// A running server that can be stopped without ending the process, which is what the
+/// desktop app needs: Stop, then Start again with different options.
+pub struct ServerHandle {
+    pub store: Arc<Store>,
+    servers: Vec<Arc<Server>>,
+    threads: Vec<std::thread::JoinHandle<()>>,
+}
+
+impl ServerHandle {
+    /// Close the listeners and wait for their threads. Requests already being answered
+    /// finish on their own threads.
+    pub fn stop(self) {
+        for s in &self.servers {
+            s.unblock();
+        }
+        self.wait();
+    }
+
+    fn wait(self) {
+        for t in self.threads {
+            let _ = t.join();
+        }
+    }
+}
+
+/// Explain a failed bind in terms a user can act on.
+fn bind_error(addr: &str, e: impl std::fmt::Display) -> anyhow::Error {
+    let text = e.to_string();
+    if text.contains("10048") || text.to_ascii_lowercase().contains("address already in use") {
+        anyhow::anyhow!("{addr} is already in use - is amdb-bridge already running in another window?")
+    } else if text.contains("10013") {
+        anyhow::anyhow!("{addr} is blocked by another program or by Windows ({text})")
+    } else {
+        anyhow::anyhow!("could not listen on {addr}: {text}")
+    }
+}
+
+/// Start listening and return at once.
+pub fn start(store: Arc<Store>, listen: Listen) -> Result<ServerHandle> {
+    let mut servers = Vec::new();
     if let Some((port, cert, key)) = listen.https {
         let addr = format!("127.0.0.1:{port}");
-        let server = Server::https(&addr, tiny_http::SslConfig { certificate: cert, private_key: key }).map_err(|e| anyhow::anyhow!("bind https {addr}: {e}"))?;
+        let server = Server::https(&addr, tiny_http::SslConfig { certificate: cert, private_key: key }).map_err(|e| bind_error(&addr, e))?;
         crate::term::success(&format!("Listening on https://{addr}/v1/  (airports in {})", store.out.display()));
-        let st = store.clone();
-        handles.push(std::thread::spawn(move || {
-            for req in server.incoming_requests() {
-                let st = st.clone();
-                std::thread::spawn(move || handle(st, req));
-            }
-        }));
+        servers.push(Arc::new(server));
     }
     if let Some(port) = listen.http_port {
         let addr = format!("127.0.0.1:{port}");
-        let server = Server::http(&addr).map_err(|e| anyhow::anyhow!("bind http {addr}: {e}"))?;
+        let server = Server::http(&addr).map_err(|e| bind_error(&addr, e))?;
         crate::term::info(&format!("Also on http://{addr}/v1/ for local tools"));
-        let st = store.clone();
-        handles.push(std::thread::spawn(move || {
-            for req in server.incoming_requests() {
-                let st = st.clone();
-                std::thread::spawn(move || handle(st, req));
-            }
-        }));
+        servers.push(Arc::new(server));
     }
-    if handles.is_empty() {
+    if servers.is_empty() {
         return Err(anyhow::anyhow!("nothing to listen on"));
     }
-    for h in handles {
-        let _ = h.join();
-    }
-    Ok(())
+    let threads = servers
+        .iter()
+        .map(|server| {
+            let server = server.clone();
+            let st = store.clone();
+            std::thread::spawn(move || {
+                for req in server.incoming_requests() {
+                    let st = st.clone();
+                    std::thread::spawn(move || handle(st, req));
+                }
+            })
+        })
+        .collect();
+    Ok(ServerHandle { store, servers, threads })
 }
 
 #[cfg(test)]

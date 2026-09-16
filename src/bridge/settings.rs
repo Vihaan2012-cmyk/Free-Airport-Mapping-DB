@@ -18,6 +18,20 @@ pub struct Settings {
     pub cache_dir: PathBuf,
     /// Disk budget for the cache folder in MB; 0 = unlimited.
     pub limit_mb: u64,
+    /// Desktop app: start serving as soon as the window opens.
+    #[serde(default = "yes")]
+    pub start_on_open: bool,
+    /// Redirect the Navigraph AMDB host here, for aircraft that call it directly
+    /// (iniBuilds A350, FlyByWire A380X). Needs administrator rights.
+    #[serde(default)]
+    pub navigraph_redirect: bool,
+    /// Install the X-Plane 12 moving map and serve its route when X-Plane is found.
+    #[serde(default = "yes")]
+    pub xplane: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 pub fn app_dir() -> PathBuf {
@@ -26,7 +40,7 @@ pub fn app_dir() -> PathBuf {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { version: 1, cache: true, cache_dir: app_dir().join("cache"), limit_mb: 2048 }
+        Settings { version: 1, cache: true, cache_dir: app_dir().join("cache"), limit_mb: 2048, start_on_open: true, navigraph_redirect: false, xplane: true }
     }
 }
 
@@ -99,7 +113,7 @@ impl Settings {
             (current.cache_dir.clone(), current.limit_mb)
         };
         println!();
-        Ok(Settings { version: 1, cache, cache_dir, limit_mb })
+        Ok(Settings { cache, cache_dir, limit_mb, ..current.clone() })
     }
 
     pub fn describe(&self) -> String {
@@ -264,7 +278,7 @@ mod tests {
     fn prune_removes_oldest_airports_first() {
         let root = std::env::temp_dir().join(format!("amdb-bridge-prune-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let s = Settings { version: 1, cache: true, cache_dir: root.clone(), limit_mb: 0 };
+        let s = Settings { cache: true, cache_dir: root.clone(), limit_mb: 0, ..Settings::default() };
         for (name, age) in [("AAAA", 300u64), ("BBBB", 200), ("CCCC", 100)] {
             let d = s.airports_dir().join(name);
             std::fs::create_dir_all(&d).unwrap();
