@@ -143,6 +143,27 @@ pub fn ask_to_quit(wait: Duration) -> bool {
     !running()
 }
 
+/// This process has administrator rights, from its own security token. Being able to
+/// write the hosts file is not the same thing: security software or a read-only flag can
+/// block that for an administrator too, and taking one for the other once made the
+/// elevated copy relaunch itself without end.
+pub fn is_elevated() -> bool {
+    use winapi::um::processthreadsapi::{GetCurrentProcess, OpenProcessToken};
+    use winapi::um::securitybaseapi::GetTokenInformation;
+    use winapi::um::winnt::{TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+    unsafe {
+        let mut token = ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let mut elevation: TOKEN_ELEVATION = std::mem::zeroed();
+        let mut len = 0;
+        let ok = GetTokenInformation(token, TokenElevation, &mut elevation as *mut _ as _, std::mem::size_of::<TOKEN_ELEVATION>() as DWORD, &mut len);
+        CloseHandle(token);
+        ok != 0 && elevation.TokenIsElevated != 0
+    }
+}
+
 /// Start this program again as administrator with `args` (Windows asks the user first).
 /// With `wait`, returns once that copy has exited. False when the user declined.
 pub fn run_elevated(args: &str, wait: bool) -> bool {

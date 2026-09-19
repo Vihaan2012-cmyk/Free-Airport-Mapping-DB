@@ -1,6 +1,6 @@
 [package]
 name = "amdbgen"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "Generates a Navigraph-style Airport Mapping Database (DO-272 / AMXM layers) from free sources"
 license = "MIT"
@@ -42,7 +42,7 @@ chrono = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 native-windows-gui = { version = "1.0.13", default-features = false, features = ["high-dpi", "tray-notification", "message-window", "list-view", "file-dialog", "notice", "animation-timer", "menu", "frame", "image-list", "textbox", "embed-resource"] }
-winapi = { version = "0.3.9", features = ["synchapi", "handleapi", "winbase", "winerror", "shellapi", "winuser", "securitybaseapi", "sddl", "minwinbase", "winnt", "errhandlingapi"] }
+winapi = { version = "0.3.9", features = ["synchapi", "handleapi", "winbase", "winerror", "shellapi", "winuser", "securitybaseapi", "sddl", "minwinbase", "winnt", "errhandlingapi", "shlobj", "knownfolders", "combaseapi", "processthreadsapi"] }
 
 [build-dependencies]
 embed-resource = "3"

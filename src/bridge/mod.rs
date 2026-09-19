@@ -6,6 +6,7 @@
 pub mod cli;
 pub mod compat;
 pub mod desktop;
+pub mod diagnostics;
 pub mod hosts;
 pub mod patcher;
 pub mod server;

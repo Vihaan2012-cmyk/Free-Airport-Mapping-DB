@@ -31,6 +31,7 @@ struct Shared {
     lines: Mutex<Vec<String>>,
     started: Mutex<Option<anyhow::Result<Running>>>,
     inventory: Mutex<Option<Inventory>>,
+    report: Mutex<Option<anyhow::Result<(PathBuf, Option<PathBuf>)>>>,
     cache_bytes: Mutex<Option<u64>>,
     notice: Mutex<Option<nwg::NoticeSender>>,
     log_file: Mutex<Option<File>>,
@@ -97,29 +98,32 @@ fn install_map_everywhere() -> i32 {
     i32::from(failed)
 }
 
-fn uninstall() -> i32 {
+fn uninstall(relaunched: bool) -> i32 {
     instance::ask_to_quit(Duration::from_secs(10));
     let problems = desktop::uninstall_cleanup();
     let needs_admin = problems.iter().any(|p| p.contains("administrator"));
     for p in &problems {
         amdbgen::term::warn(p);
     }
-    if needs_admin && !service::elevated() {
-        // The redirect and the certificate are the only machine-wide changes; ask once.
-        instance::run_elevated("--uninstall", true);
+    // The redirect and the certificate are the only machine-wide changes; ask once, and
+    // never from a copy that is already elevated or was itself relaunched.
+    if needs_admin && !relaunched && !instance::is_elevated() {
+        instance::run_elevated("--uninstall --relaunched", true);
     }
     0
 }
 
 /// `--setup-navigraph on|off`: A350/A380X support, for the installer and the option.
 /// Asks Windows for administrator rights when this copy does not have them.
-fn setup_navigraph(on: bool) -> i32 {
-    if service::elevated() {
+fn setup_navigraph(on: bool, relaunched: bool) -> i32 {
+    if instance::is_elevated() || relaunched {
+        // Do the work here, whatever happens: a copy that has been elevated once must
+        // never start another, or a failure repeats itself in an endless chain.
         if let Err(e) = desktop::setup_navigraph(on) {
-            amdbgen::term::error(&format!("A350/A380X setup: {e:#}"));
+            amdbgen::term::error(&format!("A350/A380X setup failed: {e:#}. If security software protects the hosts file, allow AMDB Bridge to change it and try again."));
             return 1;
         }
-    } else if !instance::run_elevated(if on { "--setup-navigraph on" } else { "--setup-navigraph off" }, true) {
+    } else if !instance::run_elevated(if on { "--setup-navigraph on --relaunched" } else { "--setup-navigraph off --relaunched" }, true) {
         amdbgen::term::warn("Administrator permission was not given, so A350/A380X support was not changed");
         return 1;
     }
@@ -153,11 +157,12 @@ pub fn main() -> i32 {
     if has("--install-a220") {
         return install_map_everywhere();
     }
+    let relaunched = has("--relaunched");
     if has("--uninstall") {
-        return uninstall();
+        return uninstall(relaunched);
     }
     if let Some(i) = args.iter().position(|a| a == "--setup-navigraph") {
-        return setup_navigraph(args.get(i + 1).map_or(true, |v| v != "off"));
+        return setup_navigraph(args.get(i + 1).map_or(true, |v| v != "off"), relaunched);
     }
     if let Some(i) = args.iter().position(|a| a == "--run-at-login") {
         let on = args.get(i + 1).map_or(true, |v| v != "off");
@@ -321,6 +326,7 @@ struct Ui {
     limit_unit: nwg::Label,
 
     activity_header: nwg::Label,
+    collect: nwg::Button,
     open_folder: nwg::Button,
     open_log: nwg::Button,
     log: nwg::TextBox,
@@ -448,8 +454,9 @@ impl App {
 
         // Activity
         nwg::Label::builder().parent(w).text("Activity").font(Some(&ui.font_header)).position((20, 540)).size((200, 22)).build(&mut ui.activity_header)?;
+        nwg::Button::builder().parent(w).text("Aircraft report").font(Some(&ui.font_small)).position((258, 537)).size((124, 26)).build(&mut ui.collect)?;
         nwg::Button::builder().parent(w).text("Airports folder").font(Some(&ui.font_small)).position((388, 537)).size((124, 26)).build(&mut ui.open_folder)?;
-        nwg::Button::builder().parent(w).text("Log file").font(Some(&ui.font_small)).position((518, 537)).size((102, 26)).build(&mut ui.open_log)?;
+        nwg::Button::builder().parent(w).text("Save log").font(Some(&ui.font_small)).position((518, 537)).size((102, 26)).build(&mut ui.open_log)?;
         nwg::TextBox::builder()
             .parent(w)
             .readonly(true)
@@ -562,8 +569,10 @@ impl App {
                     let dir = self.state.borrow().settings.airports_dir();
                     let _ = std::fs::create_dir_all(&dir);
                     desktop::reveal(&dir);
+                } else if handle == ui.collect.handle {
+                    self.collect_report();
                 } else if handle == ui.open_log.handle {
-                    desktop::reveal(&log_path());
+                    self.save_log();
                 } else if handle == ui.opt_start.handle {
                     self.option_start();
                 } else if handle == ui.opt_login.handle {
@@ -716,6 +725,22 @@ impl App {
             }
             self.show_phase();
             self.refresh_inventory();
+        }
+        let report = self.shared.report.lock().unwrap().take();
+        if let Some(result) = report {
+            self.ui.collect.set_enabled(true);
+            match result {
+                Ok((report, log)) => {
+                    amdbgen::term::success(&format!("Saved to Downloads: {}", report.file_name().unwrap_or_default().to_string_lossy()));
+                    if let Some(log) = &log {
+                        amdbgen::term::success(&format!("Saved to Downloads: {}", log.file_name().unwrap_or_default().to_string_lossy()));
+                    }
+                    amdbgen::term::info("Send both files with your report");
+                    desktop::reveal_file(&report);
+                }
+                Err(e) => amdbgen::term::error(&format!("Could not write the aircraft report: {e:#}")),
+            }
+            self.drain_lines_only();
         }
         let inventory = self.shared.inventory.lock().unwrap().take();
         if let Some(inv) = inventory {
@@ -892,6 +917,33 @@ impl App {
         self.ui.refresh.set_enabled(true);
     }
 
+    /// Write the aircraft report in the background; reading every aircraft's panel code
+    /// takes a little while in a full Community folder.
+    fn collect_report(&self) {
+        self.ui.collect.set_enabled(false);
+        amdbgen::term::info("Collecting aircraft information…");
+        self.drain_lines_only();
+        let shared = self.shared.clone();
+        std::thread::spawn(move || {
+            let result = amdbgen::bridge::diagnostics::collect_to_downloads(None);
+            *shared.report.lock().unwrap() = Some(result);
+            shared.wake();
+        });
+    }
+
+    /// Put a copy of the log in Downloads, where it is easy to attach to a message.
+    fn save_log(&self) {
+        match amdbgen::bridge::diagnostics::save_log_copy(&desktop::downloads_dir()) {
+            Ok(Some(path)) => {
+                amdbgen::term::success(&format!("Log saved to Downloads: {}", path.file_name().unwrap_or_default().to_string_lossy()));
+                desktop::reveal_file(&path);
+            }
+            Ok(None) => amdbgen::term::warn("There is no log yet"),
+            Err(e) => amdbgen::term::error(&format!("Could not save the log: {e:#}")),
+        }
+        self.drain_lines_only();
+    }
+
     fn install_map(&self) {
         let sims = desktop::detect_sims();
         let mut ok = 0;
@@ -1024,7 +1076,7 @@ impl App {
             }
         }
         // The setup runs as a separate elevated copy; this one waits for it.
-        let code = setup_navigraph(on);
+        let code = setup_navigraph(on, false);
         self.drain_lines_only();
         if code != 0 {
             self.ui.opt_redirect.set_check_state(checked(!on));

@@ -20,7 +20,19 @@ fn read() -> Result<String> {
 
 fn write(text: &str) -> Result<()> {
     let p = hosts_path();
-    fs::write(&p, text).with_context(|| format!("write {} (run as administrator)", p.display()))
+    if fs::write(&p, text).is_ok() {
+        return Ok(());
+    }
+    // Some tools mark the hosts file read-only; an administrator may clear that.
+    if let Ok(meta) = fs::metadata(&p) {
+        let mut perms = meta.permissions();
+        if perms.readonly() {
+            #[allow(clippy::permissions_set_readonly_false)]
+            perms.set_readonly(false);
+            let _ = fs::set_permissions(&p, perms);
+        }
+    }
+    fs::write(&p, text).with_context(|| format!("write {} (needs administrator rights; security software may also be protecting it)", p.display()))
 }
 
 /// True when we can write the hosts file (i.e. the process is elevated).

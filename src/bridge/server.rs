@@ -257,7 +257,22 @@ fn handle_xp(store: Arc<Store>, req: Request, rest: &str, params: &Map<String, V
     }
 }
 
+/// Log a client's first request in full: its raw User-Agent and the whole URL. The
+/// per-request lines shorten both, which is right for a busy log and wrong for working
+/// out what a new aircraft expects.
+fn note_new_client(req: &Request) {
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+    let agent = req.headers().iter().find(|h| h.field.equiv("User-Agent")).map(|h| h.value.as_str().to_string()).unwrap_or_default();
+    let first = SEEN.get_or_init(Default::default).lock().map_or(false, |mut seen| seen.insert(agent.clone()));
+    if first {
+        let url: String = req.url().chars().take(600).collect();
+        let headers: Vec<String> = req.headers().iter().map(|h| h.field.as_str().as_str().to_string()).collect();
+        crate::term::info(&format!("New client {:?}: {} {}  (headers: {})", agent, req.method(), url, headers.join(", ")));
+    }
+}
+
 fn handle(store: Arc<Store>, req: Request) {
+    note_new_client(&req);
     let url = req.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((&url, ""));
     let params = parse_query(query);
@@ -273,6 +288,7 @@ fn handle(store: Arc<Store>, req: Request) {
         return;
     }
     let Some(pos) = path.find("/v1/") else {
+        crate::term::warn(&format!("Unrecognised request {} {}", req.method(), url.chars().take(600).collect::<String>()));
         respond_json(req, 404, json!({"error":"not found","hint":"expected /v1/..."}).to_string());
         return;
     };

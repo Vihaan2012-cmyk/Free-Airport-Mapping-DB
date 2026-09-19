@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
-  <assemblyIdentity type="win32" name="FreeAirportMappingDB.AMDBBridge" version="0.4.0.0" processorArchitecture="amd64"/>
+  <assemblyIdentity type="win32" name="FreeAirportMappingDB.AMDBBridge" version="0.4.1.0" processorArchitecture="amd64"/>
   <description>AMDB Bridge</description>
   <!-- Modern Windows controls rather than the Windows 95 look. -->
   <dependency>

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.1 (2026-09-19)
+
+- Fixed: setting up the A350/A380X could start copies of AMDB Bridge without end, which
+  then could not be closed and stopped Windows shutting down. It happened when security
+  software or a read-only flag protects the hosts file: the administrator copy took the
+  blocked file to mean it had no administrator rights and relaunched itself again. Rights
+  are now read from Windows directly, a relaunched copy never relaunches, and a failure
+  is reported once in plain words. Uninstalling had the same flaw and is fixed too.
+- A read-only flag on the hosts file is cleared before writing.
+- **Aircraft report**: one button saves a report on the installed aircraft (where each is
+  installed, and short excerpts of its code that mention Navigraph or the map API) and
+  a copy of the log to your Downloads folder, for troubleshooting an aircraft that gets
+  no maps. Also `amdb-bridge collect`.
+- **Save log** copies the log to Downloads. The log records each new client's first
+  request in full, and any request it does not recognise.
+
 ## 0.4.0 (2026-09-16)
 
 - **AMDB Bridge, a desktop app, and a Windows installer.** No more terminal: one Start

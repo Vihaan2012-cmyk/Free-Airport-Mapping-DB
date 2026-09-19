@@ -4,8 +4,8 @@
 1 RT_MANIFEST "amdb-bridge-gui.manifest"
 
 1 VERSIONINFO
-FILEVERSION 0,4,0,0
-PRODUCTVERSION 0,4,0,0
+FILEVERSION 0,4,1,0
+PRODUCTVERSION 0,4,1,0
 FILEOS 0x40004
 FILETYPE 0x1
 BEGIN
@@ -15,12 +15,12 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Free Airport Mapping DB"
       VALUE "FileDescription", "AMDB Bridge"
-      VALUE "FileVersion", "0.4.0"
+      VALUE "FileVersion", "0.4.1"
       VALUE "InternalName", "amdb-bridge-gui"
       VALUE "LegalCopyright", "MIT licence"
       VALUE "OriginalFilename", "AMDB Bridge.exe"
       VALUE "ProductName", "AMDB Bridge"
-      VALUE "ProductVersion", "0.4.0"
+      VALUE "ProductVersion", "0.4.1"
     END
   END
   BLOCK "VarFileInfo"

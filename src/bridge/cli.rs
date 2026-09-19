@@ -337,6 +337,17 @@ enum Cmd {
         #[arg(long = "dry-run")]
         dry_run: bool,
     },
+    /// Write a report on the installed aircraft for troubleshooting an aircraft that gets
+    /// no maps: where each is installed, and short excerpts of its panel code that mention
+    /// Navigraph or the map API. Send it with bridge.log.
+    Collect {
+        /// Only packages whose folder name or title contains this (e.g. a380).
+        #[arg(long)]
+        only: Option<String>,
+        /// Folder to write the report to (default: your Downloads folder).
+        #[arg(long)]
+        to: Option<PathBuf>,
+    },
     /// Restore bundles changed by `patch`.
     Unpatch {
         #[arg(long = "community")]
@@ -625,6 +636,15 @@ pub fn run() -> Result<()> {
                 total += patcher::patch_a220(&d, dry_run)?.len();
             }
             println!("{}{} file(s) patched", if dry_run { "[dry-run] " } else { "" }, total);
+            Ok(())
+        }
+        Cmd::Collect { only, to } => {
+            let dir = to.unwrap_or_else(super::desktop::downloads_dir);
+            let path = super::diagnostics::collect(&dir, only.as_deref())?;
+            crate::term::success(&format!("Aircraft report written to {}", path.display()));
+            if let Some(log) = super::diagnostics::save_log_copy(&dir)? {
+                crate::term::success(&format!("Log copied to {}", log.display()));
+            }
             Ok(())
         }
         Cmd::Unpatch { community } => {

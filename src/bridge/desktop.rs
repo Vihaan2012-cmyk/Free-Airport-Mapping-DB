@@ -308,6 +308,30 @@ pub fn sim_running() -> bool {
     })
 }
 
+/// The user's Downloads folder, wherever they have moved it; `%USERPROFILE%\Downloads`
+/// if Windows cannot say.
+pub fn downloads_dir() -> PathBuf {
+    #[cfg(windows)]
+    unsafe {
+        use winapi::um::combaseapi::CoTaskMemFree;
+        use winapi::um::knownfolders::FOLDERID_Downloads;
+        use winapi::um::shlobj::SHGetKnownFolderPath;
+        let mut raw = std::ptr::null_mut();
+        if SHGetKnownFolderPath(&FOLDERID_Downloads, 0, std::ptr::null_mut(), &mut raw) == 0 && !raw.is_null() {
+            let len = (0..).take_while(|&i| *raw.offset(i) != 0).count();
+            let path = String::from_utf16_lossy(std::slice::from_raw_parts(raw, len));
+            CoTaskMemFree(raw as _);
+            return PathBuf::from(path);
+        }
+    }
+    PathBuf::from(std::env::var("USERPROFILE").unwrap_or_else(|_| ".".into())).join("Downloads")
+}
+
+/// Show a folder or file in Explorer, with a file selected.
+pub fn reveal_file(path: &Path) {
+    let _ = Command::new("explorer").arg(format!("/select,{}", path.display())).spawn();
+}
+
 /// Show a folder or file in Explorer.
 pub fn reveal(path: &Path) {
     let _ = Command::new("explorer").arg(path).spawn();
