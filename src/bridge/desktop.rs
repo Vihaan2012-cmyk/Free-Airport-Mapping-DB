@@ -30,6 +30,9 @@ pub struct Sim {
 /// A default Community folder is only used when that simulator's config names none, so
 /// a moved package library does not also list the stale folder it left behind.
 pub fn detect_sims() -> Vec<Sim> {
+    if !cfg!(windows) {
+        return super::platform::proton_sims().into_iter().map(|(name, community)| Sim { name, community }).collect();
+    }
     let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
     let roaming = std::env::var("APPDATA").unwrap_or_default();
     let installs = [
@@ -273,11 +276,26 @@ pub fn setup_navigraph(on: bool) -> Result<()> {
         let m = super::tls::ensure(domain)?;
         super::tls::trust(&m)?;
         super::hosts::install(domain)?;
+        allow_port_443();
     } else {
         super::hosts::remove()?;
         super::tls::untrust()?;
     }
+    // Run with sudo, the certificate files were created as root in the user's folder.
+    super::platform::return_to_user(&super::platform::data_dir());
     Ok(())
+}
+
+/// Linux only lets root listen on ports below 1024. Give this program that one right,
+/// so it can answer the aircraft on 443 without running as root.
+fn allow_port_443() {
+    #[cfg(unix)]
+    if let Ok(exe) = std::env::current_exe() {
+        match Command::new("setcap").arg("cap_net_bind_service=+ep").arg(&exe).output() {
+            Ok(o) if o.status.success() => log::info!("{} may now listen on port 443", exe.display()),
+            _ => log::warn!("could not let {} use port 443 (install setcap, or run `sudo setcap cap_net_bind_service=+ep {}`)", exe.display(), exe.display()),
+        }
+    }
 }
 
 /// Patch every iniBuilds A350 EFB found, so its airport map does not wait for a

@@ -9,8 +9,21 @@ use std::path::PathBuf;
 pub const MARKER: &str = "# amdb-bridge";
 
 pub fn hosts_path() -> PathBuf {
+    if !cfg!(windows) {
+        // Wine and Proton resolve names through the host, so this also covers MSFS.
+        return PathBuf::from("/etc/hosts");
+    }
     let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
     PathBuf::from(root).join("System32").join("drivers").join("etc").join("hosts")
+}
+
+/// The line ending the hosts file already uses.
+fn eol(text: &str) -> &'static str {
+    if text.contains("\r\n") || (text.is_empty() && cfg!(windows)) {
+        "\r\n"
+    } else {
+        "\n"
+    }
 }
 
 fn read() -> Result<String> {
@@ -41,21 +54,24 @@ pub fn writable() -> bool {
 }
 
 fn strip_ours(text: &str) -> String {
-    let mut out: String = text.lines().filter(|l| !l.contains(MARKER)).map(|l| format!("{l}\r\n")).collect();
-    while out.ends_with("\r\n\r\n") {
-        out.pop();
-        out.pop();
+    let nl = eol(text);
+    let mut out: String = text.lines().filter(|l| !l.contains(MARKER)).map(|l| format!("{l}{nl}")).collect();
+    let double = format!("{nl}{nl}");
+    while out.ends_with(&double) {
+        out.truncate(out.len() - nl.len());
     }
     out
 }
 
 /// Point `domain` at 127.0.0.1 (replacing any earlier entry of ours).
 pub fn install(domain: &str) -> Result<()> {
-    let mut text = strip_ours(&read()?);
-    if !text.is_empty() && !text.ends_with("\r\n") {
-        text.push_str("\r\n");
+    let original = read()?;
+    let nl = eol(&original);
+    let mut text = strip_ours(&original);
+    if !text.is_empty() && !text.ends_with(nl) {
+        text.push_str(nl);
     }
-    text.push_str(&format!("127.0.0.1 {domain} {MARKER}\r\n"));
+    text.push_str(&format!("127.0.0.1 {domain} {MARKER}{nl}"));
     write(&text)?;
     flush_dns();
     Ok(())
@@ -77,7 +93,11 @@ pub fn is_installed(domain: &str) -> bool {
 }
 
 fn flush_dns() {
-    let _ = super::quiet_command("ipconfig").arg("/flushdns").output();
+    if cfg!(windows) {
+        let _ = super::quiet_command("ipconfig").arg("/flushdns").output();
+    } else {
+        let _ = std::process::Command::new("resolvectl").arg("flush-caches").output();
+    }
 }
 
 #[cfg(test)]

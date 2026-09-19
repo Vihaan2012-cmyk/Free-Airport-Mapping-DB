@@ -35,7 +35,7 @@ fn yes() -> bool {
 }
 
 pub fn app_dir() -> PathBuf {
-    std::env::var("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(".")).join("amdb-bridge")
+    super::platform::data_dir()
 }
 
 impl Default for Settings {

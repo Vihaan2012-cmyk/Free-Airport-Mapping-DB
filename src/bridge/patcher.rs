@@ -255,6 +255,9 @@ pub fn patch_a220(community: &Path, dry_run: bool) -> Result<Vec<PatchedFile>> {
 
 /// Candidate Community folders for MSFS 2020 and 2024 (Store and Steam) on this machine.
 pub fn detect_community_dirs() -> Vec<PathBuf> {
+    if !cfg!(windows) {
+        return super::desktop::detect_sims().into_iter().map(|s| s.community).collect();
+    }
     let mut out = Vec::new();
     let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
     let roaming = std::env::var("APPDATA").unwrap_or_default();

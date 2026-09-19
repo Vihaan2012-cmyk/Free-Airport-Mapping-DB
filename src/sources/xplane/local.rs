@@ -84,6 +84,9 @@ pub fn find_in_root(xplane_root: &Path, icao: &str) -> Result<Option<(PathBuf, S
 /// The X-Plane 12 (then 11) install recorded by the installer in
 /// `%LOCALAPPDATA%\x-plane_install_12.txt`, if it still exists.
 pub fn detect_install() -> Option<PathBuf> {
+    if !cfg!(windows) {
+        return crate::bridge::platform::xplane_candidates().into_iter().find(|p| p.join("Resources").is_dir() || p.join("Custom Scenery").is_dir());
+    }
     let local = std::env::var("LOCALAPPDATA").ok()?;
     for name in ["x-plane_install_12.txt", "x-plane_install_11.txt"] {
         let Ok(text) = fs::read_to_string(Path::new(&local).join(name)) else { continue };

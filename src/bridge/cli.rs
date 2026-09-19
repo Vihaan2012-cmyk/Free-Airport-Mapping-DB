@@ -234,6 +234,7 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard:
     let mut rows: Vec<BulkRow> = icaos.iter().filter(|i| !todo.contains(i)).map(|i| BulkRow { icao: i.clone(), status: "skipped (already built)", seconds: None, error: String::new() }).collect();
     crate::term::start(&format!("Bulk build {label}: {} airport(s){}", todo.len(), if skipped > 0 { format!(", {skipped} already built") } else { String::new() }));
     if todo.is_empty() {
+        super::progress::finish();
         return;
     }
     let t0 = std::time::Instant::now();
@@ -251,6 +252,7 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard:
                     rows.push(BulkRow { icao: i.clone(), status: "built", seconds: secs, error: String::new() });
                 }
                 for (i, e) in &s.failed {
+                    super::progress::record_failed(i, e);
                     rows.push(BulkRow { icao: i.clone(), status: "failed", seconds: None, error: e.clone() });
                 }
             }
@@ -258,6 +260,7 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard:
                 crate::term::warn(&format!("bulk chunk failed: {e:#}"));
                 failed += part.len();
                 for i in part {
+                    super::progress::record_failed(i, &format!("{e:#}"));
                     rows.push(BulkRow { icao: i.clone(), status: "failed", seconds: None, error: format!("{e:#}") });
                 }
             }
@@ -275,6 +278,7 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard:
         crate::term::human_secs(t0.elapsed().as_secs_f64()),
         if discard.is_some() { format!(", {} of downloads discarded", crate::term::human_bytes(freed)) } else { String::new() }
     ));
+    super::progress::finish();
     rows.sort_by(|a, b| a.icao.cmp(&b.icao));
     match write_bulk_status(cfg, &rows, label) {
         Ok(p) => crate::term::file(None, &p.display().to_string(), &format!("status of all {} airports (built / failed / skipped, sources, features, errors)", rows.len())),
@@ -319,6 +323,9 @@ enum Cmd {
         /// Also the airports of your latest SimBrief OFP (username or pilot id).
         #[arg(long)]
         simbrief: Option<String>,
+        /// Port for the live progress page of a bulk build (0 turns it off).
+        #[arg(long = "progress-port", default_value_t = super::progress::DEFAULT_PORT)]
+        progress_port: u16,
     },
     /// Show redirect, certificate, storage and aircraft status.
     Status,
@@ -326,6 +333,13 @@ enum Cmd {
     Setup,
     /// Remove the hosts-file redirect and the local certificate authority (cleanup after a crash).
     Cleanup,
+    /// One-time setup for aircraft that ask Navigraph's map server directly (iniBuilds A350,
+    /// FlyByWire A380X): point its address here and trust the local certificate. Needs
+    /// administrator rights (sudo on Linux). `off` undoes it.
+    Navigraph {
+        /// on or off
+        state: String,
+    },
     /// Add the server to the simulator's exe.xml so it starts with the sim.
     Autostart(ServeArgs),
     /// Alternative to the redirect: rewrite aircraft bundles to use http://127.0.0.1:PORT (backups kept).
@@ -408,6 +422,13 @@ pub(crate) fn config(d: &DataArgs, s: &Settings) -> Config {
 }
 
 /// Relaunch this command elevated (UAC prompt) and exit the current process.
+#[cfg(not(windows))]
+fn relaunch_elevated() -> Result<()> {
+    Err(anyhow!("this needs root: run the same command with sudo"))
+}
+
+/// Relaunch this command elevated (UAC prompt) and exit the current process.
+#[cfg(windows)]
 fn relaunch_elevated() -> Result<()> {
     let exe = std::env::current_exe()?;
     let args: Vec<String> = std::env::args().skip(1).map(|a| format!("'{}'", a.replace('\'', "''"))).collect();
@@ -426,8 +447,18 @@ fn serve(a: ServeArgs) -> Result<()> {
     // Ask the storage questions in the user's own window, before any elevation.
     let settings = effective_settings(&a.data)?;
     let mut https = None;
-    if !a.no_hosts {
+    // Set up once (the desktop app's option, or `navigraph on`): the address already
+    // points here and the certificate is trusted, so serve without touching either.
+    let persistent = !a.no_hosts && super::desktop::navigraph_ready();
+    if persistent {
+        let m = tls::ensure(domain)?;
+        https = Some((a.https_port, m.cert_pem, m.key_pem));
+        crate::term::info(&format!("{domain} already points here; serving it on port {}", a.https_port));
+    } else if !a.no_hosts {
         if !hosts::writable() {
+            if !cfg!(windows) {
+                return Err(anyhow!("the iniBuilds A350 and FlyByWire A380X need a one-time setup: run `sudo {} navigraph on`, then this again (or add --no-hosts to serve everything else)", std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "amdb-bridge".into())));
+            }
             relaunch_elevated()?;
         }
         let m = tls::ensure(domain)?;
@@ -510,7 +541,7 @@ fn serve(a: ServeArgs) -> Result<()> {
         }
     }
     let result = server::serve(store, server::Listen { http_port: if a.http_port == 0 { None } else { Some(a.http_port) }, https });
-    if !a.no_hosts {
+    if !a.no_hosts && !persistent {
         let _ = hosts::remove();
     }
     result
@@ -530,7 +561,7 @@ pub fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Serve(a) => serve(a),
-        Cmd::Prefetch { data, bulk, icaos, simbrief } => {
+        Cmd::Prefetch { data, bulk, icaos, simbrief, progress_port } => {
             let settings = effective_settings(&data)?;
             let mut cfg = config(&data, &settings);
             cfg.osm_parallel = bulk.jobs.max(1);
@@ -545,6 +576,15 @@ pub fn run() -> Result<()> {
                 let label = bulk.label();
                 let sel = bulk.resolve(&cfg)?;
                 let discard = if bulk.discard_downloads { data.cache.clone().or_else(|| settings.downloads_dir()) } else { None };
+                if progress_port != 0 {
+                    match super::progress::serve(&label, &sel, cfg.out.clone(), progress_port) {
+                        Some(url) => {
+                            crate::term::success(&format!("Live progress: {url}"));
+                            let _ = std::process::Command::new("explorer").arg(&url).spawn();
+                        }
+                        None => crate::term::warn(&format!("progress page not started: port {progress_port} is in use")),
+                    }
+                }
                 run_bulk(&cfg, &sel, bulk.rebuild, &label, discard.as_deref());
                 if icaos.is_empty() && simbrief.is_none() {
                     return Ok(());
@@ -570,7 +610,7 @@ pub fn run() -> Result<()> {
         Cmd::Status => {
             let domain = super::NAVIGRAPH_AMDB_DOMAIN;
             println!("hosts redirect for {domain}: {}", if hosts::is_installed(domain) { "ACTIVE" } else { "not installed" });
-            println!("local CA trusted by Windows: {}", if tls::is_trusted() { "yes" } else { "no" });
+            println!("local CA trusted: {}", if tls::is_trusted() { "yes" } else { "no" });
             println!("certificate folder: {}", tls::data_dir().display());
             match Settings::load() {
                 Some(s) => println!("storage: {}  (settings in {})", s.describe(), Settings::path().display()),
@@ -603,6 +643,15 @@ pub fn run() -> Result<()> {
             let s = Settings::wizard(&Settings::load().unwrap_or_default())?;
             s.save()?;
             crate::term::success(&format!("Saved: {}  ({})", s.describe(), Settings::path().display()));
+            Ok(())
+        }
+        Cmd::Navigraph { state } => {
+            let on = !matches!(state.to_ascii_lowercase().as_str(), "off" | "remove" | "0" | "false");
+            if !hosts::writable() {
+                relaunch_elevated()?;
+            }
+            super::desktop::setup_navigraph(on)?;
+            crate::term::success(if on { "A350/A380X set up: run `amdb-bridge serve` as your normal user" } else { "A350/A380X setup removed" });
             Ok(())
         }
         Cmd::Cleanup => {

@@ -9,6 +9,8 @@ pub mod desktop;
 pub mod diagnostics;
 pub mod hosts;
 pub mod patcher;
+pub mod platform;
+pub mod progress;
 pub mod server;
 pub mod service;
 pub mod settings;
@@ -20,6 +22,7 @@ pub const DEFAULT_PORT: u16 = 8770;
 /// A console tool (certutil, reg, ipconfig) run without flashing a console window, which
 /// it otherwise does when started from the desktop app.
 pub(crate) fn quiet_command(program: &str) -> std::process::Command {
+    #[allow(unused_mut)]
     let mut c = std::process::Command::new(program);
     #[cfg(windows)]
     {

@@ -18,7 +18,7 @@ use crate::term;
 use anyhow::{anyhow, Context, Result};
 use geo_types::{Coord, Geometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
 use rayon::prelude::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -527,66 +527,8 @@ pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
         })
         .collect();
 
-    // Phase B: OpenStreetMap, every source working at once. The map API and each
-    // Overpass endpoint form a pool; airport k of a batch starts on entry k, so a batch
-    // of n airports keeps n different servers busy rather than queueing on one. If a
-    // source fails or is throttled, that airport walks on to the next in the pool.
-    let mut stores: HashMap<String, Store> = HashMap::new();
-    if !matches!(cfg.osm, OsmMode::Off) {
-        // A shared queue rather than fixed groups: a worker that finishes early takes the
-        // next airport immediately, so one slow server cannot hold up the others.
-        let next = std::sync::atomic::AtomicUsize::new(0);
-        let done: Mutex<Vec<(String, Result<Store>, f64, String)>> = Mutex::new(Vec::new());
-        std::thread::scope(|sc| {
-            for _ in 0..cfg.osm_parallel.max(1) {
-                sc.spawn(|| loop {
-                    let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let Some(p) = prepared.get(k) else { break };
-                    let t0 = std::time::Instant::now();
-                    let pool = osm_pool(cfg, p.country.as_deref());
-                    let mut last: Result<Store> = Err(anyhow!("no OpenStreetMap source available"));
-                    let mut used = String::from("none");
-                    // Alternate between the two fastest sources (the map API and the
-                    // first Overpass endpoint, measured at a few seconds each), then
-                    // fall back through the rest. Congested mirrors are still useful as
-                    // a backstop but must not be anyone's first choice.
-                    let fast = pool.len().min(2);
-                    let primary = k % fast;
-                    let order: Vec<usize> = std::iter::once(primary).chain((0..pool.len()).filter(|j| *j != primary)).collect();
-                    for &i in &order {
-                        let src = &pool[i];
-                        let attempt = match src {
-                            OsmSource::MapApi => osm::osmapi::fetch(&cfg.http, &cfg.cache, &p.icao, p.bbox),
-                            OsmSource::Overpass(url) => osm::overpass::fetch(&cfg.http, &cfg.cache, std::slice::from_ref(url), &p.icao, p.bbox),
-                        };
-                        match attempt {
-                            Ok(s) => {
-                                used = src.label();
-                                last = Ok(s);
-                                break;
-                            }
-                            Err(e) => {
-                                log::warn!("{}: {} failed ({e:#}); trying the next source", p.icao, src.label());
-                                last = Err(e);
-                            }
-                        }
-                    }
-                    done.lock().unwrap().push((p.icao.clone(), last, t0.elapsed().as_secs_f64(), used));
-                });
-            }
-        });
-        for (icao, result, secs, used) in done.into_inner().unwrap() {
-            match result {
-                Ok(s) => {
-                    term::info(&format!("[{icao}] OpenStreetMap via {used}: {} nodes, {} ways in {}", fmt_n(s.nodes.len()), fmt_n(s.ways.len()), term::human_secs(secs)));
-                    stores.insert(icao, s);
-                }
-                Err(e) => log::warn!("{icao}: no OSM source answered: {e:#}"),
-            }
-        }
-    }
-
-    // FAA tables (only when some airport is in the US).
+    // FAA tables (only when some airport is in the US), loaded before any building
+    // starts so builds can begin the moment an airport's own data is in.
     let faa_tables: Option<faa::NasrTables> = match &cfg.faa {
         FaaMode::Off => None,
         FaaMode::File(p) => Some(faa::load_tables(&cfg.http, &cfg.cache, Some(p))?),
@@ -606,13 +548,10 @@ pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
         }
     };
 
-    // Phase C: build + write.
-    term::start(&format!("Building {} airport{}", prepared.len(), if prepared.len() == 1 { "" } else { "s" }));
-    let stores = Mutex::new(stores);
-    prepared.into_par_iter().for_each(|p| {
+    // Build one airport and record the result.
+    let build_one = |p: Prepared, st: Option<Store>| {
         let icao = p.icao.clone();
         let t0 = std::time::Instant::now();
-        let st = stores.lock().unwrap().remove(&icao);
         let is_us = p.country.as_deref() == Some("US") || (p.country.is_none() && icao.starts_with('K'));
         let t = if is_us { faa_tables.as_ref() } else { None };
         match build_and_write(cfg, p, st, t) {
@@ -656,7 +595,80 @@ pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
                 summary.lock().unwrap().failed.push((icao, format!("{e:#}")));
             }
         }
-    });
+    };
+
+    // Phase B: OpenStreetMap, every source working at once, and each airport built the
+    // moment its own data is in. The map API and each Overpass endpoint form a pool;
+    // airport k of a batch starts on entry k, so a batch of n airports keeps n different
+    // servers busy rather than queueing on one. If a source fails or is throttled, that
+    // airport walks on to the next in the pool. Nothing waits for the slowest download.
+    term::start(&format!("Fetching and building {} airport{}", prepared.len(), if prepared.len() == 1 { "" } else { "s" }));
+    if matches!(cfg.osm, OsmMode::Off) {
+        prepared.into_par_iter().for_each(|p| build_one(p, None));
+    } else {
+        let slots: Vec<Mutex<Option<Prepared>>> = prepared.into_iter().map(|p| Mutex::new(Some(p))).collect();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let build_one = &build_one;
+        rayon::scope(|rs| {
+            std::thread::scope(|sc| {
+                for _ in 0..cfg.osm_parallel.max(1) {
+                    sc.spawn(|| loop {
+                        // A shared queue rather than fixed groups: a worker that finishes
+                        // early takes the next airport immediately.
+                        let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(slot) = slots.get(k) else { break };
+                        let Some(p) = slot.lock().unwrap().take() else { continue };
+                        let t0 = std::time::Instant::now();
+                        let mut last: Result<Store> = Err(anyhow!("no OpenStreetMap source available"));
+                        let mut used = String::from("none");
+                        if let Some((s, from)) = osm::cached(&cfg.cache, &p.icao) {
+                            last = Ok(s);
+                            used = from.to_string();
+                        } else {
+                            let pool = osm_pool(cfg, p.country.as_deref());
+                            // Alternate between the two fastest sources (the map API and the
+                            // first Overpass endpoint), then fall back through the rest.
+                            // Congested mirrors are a backstop, never anyone's first choice.
+                            let fast = pool.len().min(2);
+                            let primary = if fast == 0 { 0 } else { k % fast };
+                            let order: Vec<usize> = std::iter::once(primary).chain((0..pool.len()).filter(|j| *j != primary)).collect();
+                            for &i in &order {
+                                let Some(src) = pool.get(i) else { continue };
+                                let attempt = match src {
+                                    OsmSource::MapApi => osm::osmapi::fetch(&cfg.http, &cfg.cache, &p.icao, p.bbox),
+                                    OsmSource::Overpass(url) => osm::overpass::fetch(&cfg.http, &cfg.cache, std::slice::from_ref(url), &p.icao, p.bbox),
+                                };
+                                match attempt {
+                                    Ok(s) => {
+                                        used = src.label();
+                                        last = Ok(s);
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        log::warn!("{}: {} failed ({e:#}); trying the next source", p.icao, src.label());
+                                        last = Err(e);
+                                    }
+                                }
+                            }
+                        }
+                        let store = match last {
+                            Ok(s) => {
+                                term::info(&format!("[{}] OpenStreetMap via {used}: {} nodes, {} ways in {}", p.icao, fmt_n(s.nodes.len()), fmt_n(s.ways.len()), term::human_secs(t0.elapsed().as_secs_f64())));
+                                Some(s)
+                            }
+                            Err(e) => {
+                                log::warn!("{}: no OSM source answered: {e:#}", p.icao);
+                                None
+                            }
+                        };
+                        // Build on the shared pool, so this worker moves straight on to
+                        // the next download.
+                        rs.spawn(move |_| build_one(p, store));
+                    });
+                }
+            });
+        });
+    }
     {
         let _lock = INDEX_WRITE.lock().unwrap();
         let mut idx = Index::load_or_new(&cfg.out, cfg.projection.name());

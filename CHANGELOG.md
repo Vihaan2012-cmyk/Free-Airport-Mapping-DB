@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.2 (2026-09-19)
+
+- **Linux.** `amdb-bridge` and `amdbgen` run on any 64-bit Linux (a static build). They
+  find Microsoft Flight Simulator 2020 and 2024 under Steam's Proton, in every Steam
+  library including Flatpak and Snap Steam, translating the Wine paths in `UserCfg.opt`,
+  and X-Plane 12 through `~/.x-plane` or Steam. `sudo amdb-bridge navigraph on` sets up
+  the iniBuilds A350 and FlyByWire A380X once: `/etc/hosts`, the system certificate
+  store (which Wine and Proton read), and permission to use port 443 without root. The
+  desktop app stays Windows-only.
+- **Bulk builds are much faster.** Each airport is built the moment its own download
+  finishes instead of waiting for the slowest one in its group, and downloads saved from
+  either OpenStreetMap source are reused, so a restart no longer downloads them again.
+- **Live progress page** at http://127.0.0.1:8771 while `prefetch` builds a list:
+  percentage, airports per hour, time left, the latest airports and any failures.
+- `amdb-bridge navigraph on|off` on Windows too, and `serve` uses that setup without
+  asking for administrator rights.
+
 ## 0.4.1 (2026-09-19)
 
 - Fixed: setting up the A350/A380X could start copies of AMDB Bridge without end, which

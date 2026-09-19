@@ -47,6 +47,21 @@ redirect and the certificate. It asks before deleting the airports it built.
 To build the installer yourself: `python tools/make_installer.py` (needs Rust and
 Inno Setup 6).
 
+## Linux
+
+Download **`amdb-bridge-<version>-linux-x64.tar.gz`**; it runs on any 64-bit distro.
+
+```
+tar xzf amdb-bridge-*-linux-x64.tar.gz && cd amdb-bridge-*-linux-x64
+sudo ./amdb-bridge navigraph on    # once, only for the iniBuilds A350 / FlyByWire A380X
+./amdb-bridge serve --xplane       # every time you fly
+```
+
+It finds Microsoft Flight Simulator under Steam's Proton and X-Plane 12 by itself. For
+the A220 map, copy `msfs/zzz-amdb-a220-amm` into your MSFS Community folder
+(`amdb-bridge status` prints where that is). Run `navigraph on` again after updating,
+since a new binary loses its permission to use port 443.
+
 ## Quick start (command line)
 
 ```
