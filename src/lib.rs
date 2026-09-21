@@ -6,6 +6,7 @@ pub mod cache;
 pub mod cli;
 pub mod geom;
 pub mod ir;
+pub mod minima;
 pub mod model;
 pub mod output;
 pub mod pipeline;

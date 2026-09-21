@@ -94,6 +94,25 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
+    /// An approach chart for a runway: the airport, terrain, the procedure's final track
+    /// and descent, and an estimated minimum. Needs Microsoft Flight Simulator installed
+    /// for the procedures.
+    ApproachChart {
+        /// ICAO code, e.g. LOWI.
+        icao: String,
+        /// Runway, e.g. 26. The approach with the most detail is used when left out.
+        #[arg(long)]
+        runway: Option<String>,
+        /// Approach type, which sets the floor the minimum may not go below.
+        #[arg(long, default_value = "ils")]
+        kind: String,
+        /// Where to write the PDF.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Open it when it is written.
+        #[arg(long)]
+        open: bool,
+    },
     /// Terrain heights around an airport from the Copernicus DEM (free, 30 m, worldwide),
     /// fetched a few kilobytes at a time from its public copy.
     Terrain {
@@ -956,6 +975,7 @@ pub fn run() -> Result<()> {
         Cmd::Clean { icaos, dir, all } => clean_cmd(icaos, dir, all),
         Cmd::Procedures { icao, json } => procedures_cmd(&icao, json),
         Cmd::Terrain { icao, radius_km, step_m } => terrain_cmd(&icao, radius_km, step_m),
+        Cmd::ApproachChart { icao, runway, kind, out, open } => approach_chart_cmd(&icao, runway.as_deref(), &kind, out, open),
         Cmd::Layers => {
             layers_cmd();
             Ok(())
@@ -965,6 +985,49 @@ pub fn run() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// An approach chart: airport, terrain, the procedure and an estimated minimum.
+fn approach_chart_cmd(icao: &str, runway: Option<&str>, kind: &str, out: Option<PathBuf>, open: bool) -> Result<()> {
+    use crate::minima::Approach;
+    let icao = icao.to_uppercase();
+    let kind = match kind.to_ascii_lowercase().as_str() {
+        "ils" | "cat1" | "precision" => Approach::PrecisionCat1,
+        "rnav" | "lpv" | "lnav/vnav" => Approach::VerticallyGuided,
+        "loc" | "vor" | "ndb" | "nonprecision" | "np" => Approach::NonPrecision,
+        "circling" => Approach::Circling,
+        other => return Err(anyhow!("approach type must be ils, rnav, loc or circling, not {other}")),
+    };
+    crate::term::start(&format!("Approach chart for {icao}"));
+    let Some(procedures) = crate::sources::msfs::procedures::find(&icao)? else {
+        return Err(anyhow!("{icao} has no procedures in the simulator's navigation data (is a simulator installed?)"));
+    };
+    let Some(procedure) = crate::output::approach::pick(&procedures, runway) else {
+        return Err(anyhow!("{icao} has no approaches in the simulator's navigation data"));
+    };
+    let http = crate::sources::http::Http::new(120, 0);
+    let cache = crate::cache::Cache::for_index(false);
+    let mut idx = crate::sources::index::AirportIndex::default();
+    idx.load_ourairports_online(&http, &cache)?;
+    let field_elev_ft = idx.get(&icao).and_then(|e| e.elevation_ft).unwrap_or(0.0);
+    crate::term::info(&format!("{icao}: RW{} approach, field elevation {field_elev_ft:.0} ft", procedure.runway));
+    let patch = crate::sources::copernicus::patch(&http, &cache, procedures.lat, procedures.lon, 14.0, 120.0)?;
+    let out = out.unwrap_or_else(|| PathBuf::from(format!("{icao}-RW{}-approach.pdf", procedure.runway)));
+    let est = crate::output::approach::write(&procedures, procedure, &patch, field_elev_ft, kind, &out)?;
+    crate::term::success(&format!(
+        "{:.0} ft ({:.0} ft above touchdown), set by {}",
+        est.altitude_ft,
+        est.height_ft,
+        match est.limited_by {
+            crate::minima::LimitedBy::SystemMinimum => "the system minimum: the published chart should agree",
+            crate::minima::LimitedBy::Terrain => "terrain: an estimate, obstacles are not in the data",
+        }
+    ));
+    crate::term::file(Some(&icao), &out.display().to_string(), "approach chart");
+    if open {
+        let _ = std::process::Command::new("cmd").args(["/C", "start", "", &out.display().to_string()]).spawn();
+    }
+    Ok(())
 }
 
 /// Terrain around an airport, from the Copernicus DEM.
