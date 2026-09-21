@@ -6,6 +6,9 @@
 
 /// Section holding airport records.
 pub const SECTION_AIRPORT: u32 = 0x03;
+/// Section holding waypoints, which is where the fixes a procedure names live.
+pub const SECTION_WAYPOINT: u32 = 0x22;
+pub const REC_WAYPOINT: u16 = 0x22;
 /// Record ids. MSFS numbers the airport record differently from the older simulators.
 pub const REC_AIRPORT: u16 = 0x56;
 pub const REC_NAME: u16 = 0x19;

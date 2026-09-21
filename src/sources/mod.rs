@@ -6,6 +6,7 @@ pub mod faa_amdb;
 pub mod http;
 pub mod index;
 pub mod msfs;
+pub mod obstacles;
 pub mod osm;
 pub mod overrides;
 pub mod simbrief;

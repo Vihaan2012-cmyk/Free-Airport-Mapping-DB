@@ -234,6 +234,52 @@ impl Patch {
         (lo, hi)
     }
 
+    /// The height in metres at a point, interpolated between the four samples around
+    /// it. `None` outside the patch or where the model has a gap.
+    pub fn height_at(&self, lat: f64, lon: f64) -> Option<f64> {
+        let fr = (self.north - lat) / self.step_lat;
+        let fc = (lon - self.west) / self.step_lon;
+        if fr < 0.0 || fc < 0.0 {
+            return None;
+        }
+        let (r0, c0) = (fr.floor() as usize, fc.floor() as usize);
+        if r0 + 1 >= self.height || c0 + 1 >= self.width {
+            return None;
+        }
+        let (tr, tc) = (fr - r0 as f64, fc - c0 as f64);
+        let corners = [
+            (self.at(r0, c0) as f64, (1.0 - tr) * (1.0 - tc)),
+            (self.at(r0, c0 + 1) as f64, (1.0 - tr) * tc),
+            (self.at(r0 + 1, c0) as f64, tr * (1.0 - tc)),
+            (self.at(r0 + 1, c0 + 1) as f64, tr * tc),
+        ];
+        let (sum, weight) = corners.iter().filter(|(h, _)| h.is_finite()).fold((0.0, 0.0), |(s, w), (h, k)| (s + h * k, w + k));
+        (weight > 0.0).then(|| sum / weight)
+    }
+
+    /// The highest point of the first 3,000 feet of a runway from its threshold,
+    /// which is what a touchdown zone elevation is. `bearing_deg` is the direction the
+    /// runway points, so the strip is walked up the pavement rather than across it.
+    pub fn touchdown_zone_ft(&self, thr_lat: f64, thr_lon: f64, bearing_deg: f64) -> Option<f64> {
+        const ZONE_M: f64 = 914.4; // 3,000 feet
+        let b = bearing_deg.to_radians();
+        let (m_lat, m_lon) = (111_320.0, 111_320.0 * thr_lat.to_radians().cos().max(0.05));
+        let mut highest = f64::NEG_INFINITY;
+        let mut steps = 0;
+        while (steps as f64) * 30.0 <= ZONE_M {
+            let along = steps as f64 * 30.0;
+            for across in [-15.0, 0.0, 15.0] {
+                let north = along * b.cos() - across * b.sin();
+                let east = along * b.sin() + across * b.cos();
+                if let Some(m) = self.height_at(thr_lat + north / m_lat, thr_lon + east / m_lon) {
+                    highest = highest.max(m / 0.3048);
+                }
+            }
+            steps += 1;
+        }
+        highest.is_finite().then(|| highest.round())
+    }
+
     pub fn position(&self, row: usize, col: usize) -> (f64, f64) {
         (self.north - row as f64 * self.step_lat, self.west + col as f64 * self.step_lon)
     }

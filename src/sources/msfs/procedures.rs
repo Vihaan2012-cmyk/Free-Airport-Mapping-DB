@@ -105,6 +105,11 @@ pub struct Leg {
     /// Leg length in metres, for the path types that have one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub distance_m: Option<f64>,
+    /// Where the fix is, when the waypoint records name it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lat: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lon: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +127,11 @@ pub struct Transition {
 pub struct Procedure {
     pub kind: Kind,
     pub name: String,
+    /// Which of several approaches to the same runway this is, counting from 1. The
+    /// file does record an approach type, but its coding is not understood well enough
+    /// to print "ILS" or "RNAV" without the risk of printing the wrong one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variant: Option<usize>,
     /// Runway the procedure serves, where it names one (approaches always do).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub runway: String,
@@ -138,7 +148,7 @@ pub struct AirportProcedures {
     pub source: String,
 }
 
-fn legs(d: &[u8], rec: &Record) -> Vec<Leg> {
+fn legs(d: &[u8], rec: &Record, fixes: &Fixes) -> Vec<Leg> {
     let count = u32::from(u16::from_le_bytes([d[rec.start + 6], d[rec.start + 7]])) as usize;
     let mut out = Vec::new();
     for i in 0..count {
@@ -147,9 +157,11 @@ fn legs(d: &[u8], rec: &Record) -> Vec<Leg> {
             break;
         }
         let path = *PATHS.get(d[b] as usize).unwrap_or(&"");
+        let fix = bgl::ident(bgl::u32le(d, b + 4));
+        let (lat, lon) = fixes.get(&fix).copied().map(|(a, o)| (Some(a), Some(o))).unwrap_or((None, None));
         out.push(Leg {
             path: path.to_string(),
-            fix: bgl::ident(bgl::u32le(d, b + 4)),
+            fix,
             altitude_rule: AltitudeRule::from(d[b + 1]),
             altitude_ft: feet(bgl::f32le(d, b + 0x24)),
             altitude2_ft: feet(bgl::f32le(d, b + 0x30)),
@@ -157,12 +169,14 @@ fn legs(d: &[u8], rec: &Record) -> Vec<Leg> {
             // one the leg flies.
             course_deg: degrees(bgl::f32le(d, b + 0x14)).or_else(|| degrees(bgl::f32le(d, b + 0x1C))),
             distance_m: metres(bgl::f32le(d, b + 0x18)).or_else(|| metres(bgl::f32le(d, b + 0x20))),
+            lat,
+            lon,
         });
     }
     out
 }
 
-fn transitions(d: &[u8], proc_rec: &Record, children_at: usize) -> Vec<Transition> {
+fn transitions(d: &[u8], proc_rec: &Record, children_at: usize, fixes: &Fixes) -> Vec<Transition> {
     let mut out = Vec::new();
     for rec in bgl::records(d, proc_rec.start + children_at, proc_rec.end) {
         // The legs of a procedure's own path hang directly off it.
@@ -172,7 +186,7 @@ fn transitions(d: &[u8], proc_rec: &Record, children_at: usize) -> Vec<Transitio
                 LEGS_MISSED => "missed",
                 _ => "",
             };
-            out.push(Transition { name: String::new(), part: part.to_string(), legs: legs(d, &rec) });
+            out.push(Transition { name: String::new(), part: part.to_string(), legs: legs(d, &rec, fixes) });
             continue;
         }
         let Some((_, kids_at)) = TRANSITIONS.iter().find(|(id, _)| *id == rec.id) else { continue };
@@ -194,7 +208,7 @@ fn transitions(d: &[u8], proc_rec: &Record, children_at: usize) -> Vec<Transitio
                     LEGS_MISSED => "missed",
                     _ => "",
                 };
-                out.push(Transition { name: name.clone(), part: part.to_string(), legs: legs(d, &legrec) });
+                out.push(Transition { name: name.clone(), part: part.to_string(), legs: legs(d, &legrec, fixes) });
             }
         }
     }
@@ -222,7 +236,51 @@ fn runway_of(transitions: &[Transition]) -> String {
         .unwrap_or_default()
 }
 
-fn airport(d: &[u8], rec: &Record, file: &Path) -> Option<AirportProcedures> {
+/// The runway coded in an approach's header: a number at +0x07, and a left/right/centre
+/// designator in the top half of the byte after it.
+fn header_runway(d: &[u8], rec: &Record) -> String {
+    if rec.end - rec.start < 0x0A {
+        return String::new();
+    }
+    let number = d[rec.start + 0x07];
+    if number == 0 || number > 36 {
+        return String::new();
+    }
+    let designator = match d[rec.start + 0x08] >> 4 {
+        1 => "L",
+        2 => "R",
+        3 => "C",
+        _ => "",
+    };
+    format!("{number:02}{designator}")
+}
+
+/// Fix positions, by ident.
+pub type Fixes = std::collections::HashMap<String, (f64, f64)>;
+
+/// Every waypoint in one file. Procedures name their fixes by ident alone, and the
+/// terminal fixes of an airport sit in the same file as the airport, so this is what
+/// turns a list of names into something that can be drawn.
+fn waypoints(d: &[u8]) -> Fixes {
+    let mut out = Fixes::new();
+    for rec in bgl::section_records(d, bgl::SECTION_WAYPOINT) {
+        if rec.id != bgl::REC_WAYPOINT || rec.end - rec.start < 28 {
+            continue;
+        }
+        let ident = bgl::ident(bgl::u32le(d, rec.start + 0x14));
+        if ident.is_empty() {
+            continue;
+        }
+        let lon = bgl::lon(bgl::u32le(d, rec.start + 0x08));
+        let lat = bgl::lat(bgl::u32le(d, rec.start + 0x0C));
+        if (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) {
+            out.entry(ident).or_insert((lat, lon));
+        }
+    }
+    out
+}
+
+fn airport(d: &[u8], rec: &Record, file: &Path, fixes: &Fixes) -> Option<AirportProcedures> {
     if rec.end - rec.start < 0x44 {
         return None;
     }
@@ -239,16 +297,39 @@ fn airport(d: &[u8], rec: &Record, file: &Path) -> Option<AirportProcedures> {
             _ => continue,
         };
         let children_at = if kind == Kind::Approach { 0x24 } else { 0x14 };
-        let trans = transitions(d, &child, children_at);
-        let runway = if kind == Kind::Approach { runway_of(&trans) } else { String::new() };
+        let trans = transitions(d, &child, children_at, fixes);
+        let runway = if kind == Kind::Approach {
+            let from_legs = runway_of(&trans);
+            if from_legs.is_empty() { header_runway(d, &child) } else { from_legs }
+        } else {
+            String::new()
+        };
         let name = match kind {
             Kind::Approach => format!("RW{runway}"),
             _ => name_at(d, &child, 0x0C),
         };
-        procedures.push(Procedure { kind, name, runway, transitions: trans });
+        procedures.push(Procedure { kind, name, runway, variant: None, transitions: trans });
     }
     if procedures.is_empty() {
         return None;
+    }
+    // An approach to no particular runway takes a letter, the way a circling approach
+    // is named on a chart.
+    let mut letter = b'A';
+    for p in procedures.iter_mut().filter(|p| p.kind == Kind::Approach && p.runway.is_empty()) {
+        p.runway = (letter as char).to_string();
+        p.name = format!("APPROACH {}", p.runway);
+        letter = if letter >= b'Z' { b'Z' } else { letter + 1 };
+    }
+    // Number the approaches that share a runway, so one can be asked for by name.
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for p in procedures.iter_mut().filter(|p| p.kind == Kind::Approach) {
+        let n = seen.entry(p.runway.clone()).or_insert(0);
+        *n += 1;
+        p.variant = Some(*n);
+        if *n > 1 {
+            p.name = format!("RW{} ({})", p.runway, n);
+        }
     }
     Some(AirportProcedures {
         icao,
@@ -273,7 +354,7 @@ pub fn find(icao: &str) -> Result<Option<AirportProcedures>> {
                 if bgl::ident(bgl::u32le(&data, rec.start + 0x28)) != want {
                     continue;
                 }
-                if let Some(a) = airport(&data, &rec, &file) {
+                if let Some(a) = airport(&data, &rec, &file, &waypoints(&data)) {
                     return Ok(Some(a));
                 }
             }
@@ -313,8 +394,8 @@ mod tests {
             name: String::new(),
             part: "final".into(),
             legs: vec![
-                Leg { path: "IF".into(), fix: "MORRY".into(), altitude_rule: AltitudeRule::At, altitude_ft: None, altitude2_ft: None, course_deg: None, distance_m: None },
-                Leg { path: "TF".into(), fix: "RW13R".into(), altitude_rule: AltitudeRule::None, altitude_ft: None, altitude2_ft: None, course_deg: None, distance_m: None },
+                Leg { path: "IF".into(), fix: "MORRY".into(), altitude_rule: AltitudeRule::At, altitude_ft: None, altitude2_ft: None, course_deg: None, distance_m: None, lat: None, lon: None },
+                Leg { path: "TF".into(), fix: "RW13R".into(), altitude_rule: AltitudeRule::None, altitude_ft: None, altitude2_ft: None, course_deg: None, distance_m: None, lat: None, lon: None },
             ],
         }];
         assert_eq!(runway_of(&t), "13R");
