@@ -94,6 +94,18 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
+    /// Terrain heights around an airport from the Copernicus DEM (free, 30 m, worldwide),
+    /// fetched a few kilobytes at a time from its public copy.
+    Terrain {
+        /// ICAO code, e.g. LOWI.
+        icao: String,
+        /// Half-width of the patch in kilometres.
+        #[arg(long, default_value_t = 10.0)]
+        radius_km: f64,
+        /// Distance between samples in metres.
+        #[arg(long, default_value_t = 90.0)]
+        step_m: f64,
+    },
     /// Departures, arrivals and approaches for an airport, read from the Microsoft
     /// Flight Simulator navigation data installed on this computer (never redistributed).
     Procedures {
@@ -943,6 +955,7 @@ pub fn run() -> Result<()> {
         Cmd::Zip { icaos, dir, all } => zip_cmd(icaos, dir, all),
         Cmd::Clean { icaos, dir, all } => clean_cmd(icaos, dir, all),
         Cmd::Procedures { icao, json } => procedures_cmd(&icao, json),
+        Cmd::Terrain { icao, radius_km, step_m } => terrain_cmd(&icao, radius_km, step_m),
         Cmd::Layers => {
             layers_cmd();
             Ok(())
@@ -952,6 +965,33 @@ pub fn run() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Terrain around an airport, from the Copernicus DEM.
+fn terrain_cmd(icao: &str, radius_km: f64, step_m: f64) -> Result<()> {
+    let http = crate::sources::http::Http::new(120, 0);
+    let cache = crate::cache::Cache::for_index(false);
+    let mut idx = crate::sources::index::AirportIndex::default();
+    idx.load_ourairports_online(&http, &cache)?;
+    let entry = idx.get(&icao.to_uppercase()).ok_or_else(|| anyhow!("{} is not in the airport index", icao.to_uppercase()))?;
+    let (lat, lon) = (entry.lat, entry.lon);
+    crate::term::start(&format!("Terrain around {} ({lat:.4}, {lon:.4}), {radius_km} km at {step_m} m", icao.to_uppercase()));
+    let t0 = std::time::Instant::now();
+    let patch = crate::sources::copernicus::patch(&http, &cache, lat, lon, radius_km, step_m)?;
+    let (lo, hi) = patch.range();
+    let known = patch.heights.iter().filter(|h| h.is_finite()).count();
+    crate::term::success(&format!(
+        "{} x {} samples in {}: {:.0} m to {:.0} m ({:.0} ft to {:.0} ft), {} without data",
+        patch.width,
+        patch.height,
+        crate::term::human_secs(t0.elapsed().as_secs_f64()),
+        lo,
+        hi,
+        lo / 0.3048,
+        hi / 0.3048,
+        patch.heights.len() - known
+    ));
+    Ok(())
 }
 
 /// Departures, arrivals and approaches from the simulator's own navigation data.

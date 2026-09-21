@@ -26,6 +26,7 @@ dependencies = [
  "csv",
  "ctrlc",
  "embed-resource",
+ "flate2",
  "geo",
  "geo-types",
  "log",

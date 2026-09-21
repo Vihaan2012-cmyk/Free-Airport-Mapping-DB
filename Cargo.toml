@@ -30,6 +30,7 @@ geo = "0.33"
 geo-types = { version = "0.7", features = ["serde"] }
 ureq = { version = "3", features = ["json"] }
 zip = { version = "6", default-features = false, features = ["deflate"] }
+flate2 = "1"
 pdf-writer = "0.12"
 base64 = "0.23"
 csv = "1"
