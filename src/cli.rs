@@ -94,6 +94,15 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
+    /// Departures, arrivals and approaches for an airport, read from the Microsoft
+    /// Flight Simulator navigation data installed on this computer (never redistributed).
+    Procedures {
+        /// ICAO code, e.g. KDFW.
+        icao: String,
+        /// Write the whole thing as JSON to this file.
+        #[arg(long)]
+        json: Option<PathBuf>,
+    },
     /// List the 45 DO-272 layers with geometry kind and map-profile membership.
     Layers,
     /// Print the legend for the numeric attribute codes (the contents of codes.json).
@@ -933,6 +942,7 @@ pub fn run() -> Result<()> {
         Cmd::Stats { targets, dir } => stats_cmd(targets, dir),
         Cmd::Zip { icaos, dir, all } => zip_cmd(icaos, dir, all),
         Cmd::Clean { icaos, dir, all } => clean_cmd(icaos, dir, all),
+        Cmd::Procedures { icao, json } => procedures_cmd(&icao, json),
         Cmd::Layers => {
             layers_cmd();
             Ok(())
@@ -942,6 +952,66 @@ pub fn run() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Departures, arrivals and approaches from the simulator's own navigation data.
+fn procedures_cmd(icao: &str, json: Option<PathBuf>) -> Result<()> {
+    let dirs = crate::sources::msfs::nav_dirs();
+    if dirs.is_empty() {
+        return Err(anyhow!("no Microsoft Flight Simulator navigation data found on this computer"));
+    }
+    crate::term::start(&format!("Reading {} from {}", icao.to_uppercase(), dirs[0].display()));
+    let Some(a) = crate::sources::msfs::procedures::find(icao)? else {
+        crate::term::warn(&format!("{} has no procedures in the simulator's data", icao.to_uppercase()));
+        return Ok(());
+    };
+    let count = |k: crate::sources::msfs::procedures::Kind| a.procedures.iter().filter(|p| p.kind == k).count();
+    use crate::sources::msfs::procedures::Kind;
+    crate::term::success(&format!(
+        "{} ({:.4}, {:.4}) from {}: {} departures, {} arrivals, {} approaches",
+        a.icao,
+        a.lat,
+        a.lon,
+        a.source,
+        count(Kind::Sid),
+        count(Kind::Star),
+        count(Kind::Approach)
+    ));
+    for p in &a.procedures {
+        let label = match p.kind {
+            Kind::Sid => "SID",
+            Kind::Star => "STAR",
+            Kind::Approach => "APPR",
+        };
+        for t in &p.transitions {
+            let via = match (t.name.as_str(), t.part.as_str()) {
+                ("", "") => String::new(),
+                ("", part) => format!(" [{part}]"),
+                (name, "") => format!(" via {name}"),
+                (name, part) => format!(" via {name} [{part}]"),
+            };
+            let legs: Vec<String> = t
+                .legs
+                .iter()
+                .map(|l| {
+                    let mut s = format!("{}{}", l.path, if l.fix.is_empty() { String::new() } else { format!(" {}", l.fix) });
+                    if let Some(a) = l.altitude_ft {
+                        s.push_str(&format!(" @{a:.0}ft"));
+                    }
+                    if let Some(c) = l.course_deg {
+                        s.push_str(&format!(" {c:.0}°"));
+                    }
+                    s
+                })
+                .collect();
+            crate::term::step(Some(&a.icao), &format!("{label} {}{}: {}", p.name, via, legs.join(" → ")));
+        }
+    }
+    if let Some(path) = json {
+        std::fs::write(&path, serde_json::to_string_pretty(&a)?).with_context(|| format!("write {}", path.display()))?;
+        crate::term::file(Some(&a.icao), &path.display().to_string(), "procedures as JSON");
+    }
+    Ok(())
 }
 
 /// X-Plane OANS data for built airports, the index, and optionally the script install.
