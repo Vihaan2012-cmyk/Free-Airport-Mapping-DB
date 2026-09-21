@@ -3,6 +3,7 @@
 pub mod geobuf;
 pub mod geojson;
 pub mod manifest;
+pub mod approach;
 pub mod chart;
 pub mod preview;
 pub mod xplane;
