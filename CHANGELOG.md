@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.5.0 (2026-09-21)
+
+- **Approach charts.** `amdbgen approach-chart <ICAO>` draws a full approach chart as a
+  PDF, styled like an airline chart and branded "AMDB V1": a header, a briefing strip
+  (final course, touchdown zone elevation, airport elevation, minimum safe altitude
+  within 25 NM, and the decision altitude), a plan view with terrain shading, the
+  airport drawn from our own build, the procedure's fixes at their real positions,
+  obstacles, the missed approach, a descent profile, and a minima band. `--approach 27L`
+  picks a particular approach (`27L-2` for the second to the same runway), `--star
+  BIG1A` draws an arrival feeding it, `--kind ils|rnav|loc|circling` sets which system
+  minimum applies, and `--list` prints every approach and arrival an airport has, with
+  the names to pass back in. It is not for real-world navigation and says so on the
+  page.
+- **Obstacles**, a new data source: the FAA's Digital Obstacle File (surveyed, United
+  States) and OpenStreetMap masts, towers, chimneys and wind turbines worldwide where
+  they carry a height tag. Both are free and public and need no account. OpenStreetMap
+  gives heights above the ground, so the terrain model converts them to height above sea
+  level before an approach chart can weigh them against the approach.
+- **An estimated minimum** on every approach chart, worked out from the airport's own
+  terrain and obstacle data rather than copied from anywhere: the system minimum for the
+  approach type, measured above the touchdown zone elevation (the highest point of the
+  first 3,000 ft of the runway, read from the terrain model, not the airport's own
+  elevation). Above that floor, an approach with a glidepath is raised only where ground
+  or an obstacle breaks through a surface rising 102:1 from the threshold, and only by
+  as much as it breaks through; without a glidepath, everything in the segment has to be
+  cleared by the required margin. The ground is assessed along the procedure's actual
+  path through its fixes rather than a straight box out from the runway, which matters
+  in a valley. The chart says which of the three things set the number.
+- `amdbgen minima-audit --truth <csv>` measures those estimates against a table of
+  published minima, split by whether the chart sits on its system minimum or was pushed
+  higher, and separately how close the estimated touchdown zone elevations are.
+
 ## 0.4.2 (2026-09-19)
 
 - **Linux.** `amdb-bridge` and `amdbgen` run on any 64-bit Linux (a static build). They

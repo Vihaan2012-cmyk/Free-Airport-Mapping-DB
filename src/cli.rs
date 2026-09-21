@@ -103,6 +103,16 @@ enum Cmd {
         /// Runway, e.g. 26. The approach with the most detail is used when left out.
         #[arg(long)]
         runway: Option<String>,
+        /// A particular approach, e.g. 27L, or 27L-2 where a runway has more than one.
+        /// `--list` shows what the airport has.
+        #[arg(long)]
+        approach: Option<String>,
+        /// An arrival to draw feeding the approach, e.g. BIG1A.
+        #[arg(long)]
+        star: Option<String>,
+        /// List the approaches and arrivals this airport has, and stop.
+        #[arg(long)]
+        list: bool,
         /// Approach type, which sets the floor the minimum may not go below.
         #[arg(long, default_value = "ils")]
         kind: String,
@@ -112,6 +122,18 @@ enum Cmd {
         /// Open it when it is written.
         #[arg(long)]
         open: bool,
+    },
+    /// Measure our estimated minima against published ones, from a table of charts.
+    MinimaAudit {
+        /// CSV of published figures: icao,runway,published_da_ft,published_hat_ft,published_tdze_ft.
+        #[arg(long)]
+        truth: PathBuf,
+        /// Where to write the measurements.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// How many airports to work on at once.
+        #[arg(long, default_value_t = 4)]
+        jobs: usize,
     },
     /// Terrain heights around an airport from the Copernicus DEM (free, 30 m, worldwide),
     /// fetched a few kilobytes at a time from its public copy.
@@ -975,7 +997,10 @@ pub fn run() -> Result<()> {
         Cmd::Clean { icaos, dir, all } => clean_cmd(icaos, dir, all),
         Cmd::Procedures { icao, json } => procedures_cmd(&icao, json),
         Cmd::Terrain { icao, radius_km, step_m } => terrain_cmd(&icao, radius_km, step_m),
-        Cmd::ApproachChart { icao, runway, kind, out, open } => approach_chart_cmd(&icao, runway.as_deref(), &kind, out, open),
+        Cmd::MinimaAudit { truth, out, jobs } => crate::audit::run(&truth, out.as_deref(), jobs),
+        Cmd::ApproachChart { icao, runway, approach, star, list, kind, out, open } => {
+            approach_chart_cmd(&icao, approach.as_deref().or(runway.as_deref()), star.as_deref(), list, &kind, out, open)
+        }
         Cmd::Layers => {
             layers_cmd();
             Ok(())
@@ -987,8 +1012,9 @@ pub fn run() -> Result<()> {
     }
 }
 
-/// An approach chart: airport, terrain, the procedure and an estimated minimum.
-fn approach_chart_cmd(icao: &str, runway: Option<&str>, kind: &str, out: Option<PathBuf>, open: bool) -> Result<()> {
+/// An approach chart: airport, terrain, obstacles, the procedure and an estimated minimum.
+#[allow(clippy::too_many_arguments)]
+fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, list: bool, kind: &str, out: Option<PathBuf>, open: bool) -> Result<()> {
     use crate::minima::Approach;
     let icao = icao.to_uppercase();
     let kind = match kind.to_ascii_lowercase().as_str() {
@@ -999,40 +1025,79 @@ fn approach_chart_cmd(icao: &str, runway: Option<&str>, kind: &str, out: Option<
         other => return Err(anyhow!("approach type must be ils, rnav, loc or circling, not {other}")),
     };
     crate::term::start(&format!("Approach chart for {icao}"));
-    let Some(procedures) = crate::sources::msfs::procedures::find(&icao)? else {
-        return Err(anyhow!("{icao} has no procedures in the simulator's navigation data (is a simulator installed?)"));
-    };
-    let Some(procedure) = crate::output::approach::pick(&procedures, runway) else {
-        return Err(anyhow!("{icao} has no approaches in the simulator's navigation data"));
-    };
+    if list {
+        return list_procedures(&icao);
+    }
     let http = crate::sources::http::Http::new(120, 0);
     let cache = crate::cache::Cache::for_index(false);
     let mut idx = crate::sources::index::AirportIndex::default();
     idx.load_ourairports_online(&http, &cache)?;
-    let field_elev_ft = idx.get(&icao).and_then(|e| e.elevation_ft).unwrap_or(0.0);
-    crate::term::info(&format!("{icao}: RW{} approach, field elevation {field_elev_ft:.0} ft", procedure.runway));
-    let patch = crate::sources::copernicus::patch(&http, &cache, procedures.lat, procedures.lon, 14.0, 120.0)?;
+    let setup = crate::approach::prepare(&http, &cache, &idx, &icao, approach, crate::approach::Options::default())?;
+    let procedure = setup.procedure();
+    let star = match star {
+        Some(want) => match crate::output::approach::pick_star(&setup.procedures, want) {
+            Some(s) => Some(s),
+            None => return Err(anyhow!("{icao} has no arrival called {want}; try --list")),
+        },
+        None => None,
+    };
+    let est = crate::approach::estimate(&setup, kind);
+
     let out = out.unwrap_or_else(|| PathBuf::from(format!("{icao}-RW{}-approach.pdf", procedure.runway)));
-    // The airport as we built it, when it is in the store already.
-    let built = crate::bridge::settings::Settings::load().map(|s| s.airports_dir()).unwrap_or_else(|| PathBuf::from("out")).join(&icao);
-    let airport_dir = built.join("manifest.json").is_file().then_some(built);
-    match &airport_dir {
-        Some(d) => crate::term::info(&format!("{icao}: drawing the airport from {}", d.display())),
-        None => crate::term::warn(&format!("{icao} is not built yet, so only the runway is drawn; `amdbgen build {icao}` first for the full layout")),
-    }
-    let est = crate::output::approach::write(&procedures, procedure, &patch, field_elev_ft, kind, airport_dir.as_deref(), &out)?;
+    let chart = crate::output::approach::Chart {
+        airport: &setup.procedures,
+        airport_name: setup.airport_name.as_deref(),
+        procedure,
+        star,
+        patch: &setup.patch,
+        wide: setup.wide.as_ref(),
+        obstacles: &setup.obstacles,
+        threshold: setup.threshold.map(|(lat, lon, _)| (lat, lon)),
+        tdze_ft: setup.tdze_ft,
+        field_elev_ft: setup.field_elev_ft,
+        msa_ft: setup.msa_ft,
+        track_deg: setup.track_deg(),
+        course_mag_deg: setup.course_mag_deg(),
+        kind,
+        airport_dir: setup.airport_dir.as_deref(),
+        runway_ends: setup.runway_ends,
+    };
+    crate::output::approach::write(&chart, &est, &out)?;
     crate::term::success(&format!(
         "{:.0} ft ({:.0} ft above touchdown), set by {}",
         est.altitude_ft,
         est.height_ft,
         match est.limited_by {
-            crate::minima::LimitedBy::SystemMinimum => "the system minimum: the published chart should agree",
-            crate::minima::LimitedBy::Terrain => "terrain: an estimate, obstacles are not in the data",
+            crate::minima::LimitedBy::SystemMinimum => "the system minimum: the published chart should agree".to_string(),
+            crate::minima::LimitedBy::Terrain => format!("terrain reaching {:.0} ft", est.highest_terrain_ft),
+            crate::minima::LimitedBy::Obstacle => format!("{} at {:.0} ft", est.obstacle.as_deref().unwrap_or("an obstacle"), est.obstacle_top_ft.unwrap_or(0.0)),
         }
     ));
     crate::term::file(Some(&icao), &out.display().to_string(), "approach chart");
     if open {
         let _ = std::process::Command::new("cmd").args(["/C", "start", "", &out.display().to_string()]).spawn();
+    }
+    Ok(())
+}
+
+/// What an airport has to choose from.
+fn list_procedures(icao: &str) -> Result<()> {
+    let Some(procedures) = crate::sources::msfs::procedures::find(icao)? else {
+        return Err(anyhow!("{icao} has no procedures in the simulator's navigation data (is a simulator installed?)"));
+    };
+    println!("{icao} approaches:");
+    for p in crate::output::approach::approaches(&procedures) {
+        let name = match p.variant {
+            Some(n) if n > 1 => format!("{}-{n}", p.runway),
+            _ => p.runway.clone(),
+        };
+        let vias: Vec<&str> = p.transitions.iter().filter(|t| t.part.is_empty() && !t.name.is_empty()).map(|t| t.name.as_str()).collect();
+        let legs: usize = p.transitions.iter().filter(|t| t.part == "final").map(|t| t.legs.len()).sum();
+        println!("  --approach {name:<8} {legs} legs{}", if vias.is_empty() { String::new() } else { format!("   via {}", vias.join(", ")) });
+    }
+    let stars: Vec<&str> = procedures.procedures.iter().filter(|p| p.kind == crate::sources::msfs::procedures::Kind::Star).map(|p| p.name.as_str()).collect();
+    if !stars.is_empty() {
+        println!("{icao} arrivals: {}", stars.join(", "));
     }
     Ok(())
 }
