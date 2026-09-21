@@ -83,6 +83,22 @@ impl Http {
         })
     }
 
+    /// Part of a file, by byte range. Cloud-optimised GeoTIFFs are laid out so that a
+    /// few small reads answer a question that would otherwise need the whole file.
+    pub fn get_range(&self, url: &str, start: u64, len: u64) -> Result<Vec<u8>> {
+        let range = format!("bytes={}-{}", start, start + len.saturating_sub(1));
+        self.with_retries(url, || {
+            let mut resp = self.agent.get(url).header("User-Agent", &self.user_agent).header("Range", &range).call().context("request")?;
+            let status = resp.status().as_u16();
+            if status >= 400 {
+                return Err(anyhow!("HTTP {status}"));
+            }
+            let body = resp.body_mut().with_config().limit(256 * 1024 * 1024).read_to_vec().context("read body")?;
+            // 200 means the server ignored the range and sent everything.
+            Ok(if status == 200 && body.len() as u64 > len { body[start as usize..(start + len) as usize].to_vec() } else { body })
+        })
+    }
+
     /// One attempt GET, no retries; errors carry the HTTP status so callers can react.
     pub fn get_text_once(&self, url: &str) -> Result<String> {
         self.pace();
