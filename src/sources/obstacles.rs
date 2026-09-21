@@ -56,6 +56,7 @@ impl Obstacle {
 /// United States; OpenStreetMap answers for the rest of the world.
 pub fn around(http: &Http, cache: &Cache, icao: &str, lat: f64, lon: f64, radius_km: f64, mirrors: &[String]) -> Result<Vec<Obstacle>> {
     let bbox = bbox(lat, lon, radius_km);
+    let icao = &format!("{}-{radius_km:.0}km", icao.to_uppercase());
     let mut out = match faa(http, cache, icao, bbox) {
         Ok(v) => v,
         Err(e) => {

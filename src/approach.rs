@@ -19,11 +19,14 @@ use std::path::{Path, PathBuf};
 pub struct Options {
     pub wide_terrain: bool,
     pub quiet: bool,
+    /// How far out to ask for obstacles. The chart wants them for its safe-altitude
+    /// ring; a measurement only needs the ones the approach passes over.
+    pub obstacle_radius_km: f64,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { wide_terrain: true, quiet: false }
+        Options { wide_terrain: true, quiet: false, obstacle_radius_km: 46.0 }
     }
 }
 
@@ -123,6 +126,25 @@ impl Setup {
     pub fn threshold_point(&self) -> (f64, f64) {
         self.threshold.map(|(lat, lon, _)| (lat, lon)).unwrap_or((self.procedures.lat, self.procedures.lon))
     }
+}
+
+/// The surveyed touchdown zone elevation of a runway end, where the country publishes
+/// one. Only the United States does, in a file we already read; everywhere else the
+/// terrain model answers.
+fn surveyed_tdze_ft(http: &Http, cache: &Cache, icao: &str, runway: &str) -> Option<f64> {
+    static TABLE: std::sync::OnceLock<std::collections::HashMap<String, std::collections::HashMap<String, f64>>> = std::sync::OnceLock::new();
+    if !icao.starts_with('K') && !icao.starts_with('P') {
+        return None;
+    }
+    let table = TABLE.get_or_init(|| match crate::sources::faa::load_tables(http, cache, None) {
+        Ok(t) => crate::sources::faa::touchdown_zone_elevations(&t),
+        Err(e) => {
+            log::warn!("FAA runway elevations: {e:#}");
+            Default::default()
+        }
+    });
+    let want = runway.trim().to_uppercase();
+    table.get(&icao.to_uppercase())?.get(&want).copied()
 }
 
 /// Miles between two points.
@@ -266,8 +288,13 @@ pub fn prepare(http: &Http, cache: &Cache, idx: &AirportIndex, icao: &str, appro
     let patch = copernicus::patch(http, cache, procedures.lat, procedures.lon, 14.0, 120.0)?;
     // A minimum is measured from the touchdown zone, not from the airport's own
     // elevation: at a large airport the two are tens of feet apart.
-    let tdze_ft = match threshold {
-        Some((lat, lon, bearing)) => {
+    let surveyed = surveyed_tdze_ft(http, cache, &icao, &runway);
+    if let (false, Some(ft)) = (opts.quiet, surveyed) {
+        crate::term::info(&format!("{icao}: touchdown zone {ft:.0} ft for RW{runway}, surveyed (FAA NASR)"));
+    }
+    let tdze_ft = match (surveyed, threshold) {
+        (Some(ft), _) => ft,
+        (None, Some((lat, lon, bearing))) => {
             // At the model's own resolution: a touchdown zone is only 900 m long.
             let fine = copernicus::patch(http, cache, lat, lon, 2.0, 30.0).ok();
             let tdz = fine
@@ -283,11 +310,11 @@ pub fn prepare(http: &Http, cache: &Cache, idx: &AirportIndex, icao: &str, appro
                 None => field_elev_ft,
             }
         }
-        None => field_elev_ft,
+        (None, None) => field_elev_ft,
     };
 
     let mirrors = crate::pipeline::default_mirrors();
-    let mut obstacles = obstacles::around(http, cache, &icao, procedures.lat, procedures.lon, 46.0, &mirrors).unwrap_or_default();
+    let mut obstacles = obstacles::around(http, cache, &icao, procedures.lat, procedures.lon, opts.obstacle_radius_km, &mirrors).unwrap_or_default();
     let wide = opts.wide_terrain.then(|| copernicus::patch(http, cache, procedures.lat, procedures.lon, 46.3, 600.0).ok()).flatten();
     if let Some(w) = &wide {
         obstacles::resolve_tops(&mut obstacles, w);

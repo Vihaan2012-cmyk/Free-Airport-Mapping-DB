@@ -138,6 +138,38 @@ fn norm_end(s: &str) -> String {
 
 const FT: f64 = 0.3048;
 
+/// Every surveyed touchdown zone elevation the United States publishes, by ICAO and
+/// then by runway end.
+///
+/// A minimum is measured from the touchdown zone, and a foot of error there is a foot of
+/// error in the minimum. The terrain model is what we have everywhere else; here there
+/// is a survey, and it is in a file we already read for declared distances.
+pub fn touchdown_zone_elevations(tables: &NasrTables) -> HashMap<String, HashMap<String, f64>> {
+    let base = Table::parse(&tables.apt_base);
+    let mut icao_of: HashMap<String, String> = HashMap::new();
+    for r in &base.rows {
+        if let (Some(site), Some(icao)) = (base.get(r, "SITE_NO"), base.get(r, "ICAO_ID")) {
+            icao_of.insert(site.to_string(), icao.to_uppercase());
+        }
+    }
+    let ends = Table::parse(&tables.apt_rwy_end);
+    let mut out: HashMap<String, HashMap<String, f64>> = HashMap::new();
+    for r in &ends.rows {
+        let (Some(site), Some(end_id)) = (ends.get(r, "SITE_NO"), ends.get(r, "RWY_END_ID")) else { continue };
+        let Some(icao) = icao_of.get(site) else { continue };
+        // The touchdown zone elevation where it is surveyed, else the runway end's own.
+        let Some(ft) = ends
+            .get(r, "TDZ_ELEV")
+            .and_then(|v| v.parse::<f64>().ok())
+            .or_else(|| ends.get(r, "RWY_END_ELEV").and_then(|v| v.parse::<f64>().ok()))
+        else {
+            continue;
+        };
+        out.entry(icao.clone()).or_default().insert(norm_end(end_id), ft);
+    }
+    out
+}
+
 /// Extract everything NASR knows about `icao`.
 pub fn lookup(tables: &NasrTables, icao: &str) -> Option<NasrAirport> {
     let base = Table::parse(&tables.apt_base);

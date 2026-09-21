@@ -316,12 +316,21 @@ pub fn limiting_obstacle(obstacles: &[crate::sources::obstacles::Obstacle], path
 }
 
 /// Where the assessment starts, how far out it reaches and how far to the side, in
-/// nautical miles. An approach with a glidepath is assessed along a narrow corridor; one
-/// without spreads a little wider and stops sooner, because the aircraft levels off and
-/// flies the last miles at one altitude.
+/// nautical miles.
+///
+/// An approach with a glidepath only reaches about a mile out, which is not obvious
+/// until you work out where the aircraft is. It leaves the decision altitude a little
+/// over half a mile from the threshold; a mast two miles out is passed before that, with
+/// the aircraft six hundred feet above it, and cannot bear on the decision altitude at
+/// all. It bears on the altitude the approach crosses its fixes at, which the procedure
+/// already states. Assessing the whole ten miles was what put a hundred feet on the
+/// minimum at every airport with a tower down the approach.
+///
+/// Without a glidepath the aircraft levels off and flies the last miles at one altitude,
+/// so everything in the segment does have to be cleared.
 fn corridor(approach: Approach) -> (f64, f64, f64) {
     if approach.has_glidepath() {
-        (0.0, 10.0, 1.0)
+        (0.0, 1.2, 1.0)
     } else {
         (0.0, 6.0, 1.5)
     }
@@ -339,7 +348,7 @@ fn corridor(approach: Approach) -> (f64, f64, f64) {
 /// heights, are assessed the whole way in.
 fn terrain_corridor(approach: Approach) -> (f64, f64, f64) {
     let (_, length, width) = corridor(approach);
-    (if approach.has_glidepath() { 1.0 } else { 0.5 }, length, width)
+    (if approach.has_glidepath() { 0.25 } else { 0.5 }, length, width)
 }
 
 /// Heights along the approach: how far each is from the threshold, how far to the side,

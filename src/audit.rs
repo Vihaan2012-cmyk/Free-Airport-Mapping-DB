@@ -73,7 +73,7 @@ pub fn run(truth: &Path, out: Option<&Path>, jobs: usize) -> Result<()> {
     let cases: Vec<Case> = rdr.deserialize().collect::<Result<_, _>>()?;
     crate::term::start(&format!("Measuring {} published approaches", cases.len()));
 
-    let http = crate::sources::http::Http::new(120, 0);
+    let http = crate::sources::http::Http::new(300, 0);
     let cache = crate::cache::Cache::for_index(false);
     let mut idx = crate::sources::index::AirportIndex::default();
     idx.load_ourairports_online(&http, &cache)?;
@@ -85,7 +85,7 @@ pub fn run(truth: &Path, out: Option<&Path>, jobs: usize) -> Result<()> {
         cases
             .par_iter()
             .filter_map(|case| {
-                let opts = crate::approach::Options { wide_terrain: false, quiet: true };
+                let opts = crate::approach::Options { wide_terrain: false, quiet: true, obstacle_radius_km: 8.0 };
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 let setup = match crate::approach::prepare(&http, &cache, &idx, &case.icao, Some(&case.runway), opts) {
                     Ok(s) => s,
