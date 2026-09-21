@@ -1013,7 +1013,14 @@ fn approach_chart_cmd(icao: &str, runway: Option<&str>, kind: &str, out: Option<
     crate::term::info(&format!("{icao}: RW{} approach, field elevation {field_elev_ft:.0} ft", procedure.runway));
     let patch = crate::sources::copernicus::patch(&http, &cache, procedures.lat, procedures.lon, 14.0, 120.0)?;
     let out = out.unwrap_or_else(|| PathBuf::from(format!("{icao}-RW{}-approach.pdf", procedure.runway)));
-    let est = crate::output::approach::write(&procedures, procedure, &patch, field_elev_ft, kind, &out)?;
+    // The airport as we built it, when it is in the store already.
+    let built = crate::bridge::settings::Settings::load().map(|s| s.airports_dir()).unwrap_or_else(|| PathBuf::from("out")).join(&icao);
+    let airport_dir = built.join("manifest.json").is_file().then_some(built);
+    match &airport_dir {
+        Some(d) => crate::term::info(&format!("{icao}: drawing the airport from {}", d.display())),
+        None => crate::term::warn(&format!("{icao} is not built yet, so only the runway is drawn; `amdbgen build {icao}` first for the full layout")),
+    }
+    let est = crate::output::approach::write(&procedures, procedure, &patch, field_elev_ft, kind, airport_dir.as_deref(), &out)?;
     crate::term::success(&format!(
         "{:.0} ft ({:.0} ft above touchdown), set by {}",
         est.altitude_ft,

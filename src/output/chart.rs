@@ -22,12 +22,12 @@ const FOOTER_H: f32 = 30.0;
 const FONT: Name = Name(b"F1");
 const BOLD: Name = Name(b"F2");
 
-struct Feat {
-    geom: Geometry<f64>,
-    props: Map<String, Value>,
+pub(crate) struct Feat {
+    pub geom: Geometry<f64>,
+    pub props: Map<String, Value>,
 }
 
-fn load_layer(dir: &Path, name: &str) -> Vec<Feat> {
+pub(crate) fn load_layer(dir: &Path, name: &str) -> Vec<Feat> {
     let Ok(text) = std::fs::read_to_string(dir.join(format!("{name}.geojson"))) else { return vec![] };
     let Ok(fc) = serde_json::from_str::<Value>(&text) else { return vec![] };
     fc.get("features")
