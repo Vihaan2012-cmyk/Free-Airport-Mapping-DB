@@ -1,0 +1,322 @@
+//! Departures, arrivals and approaches for one airport, read from the simulator's own
+//! navigation data.
+//!
+//! Layout, worked out from the files themselves and checked across 7,631 airports:
+//!
+//! ```text
+//! airport 0x56                 ICAO at +0x28, position at +0x0C
+//!   name    0x19               "TT:AIRPORTEK.KDFW.name"
+//!   SID     0x42  name at +0x0C, children at +0x14
+//!   STAR    0x48  "
+//!   approach 0xFA              altitudes and course in the header, children at +0x24
+//!     runway transition 0x46   children at +0x14
+//!     enroute transition 0x4A  name at +0x08, children at +0x10
+//!     approach transition 0x49 name at +0x14, children at +0x1C
+//!       legs 0xF9 / 0xF4 (final) / 0xF5 (missed) / 0xF6
+//!         count at +0x06, then fixed 72-byte legs
+//! ```
+//!
+//! A leg is a path type (the ARINC path terminator), the fix it ends at, altitude
+//! constraints in metres, and for the types that need them a course in degrees and a
+//! distance in metres. The path numbering is the one the simulators have used since
+//! FSX; every transition read started with an initial fix, which is what that numbering
+//! predicts, so it is taken as confirmed.
+
+use super::bgl::{self, Record};
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+
+const REC_SID: u16 = 0x42;
+const REC_STAR: u16 = 0x48;
+const REC_APPROACH: u16 = 0xFA;
+/// Transition records, with the offset their children start at.
+const TRANSITIONS: [(u16, usize); 3] = [(0x46, 0x14), (0x4A, 0x10), (0x49, 0x1C)];
+/// Leg lists. The two under an approach are its final legs and its missed approach.
+const LEGS_PLAIN: u16 = 0xF9;
+const LEGS_FINAL: u16 = 0xF4;
+const LEGS_MISSED: u16 = 0xF5;
+const LEGS_TRANSITION: u16 = 0xF6;
+const LEG_SIZE: usize = 72;
+
+/// ARINC 424 path terminators, in the simulators' numbering.
+const PATHS: [&str; 24] = ["", "AF", "CA", "CD", "CF", "CI", "CR", "DF", "FA", "FC", "FD", "FM", "HA", "HF", "HM", "IF", "PI", "RF", "TF", "VA", "VD", "VI", "VM", "VR"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    Sid,
+    Star,
+    Approach,
+}
+
+/// How a leg's altitudes are to be read.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AltitudeRule {
+    /// No constraint.
+    None,
+    At,
+    AtOrAbove,
+    AtOrBelow,
+    Between,
+}
+
+impl AltitudeRule {
+    fn from(b: u8) -> AltitudeRule {
+        match b {
+            1 => AltitudeRule::At,
+            2 => AltitudeRule::AtOrAbove,
+            3 => AltitudeRule::AtOrBelow,
+            4 => AltitudeRule::Between,
+            _ => AltitudeRule::None,
+        }
+    }
+}
+
+fn feet(metres: f32) -> Option<f64> {
+    (metres.is_finite() && metres > -1000.0 && metres != -1.0 && metres != 0.0).then(|| (metres as f64 / 0.3048).round())
+}
+
+fn degrees(v: f32) -> Option<f64> {
+    (v.is_finite() && v > 0.0 && v <= 360.0).then(|| (v as f64 * 10.0).round() / 10.0)
+}
+
+fn metres(v: f32) -> Option<f64> {
+    (v.is_finite() && v > 0.0 && v < 1.0e7).then(|| (v as f64).round())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Leg {
+    /// ARINC path terminator: IF, TF, CF, DF, HM and so on.
+    pub path: String,
+    /// The fix this leg ends at, where the path type has one.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub fix: String,
+    pub altitude_rule: AltitudeRule,
+    /// Altitude constraints in feet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub altitude_ft: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub altitude2_ft: Option<f64>,
+    /// Course in degrees, for the path types that fly one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub course_deg: Option<f64>,
+    /// Leg length in metres, for the path types that have one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distance_m: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Transition {
+    /// Runway or fix the transition is named for; empty for a procedure's common part.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// "final" and "missed" mark the two halves of an approach.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub part: String,
+    pub legs: Vec<Leg>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Procedure {
+    pub kind: Kind,
+    pub name: String,
+    /// Runway the procedure serves, where it names one (approaches always do).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub runway: String,
+    pub transitions: Vec<Transition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirportProcedures {
+    pub icao: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub procedures: Vec<Procedure>,
+    /// The file this came from, for reporting a decoding problem.
+    pub source: String,
+}
+
+fn legs(d: &[u8], rec: &Record) -> Vec<Leg> {
+    let count = u32::from(u16::from_le_bytes([d[rec.start + 6], d[rec.start + 7]])) as usize;
+    let mut out = Vec::new();
+    for i in 0..count {
+        let b = rec.start + 8 + i * LEG_SIZE;
+        if b + LEG_SIZE > rec.end {
+            break;
+        }
+        let path = *PATHS.get(d[b] as usize).unwrap_or(&"");
+        out.push(Leg {
+            path: path.to_string(),
+            fix: bgl::ident(bgl::u32le(d, b + 4)),
+            altitude_rule: AltitudeRule::from(d[b + 1]),
+            altitude_ft: feet(bgl::f32le(d, b + 0x24)),
+            altitude2_ft: feet(bgl::f32le(d, b + 0x30)),
+            // Two course/distance pairs are carried; the first that is filled in is the
+            // one the leg flies.
+            course_deg: degrees(bgl::f32le(d, b + 0x14)).or_else(|| degrees(bgl::f32le(d, b + 0x1C))),
+            distance_m: metres(bgl::f32le(d, b + 0x18)).or_else(|| metres(bgl::f32le(d, b + 0x20))),
+        });
+    }
+    out
+}
+
+fn transitions(d: &[u8], proc_rec: &Record, children_at: usize) -> Vec<Transition> {
+    let mut out = Vec::new();
+    for rec in bgl::records(d, proc_rec.start + children_at, proc_rec.end) {
+        // The legs of a procedure's own path hang directly off it.
+        if matches!(rec.id, LEGS_PLAIN | LEGS_FINAL | LEGS_MISSED | LEGS_TRANSITION) {
+            let part = match rec.id {
+                LEGS_FINAL => "final",
+                LEGS_MISSED => "missed",
+                _ => "",
+            };
+            out.push(Transition { name: String::new(), part: part.to_string(), legs: legs(d, &rec) });
+            continue;
+        }
+        let Some((_, kids_at)) = TRANSITIONS.iter().find(|(id, _)| *id == rec.id) else { continue };
+        let name_at = match rec.id {
+            0x4A => rec.start + 0x08,
+            0x49 => rec.start + 0x14,
+            _ => rec.start,
+        };
+        let name = if name_at > rec.start {
+            let end = (name_at + 8).min(rec.end);
+            String::from_utf8_lossy(&d[name_at..end]).trim_end_matches('\0').trim().to_string()
+        } else {
+            String::new()
+        };
+        for legrec in bgl::records(d, rec.start + kids_at, rec.end) {
+            if matches!(legrec.id, LEGS_PLAIN | LEGS_FINAL | LEGS_MISSED | LEGS_TRANSITION) {
+                let part = match legrec.id {
+                    LEGS_FINAL => "final",
+                    LEGS_MISSED => "missed",
+                    _ => "",
+                };
+                out.push(Transition { name: name.clone(), part: part.to_string(), legs: legs(d, &legrec) });
+            }
+        }
+    }
+    out
+}
+
+fn name_at(d: &[u8], rec: &Record, at: usize) -> String {
+    let start = rec.start + at;
+    let end = (start + 8).min(rec.end);
+    if start >= end {
+        return String::new();
+    }
+    String::from_utf8_lossy(&d[start..end]).trim_end_matches('\0').trim().to_string()
+}
+
+/// The runway an approach serves, taken from the runway fix its final legs end at
+/// (`RW13R`), which is more dependable than the coded runway in the header.
+fn runway_of(transitions: &[Transition]) -> String {
+    transitions
+        .iter()
+        .filter(|t| t.part == "final")
+        .flat_map(|t| t.legs.iter())
+        .filter_map(|l| l.fix.strip_prefix("RW").map(str::to_string))
+        .next_back()
+        .unwrap_or_default()
+}
+
+fn airport(d: &[u8], rec: &Record, file: &Path) -> Option<AirportProcedures> {
+    if rec.end - rec.start < 0x44 {
+        return None;
+    }
+    let icao = bgl::ident(bgl::u32le(d, rec.start + 0x28));
+    if icao.is_empty() {
+        return None;
+    }
+    let mut procedures = Vec::new();
+    for child in bgl::records(d, rec.start + 0x44, rec.end) {
+        let kind = match child.id {
+            REC_SID => Kind::Sid,
+            REC_STAR => Kind::Star,
+            REC_APPROACH => Kind::Approach,
+            _ => continue,
+        };
+        let children_at = if kind == Kind::Approach { 0x24 } else { 0x14 };
+        let trans = transitions(d, &child, children_at);
+        let runway = if kind == Kind::Approach { runway_of(&trans) } else { String::new() };
+        let name = match kind {
+            Kind::Approach => format!("RW{runway}"),
+            _ => name_at(d, &child, 0x0C),
+        };
+        procedures.push(Procedure { kind, name, runway, transitions: trans });
+    }
+    if procedures.is_empty() {
+        return None;
+    }
+    Some(AirportProcedures {
+        icao,
+        lat: bgl::lat(bgl::u32le(d, rec.start + 0x10)),
+        lon: bgl::lon(bgl::u32le(d, rec.start + 0x0C)),
+        procedures,
+        source: file.file_name().unwrap_or_default().to_string_lossy().to_string(),
+    })
+}
+
+/// Read the procedures of one airport from the simulator's navigation data. None when
+/// no simulator is installed, or the airport has no published procedures.
+pub fn find(icao: &str) -> Result<Option<AirportProcedures>> {
+    let want = icao.to_uppercase();
+    for dir in super::nav_dirs() {
+        for file in walk_nax(&dir) {
+            let data = std::fs::read(&file).with_context(|| format!("read {}", file.display()))?;
+            for rec in bgl::section_records(&data, bgl::SECTION_AIRPORT) {
+                if rec.id != bgl::REC_AIRPORT || rec.end - rec.start < 0x44 {
+                    continue;
+                }
+                if bgl::ident(bgl::u32le(&data, rec.start + 0x28)) != want {
+                    continue;
+                }
+                if let Some(a) = airport(&data, &rec, &file) {
+                    return Ok(Some(a));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn walk_nax(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else { return out };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(walk_nax(&p));
+        } else if p.file_name().map_or(false, |n| n.to_string_lossy().to_uppercase().starts_with("NAX")) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn altitudes_convert_and_ignore_the_empty_marker() {
+        assert_eq!(feet(914.4), Some(3000.0));
+        assert_eq!(feet(-1.0), None);
+        assert_eq!(feet(0.0), None);
+    }
+
+    #[test]
+    fn a_runway_comes_from_the_final_leg() {
+        let t = vec![Transition {
+            name: String::new(),
+            part: "final".into(),
+            legs: vec![
+                Leg { path: "IF".into(), fix: "MORRY".into(), altitude_rule: AltitudeRule::At, altitude_ft: None, altitude2_ft: None, course_deg: None, distance_m: None },
+                Leg { path: "TF".into(), fix: "RW13R".into(), altitude_rule: AltitudeRule::None, altitude_ft: None, altitude2_ft: None, course_deg: None, distance_m: None },
+            ],
+        }];
+        assert_eq!(runway_of(&t), "13R");
+    }
+}
