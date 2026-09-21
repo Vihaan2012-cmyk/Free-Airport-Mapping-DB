@@ -2,6 +2,8 @@
 
 pub mod bridge;
 pub mod build;
+pub mod approach;
+pub mod audit;
 pub mod cache;
 pub mod cli;
 pub mod geom;

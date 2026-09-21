@@ -84,6 +84,8 @@ All free, no keys, nothing to install.
 | OurAirports | Worldwide airport index | public domain |
 | FAA NASR (US only, automatic) | Declared distances, stopways, arresting systems, LAHSO | public domain |
 | Local X-Plane install (auto-detected) | Fallback for airports the Gateway does not have: Custom Scenery first, then Global Airports; `--xplane-dir` to point elsewhere, `--aptdat` for one file | yours |
+| FAA Digital Obstacle File (US only, automatic) | Surveyed obstacles for approach charts: masts, towers, chimneys, wind turbines | public domain |
+| OpenStreetMap masts, towers, chimneys and wind turbines (worldwide, tagged height only) | Obstacles for approach charts outside the US | ODbL |
 | `overrides/<ICAO>/<layer>.geojson` | Anything to add or replace per airport (hotspots, blind spots) | yours |
 
 The two index files are cached under `%LOCALAPPDATA%\amdbgen\index` and refreshed
@@ -254,6 +256,74 @@ amdbgen view EDDF --open         # OANS-style moving-map page (out/EDDF/viewer.h
 The PDF is drawn from the layers: runways with designators and dimensions, taxiway
 letters, aprons, terminals, holding positions, hotspots, stands, ARP, tower, runway
 table, frequencies, scale bar; portrait or landscape to fit the field.
+
+### Approach charts
+
+```
+amdbgen approach-chart EDDF --approach 27L --open         # ILS to 27L, PDF
+amdbgen approach-chart EDDF --approach 27L --star BIG1A    # ...with an arrival feeding it
+amdbgen approach-chart EDDF --list                         # every approach and arrival EDDF has
+```
+
+A full approach chart, styled like an airline chart and branded "AMDB V1". It needs
+Microsoft Flight Simulator installed, since the procedure and its fixes are read from
+its own navigation data (never redistributed). The page has a header, a briefing strip
+(final course, touchdown zone elevation, airport elevation, minimum safe altitude within
+25 NM, and the decision altitude), a plan view with terrain shading, the airport drawn
+from our own build, the procedure's fixes at their real positions, obstacles, the missed
+approach, a descent profile, and a minima band. Obstacles come from the FAA's Digital
+Obstacle File in the United States and from OpenStreetMap everywhere else (see
+Sources); OpenStreetMap gives heights above the ground, so the terrain model converts
+them to height above sea level before they can be weighed against the approach.
+
+`--approach 27L` picks a particular approach when a runway has more than one
+(`27L-2` for the second); `--list` prints every approach and arrival the airport has,
+with the exact names to pass back in. `--star BIG1A` draws an arrival feeding the
+approach. `--kind ils|rnav|loc|circling` sets which system minimum applies (see below);
+left out, an ILS is assumed.
+
+Nothing on the chart is for real-world navigation, and the page says so.
+
+#### How the minimum is worked out
+
+The estimate on the chart is not copied from anywhere: it is worked out from the
+airport's own terrain and obstacles, the same way a real approach is designed, in
+outline.
+
+Every approach type has a system minimum it may never go below, measured above the
+touchdown zone elevation: 200 ft for an ILS CAT I, 250 ft for RNAV with vertical
+guidance, 300 ft for a non-precision approach, 400 ft circling. The touchdown zone
+elevation is not the airport's own elevation; it is the highest point of the first
+3,000 ft of the runway, read from the terrain model.
+
+Above that floor, ground and obstacles can push the minimum higher, and how depends on
+whether the approach flies a glidepath. With one (ILS, RNAV with vertical guidance),
+only what breaks through a surface rising from the threshold at 102:1 matters — anything
+below that surface is already cleared by the descent and changes nothing, and anything
+that breaks through raises the decision altitude by exactly as much as it breaks
+through. Without a glidepath the aircraft levels off for the segment, so everything in
+it has to clear by the required margin instead. Either way, the ground is assessed along
+the procedure's actual path through its fixes rather than a straight box out from the
+runway, because a box is badly wrong in a valley: it takes in the walls either side of a
+procedure that is actually threading between them.
+
+The result is an estimate, and the chart says which of the three things — the system
+minimum, terrain, or an obstacle — set it.
+
+#### Checking the estimator
+
+```
+amdbgen minima-audit --truth published.csv --out measurements.csv
+```
+
+If you have a set of published minima to check the estimator against, `minima-audit`
+measures the estimates against them: a CSV of `icao,runway,published_da_ft,
+published_hat_ft,published_tdze_ft`, one row per chart. It prints how close the
+estimates come, split by whether the published chart sits right on its system minimum
+or was pushed higher by terrain or an obstacle, and separately how close the estimated
+touchdown zone elevations are to the published ones. `--jobs N` sets how many airports
+it works on at once (default 4). No truth set ships with the project; build one from
+charts you already have.
 
 ## Layout
 
