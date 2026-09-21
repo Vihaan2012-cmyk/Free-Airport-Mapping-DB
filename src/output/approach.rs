@@ -41,6 +41,8 @@ pub struct Chart<'a> {
     pub threshold: Option<(f64, f64)>,
     /// Touchdown zone elevation: what the minimum is measured from.
     pub tdze_ft: f64,
+    /// True when that elevation is a published survey.
+    pub tdze_surveyed: bool,
     pub field_elev_ft: f64,
     /// Minimum safe altitude within 25 NM, where a wide enough terrain patch was read.
     pub msa_ft: Option<f64>,
@@ -725,10 +727,17 @@ fn draw_minima(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f
         text(c, font, 7.0, x + col + 8.0, row, &l, 0.2);
         row -= 9.0;
     }
+    let where_from = if ch.tdze_surveyed {
+        ", as surveyed and published for this runway end"
+    } else if ch.threshold.is_some() {
+        ", the highest the terrain model finds in the first 3,000 ft of the runway"
+    } else {
+        " (the airport's own elevation: no built runway to measure at)"
+    };
     let tail = format!(
         "Touchdown zone {:.0} ft{}. Obstacles: {}.",
         ch.tdze_ft,
-        if ch.threshold.is_some() { ", the highest the terrain model finds in the first 3,000 ft of the runway" } else { " (airport elevation: no built runway to measure at)" },
+        where_from,
         if ch.obstacles.is_empty() { "none near this approach, or no obstacle source answered".to_string() } else { format!("{} near this airport, from {}", ch.obstacles.len(), ch.obstacles[0].source) }
     );
     for l in wrap(&tail, 62) {

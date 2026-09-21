@@ -35,6 +35,8 @@ pub struct Outcome {
     pub da_error_ft: f64,
     pub tdze_error_ft: f64,
     pub limited_by: &'static str,
+    /// What set our number, where something on the ground did.
+    pub controlling: String,
     pub published_hat_ft: f64,
 }
 
@@ -105,6 +107,7 @@ pub fn run(truth: &Path, out: Option<&Path>, jobs: usize) -> Result<()> {
                     da_error_ft: est.altitude_ft - case.published_da_ft,
                     tdze_error_ft: setup.tdze_ft - case.published_tdze_ft,
                     limited_by: describe(est.limited_by),
+                    controlling: est.obstacle.clone().unwrap_or_default(),
                     published_hat_ft: case.published_hat_ft,
                 };
                 crate::term::info(&format!(
