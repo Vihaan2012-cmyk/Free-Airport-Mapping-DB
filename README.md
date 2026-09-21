@@ -310,6 +310,24 @@ procedure that is actually threading between them.
 The result is an estimate, and the chart says which of the three things — the system
 minimum, terrain, or an obstacle — set it.
 
+#### How close this gets
+
+Measured against 382 published ILS approaches across the United States, read out of the
+FAA's own charts: the median estimate is within a foot of the published decision
+altitude, and 85 per cent are within fifty feet.
+
+The set splits in two. Where the published chart sits on its system minimum, which is
+285 of the 382, the estimate is the published figure: a median error of half a foot, and
+95 per cent within fifty feet. Where the published chart was pushed higher, which is the
+other 97 and mostly airports ringed by mountains, the estimate comes out too low, by
+fifty feet at the median and several hundred at the worst. Those minima are raised for
+things this does not model: the climb gradient a missed approach has to make, and what
+stands in the missed approach area rather than under the approach itself.
+
+Touchdown zone elevations are exact in the United States because they are surveyed and
+published. Everywhere else they come from the terrain model and carry a few feet with
+them, which carries straight through to the minimum.
+
 #### Checking the estimator
 
 ```
