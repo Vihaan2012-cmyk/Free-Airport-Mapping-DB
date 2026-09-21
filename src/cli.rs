@@ -1028,7 +1028,7 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
     if list {
         return list_procedures(&icao);
     }
-    let http = crate::sources::http::Http::new(120, 0);
+    let http = crate::sources::http::Http::new(300, 0);
     let cache = crate::cache::Cache::for_index(false);
     let mut idx = crate::sources::index::AirportIndex::default();
     idx.load_ourairports_online(&http, &cache)?;

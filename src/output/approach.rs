@@ -178,11 +178,11 @@ impl View {
             })
             .fold(0.0f64, f64::max);
         // Room for the airport itself, then as much of the approach as will fit.
-        let span_nm = (far * 1.6).clamp(PLAN_MIN_NM, PLAN_MAX_NM);
+        let span_nm = (far * 1.35).clamp(PLAN_MIN_NM, PLAN_MAX_NM);
         // Slide the middle of the window back down the approach, so the airport sits
         // off-centre with the final laid out in front of it.
         let back = (track_deg + 180.0).to_radians();
-        let shift_nm = span_nm * 0.22;
+        let shift_nm = span_nm * 0.18;
         let centre = (airport.0 + shift_nm * back.cos() / 60.0, airport.1 + shift_nm * back.sin() / 60.0 / cos);
 
         let aspect = (w / h) as f64;
@@ -729,7 +729,7 @@ fn draw_minima(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f
         "Touchdown zone {:.0} ft{}. Obstacles: {}.",
         ch.tdze_ft,
         if ch.threshold.is_some() { ", the highest the terrain model finds in the first 3,000 ft of the runway" } else { " (airport elevation: no built runway to measure at)" },
-        if ch.obstacles.is_empty() { "none found near this airport".to_string() } else { format!("{} within 15 km from {}", ch.obstacles.len(), ch.obstacles[0].source) }
+        if ch.obstacles.is_empty() { "none near this approach, or no obstacle source answered".to_string() } else { format!("{} near this airport, from {}", ch.obstacles.len(), ch.obstacles[0].source) }
     );
     for l in wrap(&tail, 62) {
         text(c, font, 7.0, x + col + 8.0, row, &l, 0.4);
