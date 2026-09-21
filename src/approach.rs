@@ -44,6 +44,9 @@ pub struct Setup {
     pub airport_name: Option<String>,
     pub airport_dir: Option<PathBuf>,
     pub msa_ft: Option<f64>,
+    /// True when the touchdown zone elevation is a published survey rather than a
+    /// reading off the terrain model.
+    pub tdze_surveyed: bool,
     /// Both ends of the landing runway, threshold first.
     pub runway_ends: Option<((f64, f64), (f64, f64))>,
 }
@@ -344,6 +347,7 @@ pub fn prepare(http: &Http, cache: &Cache, idx: &AirportIndex, icao: &str, appro
         airport_name,
         airport_dir,
         msa_ft,
+        tdze_surveyed: surveyed.is_some(),
         runway_ends,
     })
 }
