@@ -70,6 +70,16 @@ pub struct ChartRef {
 /// The index is one 16 MB file for the country, so it is fetched and read once and kept.
 /// An airport outside the United States is simply not in it, which is the answer for most
 /// of the world and not a failure.
+/// Whether an airport could be in the American chart index at all.
+///
+/// The index is sixteen megabytes, and it would be fetched for Heathrow as readily as
+/// for Dallas without this: the states the FAA charts are the K codes and the Pacific P
+/// codes, with Puerto Rico and the Virgin Islands under T.
+pub fn is_american(icao: &str) -> bool {
+    let icao = icao.trim().to_uppercase();
+    icao.len() == 4 && (icao.starts_with('K') || icao.starts_with('P') || icao.starts_with("TJ") || icao.starts_with("TI"))
+}
+
 fn index(http: &Http, cache: &Cache) -> &'static HashMap<String, Vec<ChartRef>> {
     static INDEX: std::sync::OnceLock<HashMap<String, Vec<ChartRef>>> = std::sync::OnceLock::new();
     INDEX.get_or_init(|| match load_index(http, cache) {
@@ -179,6 +189,9 @@ pub fn published(
     suffix: Option<char>,
     touchdown_ft: f64,
 ) -> Option<Published> {
+    if !is_american(icao) {
+        return None;
+    }
     let charts = index(http, cache).get(&icao.to_uppercase())?;
     let want = match line {
         Line::StraightIn(what) => what,
@@ -257,6 +270,9 @@ pub fn fetch_chart(http: &Http, cache: &Cache, pdf: &str) -> Result<Vec<u8>> {
 
 /// Every approach chart published for an airport.
 pub fn charts_at(http: &Http, cache: &Cache, icao: &str) -> Vec<ChartRef> {
+    if !is_american(icao) {
+        return Vec::new();
+    }
     index(http, cache).get(&icao.to_uppercase()).cloned().unwrap_or_default()
 }
 
