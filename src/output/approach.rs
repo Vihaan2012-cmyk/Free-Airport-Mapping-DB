@@ -282,26 +282,29 @@ impl View {
     /// further out than the window reaches runs off the edge, the way it does on a
     /// printed chart.
     fn around(airport: (f64, f64), track_deg: f64, points: &[(f64, f64)], x: f32, y: f32, w: f32, h: f32) -> View {
+        let _ = track_deg;
         let cos = airport.0.to_radians().cos().max(0.05);
         let nm_from_airport = |(lat, lon): (f64, f64)| ((lat - airport.0) * 60.0, (lon - airport.1) * 60.0 * cos);
-        let far = points.iter().map(|p| nm_from_airport(*p)).fold(0.0f64, |m, (dn, de)| m.max(dn.hypot(de)));
-        // The approach runs out from the airport in one direction, so the window is
-        // pushed that way — but not the whole distance. A chart leaves country beyond the
-        // airport as well as behind it, and an airport squeezed against the edge of the
-        // paper is the first thing that looks wrong.
-        const TOWARDS_THE_APPROACH: f64 = 0.47;
-        let back = (track_deg + 180.0).to_radians();
-        let shift = far * TOWARDS_THE_APPROACH;
-        let centre = (airport.0 + shift * back.cos() / 60.0, airport.1 + shift * back.sin() / 60.0 / cos);
-        // Then it is opened out until it holds everything, with a margin.
+        // Everything that must be on the paper, with the room it needs around it. A fix
+        // needs enough for its name; the airport needs a good deal more, because the
+        // runway is drawn there, the missed approach leaves from there, and the labels
+        // for both are written around it.
         const MARGIN_NM: f64 = 0.75;
-        let from_centre = |(lat, lon): (f64, f64)| ((lat - centre.0) * 60.0, (lon - centre.1) * 60.0 * cos);
-        let (mut half_n, mut half_e) = (0.0f64, 0.0f64);
-        for point in points.iter().copied().chain([airport]) {
-            let (dn, de) = from_centre(point);
-            half_n = half_n.max(dn.abs() + MARGIN_NM);
-            half_e = half_e.max(de.abs() + MARGIN_NM);
+        const AIRPORT_MARGIN_NM: f64 = 2.5;
+        let (mut n0, mut n1, mut e0, mut e1) = (-AIRPORT_MARGIN_NM, AIRPORT_MARGIN_NM, -AIRPORT_MARGIN_NM, AIRPORT_MARGIN_NM);
+        for point in points {
+            let (dn, de) = nm_from_airport(*point);
+            n0 = n0.min(dn - MARGIN_NM);
+            n1 = n1.max(dn + MARGIN_NM);
+            e0 = e0.min(de - MARGIN_NM);
+            e1 = e1.max(de + MARGIN_NM);
         }
+        // The window is that box, centred on itself. Sizing it by how far the approach
+        // reaches and then shifting it part of the way back is a rule that holds until
+        // the approach leaves in one direction and the missed approach in another, and
+        // then it puts the airport on the edge of the paper with its runway off it.
+        let centre = (airport.0 + (n0 + n1) / 2.0 / 60.0, airport.1 + (e0 + e1) / 2.0 / 60.0 / cos);
+        let (half_n, half_e) = ((n1 - n0) / 2.0, (e1 - e0) / 2.0);
         let aspect = (w / h) as f64;
         let half_h_nm = (half_n.max(half_e / aspect)).clamp(PLAN_MIN_NM / 2.0, PLAN_MAX_NM / 2.0);
         let half_w_nm = half_h_nm * aspect;
@@ -546,6 +549,46 @@ fn label_terrain(c: &mut Content, font: Name, patch: &Patch, v: &View, field_ft:
     }
 }
 
+/// The highest ground on the page, marked where it stands and named.
+///
+/// A plate carries spot heights over high ground: the tint says high, the figure says
+/// how high, and the two are not the same question. Only the one peak is marked — the
+/// elevation model has a reading every thirty metres and a page of them would be a grey
+/// wash — and only where it stands well above the field, because at an airport on a
+/// plain the highest thing within ten miles is a hill nobody needs warning of.
+fn draw_peak(c: &mut Content, font: Name, patch: &Patch, v: &View, field_ft: f64, taken: &mut Taken) {
+    let mut best: Option<(f64, f64, f64)> = None; // (ft, lat, lon)
+    for row in 0..patch.height {
+        for col in 0..patch.width {
+            let h = patch.at(row, col);
+            if !h.is_finite() {
+                continue;
+            }
+            let ft = h as f64 / 0.3048;
+            if best.map_or(true, |(b, _, _)| ft > b) {
+                let (lat, lon) = patch.position(row, col);
+                if v.inside(v.at(lat, lon), -10.0) {
+                    best = Some((ft, lat, lon));
+                }
+            }
+        }
+    }
+    let Some((ft, lat, lon)) = best else { return };
+    if ft < field_ft + 1000.0 {
+        return;
+    }
+    let (px, py) = v.at(lat, lon);
+    // The filled triangle a chart marks a summit with, and the height beside it.
+    c.set_fill_gray(INK);
+    c.move_to(px, py + 5.0);
+    c.line_to(px - 3.6, py - 1.6);
+    c.line_to(px + 3.6, py - 1.6);
+    c.close_path();
+    c.fill_nonzero();
+    let s = format!("{ft:.0}'");
+    taken.label(c, font, 6.5, px + 6.0, py - 1.0, &s, INK);
+}
+
 /// Everything lower than a height, filled in one colour.
 ///
 /// Drawn as a shape rather than as a field of squares. A square to each reading turns a
@@ -757,7 +800,7 @@ fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, role: 
         if let Some(digits) = leg.fix.strip_prefix(leg.navaid.as_str()) {
             let named: Option<f64> = digits.parse::<f64>().ok().map(|v| if digits.len() > 2 { v / 10.0 } else { v });
             if named.map(|n| (n - rho).abs() < 0.3).unwrap_or(false) {
-                taken.label(c, font, 6.0, px + 6.0, row, &format!("{rho:.1} DME {}", leg.navaid), 0.4);
+                taken.label(c, font, 6.0, px + 6.0, row, &format!("D{rho:.1} {}", leg.navaid), 0.4);
                 row += step;
             }
         }
@@ -1555,7 +1598,22 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
     match ch.runway_ends {
         Some((near, far)) => {
             let (nx, ny) = v.at(near.0, near.1);
-            let (fx, fy) = v.at(far.0, far.1);
+            let (mut fx, mut fy) = v.at(far.0, far.1);
+            // Twenty-six miles across the paper, a two-mile runway is eight millimetres
+            // of it and a short one is three. A chart draws the strip being landed on at
+            // a length that can be seen whatever the scale, so the mark is stretched
+            // about its own middle when the pavement would come out shorter than that.
+            const LEAST_PT: f32 = 26.0;
+            let (dx, dy) = (fx - nx, fy - ny);
+            let len = dx.hypot(dy);
+            let (nx, ny) = if len > 0.5 && len < LEAST_PT {
+                let grow = (LEAST_PT - len) / 2.0 / len;
+                fx += dx * grow;
+                fy += dy * grow;
+                (nx - dx * grow, ny - dy * grow)
+            } else {
+                (nx, ny)
+            };
             line(c, nx, ny, fx, fy, 5.0, 1.0);
             line(c, nx, ny, fx, fy, 2.6, INK);
         }
@@ -1637,7 +1695,17 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
     // The ways in to the approach, thin, each starting at an initial approach fix.
     for t in feeder_transitions(ch.procedure) {
         let legs: Vec<&Leg> = t.legs.iter().collect();
-        draw_track(c, &v, &legs, None, 0.9, false, 0.35);
+        // Lighter than the final, because the final is the one being flown, but a track
+        // all the same: a hairline in pale grey reads as a construction line, and a
+        // reader looking for the way in from an arrival cannot find it.
+        let pts = draw_track(c, &v, &legs, None, 1.4, false, 0.2);
+        // Which way round it is flown, which a track without an arrow does not say.
+        if pts.len() >= 2 {
+            let (from, to) = (pts[pts.len() - 2], pts[pts.len() - 1]);
+            if v.inside(to, 0.0) {
+                arrow_head(c, from, to, 0.2);
+            }
+        }
         for (i, leg) in legs.iter().enumerate() {
             draw_fix(c, font, bold, &v, leg, (i == 0).then_some("IAF"), ch.tdze_ft, &mut taken, dme, fix_note(ch, &leg.fix));
         }
@@ -1779,6 +1847,7 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         });
     // What the ground is, in figures rather than in colour.
     label_terrain(c, font, ch.patch, &v, ch.field_elev_ft, &mut taken);
+    draw_peak(c, font, ch.patch, &v, ch.field_elev_ft, &mut taken);
     // The descent at whole miles, which a plate prints beside the plan, and the key to
     // the tints moved up to sit on top of it.
     let table_h = draw_recommended_altitudes(c, font, bold, ch, v.x + 6.0, v.y + 26.0);
@@ -2620,12 +2689,18 @@ fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32
             text_centred(c, bold, 7.5, circle_x + kts_w + (w - straight_w - kts_w) / 2.0, middle, &format!("{ft:.0}'({height:.0}')"), INK);
         }
     }
-    // The column headings for the straight-in, which say what is out of service.
-    let third = main_w / 3.0;
-    for (i, s) in ["FULL", "TDZ/CL out", "ALS out"].iter().enumerate() {
-        text_centred(c, font, 5.2, x + 16.0 + third * (i as f32 + 0.5), sub_y + 2.5, s, 0.4);
+    // The column headings for the straight-in, which say what is out of service. Only
+    // where a published visibility was read to put under them: three empty columns with
+    // rules and headings say the chart failed to draw rather than that there is nothing
+    // to say, and outside the United States there is usually nothing to say.
+    let any_visibility = published.map_or(false, |p| p.categories.iter().any(|c| !c.visibility.is_empty()));
+    if any_visibility {
+        let third = main_w / 3.0;
+        for (i, s) in ["FULL", "TDZ/CL out", "ALS out"].iter().enumerate() {
+            text_centred(c, font, 5.2, x + 16.0 + third * (i as f32 + 0.5), sub_y + 2.5, s, 0.4);
+        }
+        line(c, x, sub_y + 11.0, x + straight_w, sub_y + 11.0, 0.4, 0.7);
     }
-    line(c, x, sub_y + 11.0, x + straight_w, sub_y + 11.0, 0.4, 0.7);
 }
 
 
