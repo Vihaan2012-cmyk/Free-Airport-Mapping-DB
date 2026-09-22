@@ -476,15 +476,23 @@ fn draw_terrain(c: &mut Content, patch: &Patch, v: &View, field_ft: f64) {
     // one paints over the middle of it, so what is left of each is the ring between one
     // height and the next. The ground the airport stands on is painted out again, so that
     // an airport on a plateau does not sit in a wash of colour, and the sea goes on last.
+    let highest_ft = (0..patch.height)
+        .flat_map(|row| (0..patch.width).map(move |col| (row, col)))
+        .map(|(row, col)| patch.at(row, col))
+        .filter(|h| h.is_finite())
+        .fold(f64::NEG_INFINITY, |m, h| m.max(h as f64 / 0.3048));
     let floor = (field_ft + 250.0).max(TERRAIN_BANDS[0].0);
     for (top, (r, g, b)) in TERRAIN_BANDS.iter().rev() {
-        if *top <= floor {
+        // A band with nothing standing above it would cover the whole picture and then be
+        // covered again by the one below: there is no need to draw it at all.
+        if *top <= floor || highest_ft <= *top {
             continue;
         }
-        let top = if *top == f64::MAX { 40_000.0 } else { *top };
-        fill_below(c, patch, v, top, (*r, *g, *b));
+        fill_below(c, patch, v, *top, (*r, *g, *b));
     }
-    fill_below(c, patch, v, floor, (1.0, 1.0, 1.0));
+    if highest_ft > floor {
+        fill_below(c, patch, v, floor, (1.0, 1.0, 1.0));
+    }
     if field_ft >= WATER_NEEDS_FIELD_FT {
         fill_below(c, patch, v, WATER_FT, WATER_TINT);
     }
@@ -498,6 +506,11 @@ fn draw_terrain(c: &mut Content, patch: &Patch, v: &View, field_ft: f64) {
 /// two readings, gives the coast back its shape. It is the marching squares of any
 /// contour map: each cell of four readings contributes the piece of itself that lies
 /// below the height, with its corners where the crossings fall.
+///
+/// Only the cells the height passes through need that treatment. A run of cells wholly
+/// below it is one rectangle, however long the run — which matters, because a picture
+/// holding a quarter of a million readings would otherwise be a quarter of a million
+/// little shapes, and a file nobody can open.
 fn fill_below(c: &mut Content, patch: &Patch, v: &View, height_ft: f64, tint: (f32, f32, f32)) {
     let metres = height_ft * 0.3048;
     let at = |row: usize, col: usize| -> Option<(f32, f32, f64)> {
@@ -509,55 +522,63 @@ fn fill_below(c: &mut Content, patch: &Patch, v: &View, height_ft: f64, tint: (f
         let (px, py) = v.at(lat, lon);
         Some((px, py, h as f64))
     };
-    let (mut started, mut drawn) = (false, 0usize);
+    let mut anything = false;
     for row in 0..patch.height.saturating_sub(1) {
-        for col in 0..patch.width.saturating_sub(1) {
-            // The four readings of one cell, going round it.
-            let corners = [at(row, col), at(row, col + 1), at(row + 1, col + 1), at(row + 1, col)];
-            let Some(corners) = corners.iter().copied().collect::<Option<Vec<_>>>() else { continue };
-            if corners.iter().all(|(_, _, h)| *h > metres) {
+        let mut run: Option<usize> = None;
+        for col in 0..patch.width {
+            let cell = (col + 1 < patch.width)
+                .then(|| [at(row, col), at(row, col + 1), at(row + 1, col + 1), at(row + 1, col)])
+                .and_then(|k| k.iter().copied().collect::<Option<Vec<_>>>());
+            let below = cell.as_ref().map(|k| k.iter().filter(|(_, _, h)| *h <= metres).count()).unwrap_or(0);
+            let inside = cell.as_ref().map(|k| k.iter().any(|(px, py, _)| v.inside((*px, *py), 30.0))).unwrap_or(false);
+            let whole = below == 4 && inside;
+            if whole {
+                run.get_or_insert(col);
                 continue;
             }
-            // Anything wholly off the paper is not worth the arithmetic.
-            if corners.iter().all(|(px, py, _)| !v.inside((*px, *py), 30.0)) {
+            // The run ends here, so it is drawn as the one rectangle it is.
+            if let Some(from) = run.take() {
+                if let (Some(top_left), Some(bottom_right)) = (at(row, from), at(row + 1, col)) {
+                    if !anything {
+                        c.set_fill_rgb(tint.0, tint.1, tint.2);
+                        anything = true;
+                    }
+                    let (x0, x1) = (top_left.0.min(bottom_right.0), top_left.0.max(bottom_right.0));
+                    let (y0, y1) = (top_left.1.min(bottom_right.1), top_left.1.max(bottom_right.1));
+                    c.rect(x0, y0, (x1 - x0).max(0.1), (y1 - y0).max(0.1));
+                }
+            }
+            let Some(k) = cell else { continue };
+            if below == 0 || !inside {
                 continue;
             }
+            // A cell the height passes through: the piece of it that lies below.
             let mut shape: Vec<(f32, f32)> = Vec::with_capacity(8);
             for i in 0..4 {
-                let (ax, ay, ah) = corners[i];
-                let (bx, by, bh) = corners[(i + 1) % 4];
+                let (ax, ay, ah) = k[i];
+                let (bx, by, bh) = k[(i + 1) % 4];
                 if ah <= metres {
                     shape.push((ax, ay));
                 }
-                // Where the ground crosses the height between two readings, the crossing
-                // is where it would fall if it changed evenly between them.
                 if (ah <= metres) != (bh <= metres) {
                     let f = ((metres - ah) / (bh - ah)).clamp(0.0, 1.0) as f32;
                     shape.push((ax + (bx - ax) * f, ay + (by - ay) * f));
                 }
             }
-            if shape.len() < 3 {
-                continue;
-            }
-            if !started {
-                c.set_fill_rgb(tint.0, tint.1, tint.2);
-                started = true;
-            }
-            c.move_to(shape[0].0, shape[0].1);
-            for point in &shape[1..] {
-                c.line_to(point.0, point.1);
-            }
-            c.close_path();
-            drawn += 1;
-            // One path may not hold the whole coast; a very long one is slow to draw.
-            if drawn >= 4000 {
-                c.fill_nonzero();
-                drawn = 0;
-                started = false;
+            if shape.len() >= 3 {
+                if !anything {
+                    c.set_fill_rgb(tint.0, tint.1, tint.2);
+                    anything = true;
+                }
+                c.move_to(shape[0].0, shape[0].1);
+                for point in &shape[1..] {
+                    c.line_to(point.0, point.1);
+                }
+                c.close_path();
             }
         }
     }
-    if started {
+    if anything {
         c.fill_nonzero();
     }
 }
