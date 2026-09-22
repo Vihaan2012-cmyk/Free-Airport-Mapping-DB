@@ -126,13 +126,12 @@ fn load_dof(http: &Http, cache: &Cache) -> Result<Vec<Obstacle>> {
         if !member.name().to_ascii_uppercase().ends_with(".DAT") {
             continue;
         }
-        let mut text = String::new();
-        {
+        let text = {
             use std::io::Read;
             let mut raw = Vec::new();
             member.read_to_end(&mut raw)?;
-            text = String::from_utf8_lossy(&raw).into_owned();
-        }
+            String::from_utf8_lossy(&raw).into_owned()
+        };
         for line in text.lines() {
             if let Some(o) = parse_dof_line(line) {
                 out.push(o);

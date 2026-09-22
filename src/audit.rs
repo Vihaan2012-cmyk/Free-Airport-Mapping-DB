@@ -18,10 +18,29 @@ use std::path::Path;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Case {
     pub icao: String,
+    #[serde(default)]
     pub runway: String,
+    /// What kind of approach the published figure is for. Left out, it is an ILS.
+    #[serde(default)]
+    pub kind: String,
+    #[serde(alias = "published_mda_ft")]
     pub published_da_ft: f64,
     pub published_hat_ft: f64,
-    pub published_tdze_ft: f64,
+    /// Missing for a circling minimum, which is quoted above the aerodrome rather than
+    /// above a touchdown zone.
+    #[serde(default)]
+    pub published_tdze_ft: Option<f64>,
+}
+
+impl Case {
+    fn approach(&self) -> Approach {
+        match self.kind.trim().to_ascii_lowercase().as_str() {
+            "circling" => Approach::Circling,
+            "loc" | "vor" | "ndb" | "lnav" | "np" | "nonprecision" => Approach::NonPrecision,
+            "rnav" | "lpv" | "lnav/vnav" => Approach::VerticallyGuided,
+            _ => Approach::PrecisionCat1,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -34,6 +53,11 @@ pub struct Outcome {
     pub our_tdze_ft: f64,
     pub da_error_ft: f64,
     pub tdze_error_ft: f64,
+    /// What kind of approach the published figure was for.
+    pub kind: String,
+    /// The lowest altitude the procedure codes on its final, ignoring the runway fix:
+    /// a candidate for the minimum that costs nothing to read.
+    pub coded_floor_ft: f64,
     pub limited_by: &'static str,
     /// What set our number, where something on the ground did.
     pub controlling: String,
@@ -45,6 +69,7 @@ fn describe(l: LimitedBy) -> &'static str {
         LimitedBy::SystemMinimum => "system",
         LimitedBy::Terrain => "terrain",
         LimitedBy::Obstacle => "obstacle",
+        LimitedBy::Coded => "coded",
     }
 }
 
@@ -89,23 +114,33 @@ pub fn run(truth: &Path, out: Option<&Path>, jobs: usize) -> Result<()> {
             .filter_map(|case| {
                 let opts = crate::approach::Options { wide_terrain: false, quiet: true, obstacle_radius_km: 8.0 };
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                let setup = match crate::approach::prepare(&http, &cache, &idx, &case.icao, Some(&case.runway), opts) {
+                // A circling minimum names no runway, so any approach at the airport
+                // gives the geometry it is worked out from.
+                let wanted = (!case.runway.trim().is_empty()).then(|| case.runway.clone());
+                let setup = match crate::approach::prepare(&http, &cache, &idx, &case.icao, wanted.as_deref(), opts) {
                     Ok(s) => s,
                     Err(e) => {
                         crate::term::warn(&format!("[{n}/{total}] {} RW{}: {e:#}", case.icao, case.runway));
                         return None;
                     }
                 };
-                let est = crate::approach::estimate(&setup, Approach::PrecisionCat1);
+                let est = crate::approach::estimate(&setup, case.approach());
                 let outcome = Outcome {
                     icao: case.icao.clone(),
                     runway: case.runway.clone(),
                     published_da_ft: case.published_da_ft,
-                    published_tdze_ft: case.published_tdze_ft,
+                    published_tdze_ft: case.published_tdze_ft.unwrap_or(f64::NAN),
                     our_da_ft: est.altitude_ft,
                     our_tdze_ft: setup.tdze_ft,
                     da_error_ft: est.altitude_ft - case.published_da_ft,
-                    tdze_error_ft: setup.tdze_ft - case.published_tdze_ft,
+                    tdze_error_ft: case.published_tdze_ft.map(|t| setup.tdze_ft - t).unwrap_or(f64::NAN),
+                    kind: if case.kind.trim().is_empty() { "ils".to_string() } else { case.kind.trim().to_string() },
+                    coded_floor_ft: setup
+                        .final_legs()
+                        .iter()
+                        .filter(|l| !l.fix.starts_with("RW"))
+                        .filter_map(|l| l.altitude_ft)
+                        .fold(f64::NAN, f64::min),
                     limited_by: describe(est.limited_by),
                     controlling: est.obstacle.clone().unwrap_or_default(),
                     published_hat_ft: case.published_hat_ft,
@@ -139,7 +174,7 @@ pub fn run(truth: &Path, out: Option<&Path>, jobs: usize) -> Result<()> {
 /// right, then the part where something on the ground pushed the published figure up.
 pub fn report(outcomes: &[Outcome]) {
     let all: Vec<f64> = outcomes.iter().map(|o| o.da_error_ft).collect();
-    let tdze: Vec<f64> = outcomes.iter().map(|o| o.tdze_error_ft).collect();
+    let tdze: Vec<f64> = outcomes.iter().map(|o| o.tdze_error_ft).filter(|e| e.is_finite()).collect();
     let flat: Vec<f64> = outcomes.iter().filter(|o| o.published_hat_ft <= 200.0).map(|o| o.da_error_ft).collect();
     let raised: Vec<f64> = outcomes.iter().filter(|o| o.published_hat_ft > 200.0).map(|o| o.da_error_ft).collect();
 
@@ -165,6 +200,17 @@ pub fn report(outcomes: &[Outcome]) {
     line("where the chart is at 200 ft", &flat);
     line("where the chart is higher", &raised);
     line("touchdown zone elevation", &tdze);
+
+    let mut by_kind: std::collections::BTreeMap<&str, Vec<f64>> = Default::default();
+    for o in outcomes {
+        by_kind.entry(o.kind.as_str()).or_default().push(o.da_error_ft);
+    }
+    if by_kind.len() > 1 {
+        println!("  by kind:");
+        for (k, v) in &by_kind {
+            line(&format!("    {k}"), v);
+        }
+    }
 
     let mut by_limit: std::collections::BTreeMap<&str, usize> = Default::default();
     for o in outcomes {

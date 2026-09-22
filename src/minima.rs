@@ -85,6 +85,10 @@ pub enum LimitedBy {
     /// comes from the FAA's obstacle file, mapped by hand where it comes from
     /// OpenStreetMap.
     Obstacle,
+    /// The procedure's own minimum, which is not an estimate at all: the navigation data
+    /// codes the altitude the approach descends to, and where it does, that is the
+    /// published figure.
+    Coded,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,6 +172,37 @@ pub fn required_altitude(approach: Approach, touchdown_elev_ft: f64, top_ft: f64
     }
     let penetration = top_ft - clearance_surface_ft(touchdown_elev_ft, along_nm, across_nm);
     (penetration > 0.0).then(|| touchdown_elev_ft + approach.system_minimum_ft() + penetration)
+}
+
+/// The minimum the procedure itself codes, where it codes one.
+///
+/// An approach without a glidepath ends its final segment at a missed approach point
+/// rather than at the runway, and the altitude on that last leg is the altitude the
+/// aircraft may descend to: the published minimum. An approach with a glidepath ends at
+/// the runway itself, and that altitude is the height it crosses the threshold at, which
+/// is not a minimum at all — so only the first kind gives us one.
+pub fn coded_minimum(final_legs: &[&crate::sources::msfs::procedures::Leg], touchdown_elev_ft: f64) -> Option<f64> {
+    let last = final_legs.last()?;
+    if last.fix.starts_with("RW") || last.fix.is_empty() {
+        return None;
+    }
+    let altitude = last.altitude_ft?;
+    // A published minimum is never at the ground and never in the flight levels.
+    (altitude > touchdown_elev_ft + 150.0 && altitude < touchdown_elev_ft + 5000.0).then_some(altitude)
+}
+
+/// An estimate that simply reports the procedure's own minimum.
+pub fn from_coded(approach: Approach, touchdown_elev_ft: f64, coded_ft: f64, highest_terrain_ft: f64) -> Estimate {
+    Estimate {
+        approach,
+        altitude_ft: coded_ft,
+        height_ft: coded_ft - touchdown_elev_ft,
+        limited_by: LimitedBy::Coded,
+        highest_terrain_ft,
+        obstacle: None,
+        obstacle_top_ft: None,
+        reliable: true,
+    }
 }
 
 /// Estimate the minimum for one approach.
@@ -272,6 +307,63 @@ impl Path {
             }
         }
         best
+    }
+}
+
+/// Circling is not flown along the approach at all: the aircraft manoeuvres visually
+/// about the aerodrome, so what matters is everything within a radius of it, and the
+/// radius depends on how fast the aeroplane is.
+///
+/// The figures are the ones procedure designers use: the area grows with category, and
+/// no circling minimum may sit lower than a set height above the aerodrome whatever the
+/// ground does. Everything in the area has to be cleared by the same margin.
+pub const CIRCLING_AREA: [(char, f64, f64); 4] = [('A', 1.68, 394.0), ('B', 2.66, 492.0), ('C', 4.20, 591.0), ('D', 5.28, 700.0)];
+
+/// The clearance kept above whatever stands in the circling area.
+const CIRCLING_MARGIN_FT: f64 = 295.0;
+
+/// The circling minimum for one aircraft category: what the highest thing within its
+/// radius forces, or the floor for that category, whichever is higher.
+pub fn circling_minimum(
+    patch: &crate::sources::copernicus::Patch,
+    obstacles: &[crate::sources::obstacles::Obstacle],
+    airport: (f64, f64),
+    aerodrome_elev_ft: f64,
+    category: usize,
+) -> (f64, Option<String>) {
+    let (_, radius_nm, floor_ft) = CIRCLING_AREA[category.min(3)];
+    let mut highest = f64::NEG_INFINITY;
+    let mut what: Option<String> = None;
+    let within = |lat: f64, lon: f64| {
+        let dn = (lat - airport.0) * 60.0;
+        let de = (lon - airport.1) * 60.0 * airport.0.to_radians().cos().max(0.05);
+        dn.hypot(de) <= radius_nm
+    };
+    for row in 0..patch.height {
+        for col in 0..patch.width {
+            let h = patch.at(row, col);
+            if !h.is_finite() {
+                continue;
+            }
+            let (lat, lon) = patch.position(row, col);
+            if within(lat, lon) {
+                highest = highest.max(h as f64 / 0.3048);
+            }
+        }
+    }
+    for o in obstacles {
+        let Some(top) = o.top_ft else { continue };
+        if within(o.lat, o.lon) && top > highest {
+            highest = top;
+            what = Some(o.label());
+        }
+    }
+    let by_ground = if highest.is_finite() { round_up(highest + CIRCLING_MARGIN_FT, 10.0) } else { f64::NEG_INFINITY };
+    let by_floor = aerodrome_elev_ft + floor_ft;
+    if by_ground > by_floor {
+        (by_ground, what)
+    } else {
+        (by_floor, None)
     }
 }
 

@@ -1072,6 +1072,7 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
             crate::minima::LimitedBy::SystemMinimum => "the system minimum: the published chart should agree".to_string(),
             crate::minima::LimitedBy::Terrain => format!("terrain reaching {:.0} ft", est.highest_terrain_ft),
             crate::minima::LimitedBy::Obstacle => format!("{} at {:.0} ft", est.obstacle.as_deref().unwrap_or("an obstacle"), est.obstacle_top_ft.unwrap_or(0.0)),
+            crate::minima::LimitedBy::Coded => "the procedure's own coded minimum, not an estimate".to_string(),
         }
     ));
     crate::term::file(Some(&icao), &out.display().to_string(), "approach chart");

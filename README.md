@@ -269,9 +269,16 @@ A full approach chart, styled like an airline chart and branded "AMDB V1". It ne
 Microsoft Flight Simulator installed, since the procedure and its fixes are read from
 its own navigation data (never redistributed). The page has a header, a briefing strip
 (final course, touchdown zone elevation, airport elevation, minimum safe altitude within
-25 NM, and the decision altitude), a plan view with terrain shading, the airport drawn
-from our own build, the procedure's fixes at their real positions, obstacles, the missed
-approach, a descent profile, and a minima band. Obstacles come from the FAA's Digital
+25 NM, and the decision altitude), the radio frequencies, a plan view with terrain
+shading, the airport drawn from our own build, a descent profile, and a minima band.
+
+On the plan view: the procedure's fixes at their real positions, marked as the initial,
+intermediate and final approach fixes and named the way a chart names them ("7 DME FUN");
+DME arcs flown as arcs rather than as straight lines; holding patterns as racetracks,
+turning the way the procedure says; obstacles; and the missed approach. A fix that the
+data gives only as a radial and a distance from a beacon — which is how most approaches
+outside the United States are written — is placed from the beacon, with the magnetic
+variation measured from the fixes that do carry a position. Obstacles come from the FAA's Digital
 Obstacle File in the United States and from OpenStreetMap everywhere else (see
 Sources); OpenStreetMap gives heights above the ground, so the terrain model converts
 them to height above sea level before they can be weighed against the approach.
@@ -286,9 +293,17 @@ Nothing on the chart is for real-world navigation, and the page says so.
 
 #### How the minimum is worked out
 
-The estimate on the chart is not copied from anywhere: it is worked out from the
-airport's own terrain and obstacles, the same way a real approach is designed, in
-outline.
+Where the procedure codes a minimum of its own, that is what the chart carries, and it
+is not an estimate at all: an approach without a glidepath ends its final segment at a
+missed approach point, and the altitude on that last leg is the altitude the approach
+descends to. Madeira's VOR/DME approach to runway 05 codes 940 ft, which is exactly what
+the published chart says. An approach with a glidepath ends at the runway instead, and
+that altitude is the height it crosses the threshold at, so it gives no minimum and one
+has to be worked out.
+
+The rest of this section is how that is done. It is not copied from anywhere: it is
+worked out from the airport's own terrain and obstacles, the same way a real approach is
+designed, in outline.
 
 Every approach type has a system minimum it may never go below, measured above the
 touchdown zone elevation: 200 ft for an ILS CAT I, 250 ft for RNAV with vertical
@@ -307,8 +322,13 @@ the procedure's actual path through its fixes rather than a straight box out fro
 runway, because a box is badly wrong in a valley: it takes in the walls either side of a
 procedure that is actually threading between them.
 
-The result is an estimate, and the chart says which of the three things — the system
-minimum, terrain, or an obstacle — set it.
+Circling is not flown down the approach at all — the aircraft manoeuvres visually about
+the aerodrome — so it is worked out over a circle around the airport instead, whose
+radius depends on the aircraft category, with a floor for each category that no circling
+minimum goes below.
+
+The result is an estimate, and the chart says which of the four things — the procedure's
+own coded minimum, the system minimum, terrain, or an obstacle — set it.
 
 #### How close this gets
 
@@ -327,6 +347,14 @@ stands in the missed approach area rather than under the approach itself.
 Touchdown zone elevations are exact in the United States because they are surveyed and
 published. Everywhere else they come from the terrain model and carry a few feet with
 them, which carries straight through to the minimum.
+
+Approaches **without** a glidepath are a different matter. Measured against 346 published
+minima read off the same charts — localiser, VOR, NDB, RNAV without vertical guidance,
+and circling — the median error is about 90 ft, and it runs low as often as high. Those
+minima are designed segment by segment against rules this does not reproduce, so where
+the procedure codes no minimum of its own, treat the figure as an indication of the right
+order of magnitude and nothing more. Where it does code one, the chart simply reports it
+and the question does not arise.
 
 #### Checking the estimator
 
