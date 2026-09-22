@@ -257,6 +257,33 @@ impl Patch {
         (weight > 0.0).then(|| sum / weight)
     }
 
+    /// Every height the model has over the first 3,000 feet of a runway, sorted.
+    ///
+    /// What a touchdown zone elevation should be taken from is not obvious: the survey
+    /// is the highest point of that stretch of pavement, but this model is a model of the
+    /// *surface*, so the highest sample over an airport is as likely to be a hangar roof
+    /// or a line of trees beside the strip as the runway itself.
+    pub fn touchdown_zone_samples(&self, thr_lat: f64, thr_lon: f64, bearing_deg: f64) -> Vec<f64> {
+        const ZONE_M: f64 = 914.4; // 3,000 feet
+        let b = bearing_deg.to_radians();
+        let (m_lat, m_lon) = (111_320.0, 111_320.0 * thr_lat.to_radians().cos().max(0.05));
+        let mut out = Vec::new();
+        let mut steps = 0;
+        while (steps as f64) * 30.0 <= ZONE_M {
+            let along = steps as f64 * 30.0;
+            for across in [-15.0, 0.0, 15.0] {
+                let north = along * b.cos() - across * b.sin();
+                let east = along * b.sin() + across * b.cos();
+                if let Some(m) = self.height_at(thr_lat + north / m_lat, thr_lon + east / m_lon) {
+                    out.push(m / 0.3048);
+                }
+            }
+            steps += 1;
+        }
+        out.sort_by(f64::total_cmp);
+        out
+    }
+
     /// The highest point of the first 3,000 feet of a runway from its threshold,
     /// which is what a touchdown zone elevation is. `bearing_deg` is the direction the
     /// runway points, so the strip is walked up the pavement rather than across it.

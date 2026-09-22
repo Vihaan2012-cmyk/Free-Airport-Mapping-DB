@@ -260,6 +260,10 @@ pub struct AirportProcedures {
     pub lat: f64,
     pub lon: f64,
     pub procedures: Vec<Procedure>,
+    /// How far magnetic north is from true north here, degrees, positive east. Measured
+    /// from the fixes rather than stated anywhere.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub magnetic_variation_deg: Option<f64>,
     /// The frequencies the airport is worked on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frequencies: Vec<Frequency>,
@@ -408,7 +412,7 @@ fn header_runway(d: &[u8], rec: &Record) -> String {
 /// measured: any fix that does have a position, and is also given as a radial from a
 /// beacon, says what the difference between the two is here. Where no fix says, the
 /// fixes that need one cannot be placed, and are left where they were - unplaced.
-fn place_fixes_on_radials(procedures: &mut [Procedure]) {
+fn place_fixes_on_radials(procedures: &mut [Procedure]) -> Option<f64> {
     let mut known: Vec<f64> = Vec::new();
     for leg in procedures.iter().flat_map(|p| p.transitions.iter()).flat_map(|t| t.legs.iter()) {
         let (Some(lat), Some(lon), Some(theta)) = (leg.lat, leg.lon, leg.theta_deg) else { continue };
@@ -463,6 +467,7 @@ fn place_fixes_on_radials(procedures: &mut [Procedure]) {
             }
         }
     }
+    variation
 }
 
 /// Fix positions, by ident.
@@ -523,7 +528,7 @@ fn airport(d: &[u8], rec: &Record, file: &Path, fixes: &Fixes) -> Option<Airport
     if procedures.is_empty() {
         return None;
     }
-    place_fixes_on_radials(&mut procedures);
+    let variation = place_fixes_on_radials(&mut procedures);
     // An approach to no particular runway takes a letter, the way a circling approach
     // is named on a chart.
     let mut letter = b'A';
@@ -547,6 +552,7 @@ fn airport(d: &[u8], rec: &Record, file: &Path, fixes: &Fixes) -> Option<Airport
         lat: bgl::lat(bgl::u32le(d, rec.start + 0x10)),
         lon: bgl::lon(bgl::u32le(d, rec.start + 0x0C)),
         procedures,
+        magnetic_variation_deg: variation,
         frequencies: frequencies(d, rec),
         source: file.file_name().unwrap_or_default().to_string_lossy().to_string(),
     })

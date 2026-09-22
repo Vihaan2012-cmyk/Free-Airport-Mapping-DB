@@ -50,6 +50,8 @@ pub struct Chart<'a> {
     pub track_deg: f64,
     /// The course to print, which is magnetic where the data carries one.
     pub course_mag_deg: Option<f64>,
+    /// How far magnetic north is from true north here, positive east.
+    pub variation_deg: Option<f64>,
     pub kind: Approach,
     pub airport_dir: Option<&'a FsPath>,
     /// Both ends of the landing runway, threshold first.
@@ -639,19 +641,40 @@ fn draw_obstacles(c: &mut Content, font: Name, bold: Name, v: &View, obstacles: 
 
 /// North arrow, scale bar and the minimum safe altitude ring: the furniture that tells
 /// you how to read the map.
-fn draw_furniture(c: &mut Content, font: Name, bold: Name, v: &View, msa_ft: Option<f64>) {
-    // North arrow, top left inside the box.
-    let (nx, ny) = (v.x + 16.0, v.y + v.h - 30.0);
-    fill_box(c, nx - 9.0, ny - 8.0, 18.0, 34.0, 1.0);
+fn draw_furniture(c: &mut Content, font: Name, bold: Name, v: &View, msa_ft: Option<f64>, variation_deg: Option<f64>, runway_deg: Option<f64>) {
+    // The compass rose, top left inside the box: true north, the ticks of the card, the
+    // runway lying across it, and how far magnetic north is from true.
+    let r = 21.0;
+    let (nx, ny) = (v.x + r + 8.0, v.y + v.h - r - 10.0);
+    fill_box(c, nx - r - 5.0, ny - r - 13.0, 2.0 * r + 10.0, 2.0 * r + 20.0, 1.0);
+    c.set_stroke_gray(0.35);
+    c.set_line_width(0.7);
+    circle(c, nx, ny, r);
+    c.stroke();
+    for step in 0..12 {
+        let a = (step as f32 * 30.0).to_radians();
+        let (sx, sy) = (a.sin(), a.cos());
+        let inner = if step % 3 == 0 { r - 6.0 } else { r - 3.0 };
+        line(c, nx + sx * inner, ny + sy * inner, nx + sx * r, ny + sy * r, 0.6, 0.35);
+    }
+    // The runway, drawn across the rose the way it lies on the ground.
+    if let Some(deg) = runway_deg {
+        let a = (deg as f32).to_radians();
+        let (sx, sy) = (a.sin(), a.cos());
+        line(c, nx - sx * (r - 5.0), ny - sy * (r - 5.0), nx + sx * (r - 5.0), ny + sy * (r - 5.0), 2.0, INK);
+    }
+    // True north.
     c.set_fill_gray(INK);
-    c.move_to(nx, ny + 18.0);
-    c.line_to(nx + 4.0, ny + 6.0);
-    c.line_to(nx, ny + 9.0);
-    c.line_to(nx - 4.0, ny + 6.0);
+    c.move_to(nx, ny + r + 6.0);
+    c.line_to(nx + 3.5, ny + r - 4.0);
+    c.line_to(nx - 3.5, ny + r - 4.0);
     c.close_path();
     c.fill_nonzero();
-    line(c, nx, ny + 9.0, nx, ny - 4.0, 0.8, INK);
-    text_centred(c, bold, 7.5, nx, ny - 6.5, "N", INK);
+    text_centred(c, bold, 7.0, nx, ny - r - 10.0, "N", INK);
+    if let Some(var) = variation_deg {
+        let hand = if var >= 0.0 { "E" } else { "W" };
+        text_centred(c, font, 6.0, nx, ny - r - 19.0, &format!("VAR {:.1}{hand}", var.abs()), 0.35);
+    }
 
     // Scale bar, bottom left.
     let px_nm = v.px_per_nm();
@@ -795,7 +818,7 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
 
     draw_obstacles(c, font, bold, &v, ch.obstacles, ch.tdze_ft + 150.0, est.obstacle_top_ft.filter(|_| est.limited_by == LimitedBy::Obstacle));
     c.restore_state();
-    draw_furniture(c, font, bold, &v, ch.msa_ft);
+    draw_furniture(c, font, bold, &v, ch.msa_ft, ch.variation_deg, Some(track_deg));
     box_outline(c, x, y, w, h, 1.2, INK);
     v
 }

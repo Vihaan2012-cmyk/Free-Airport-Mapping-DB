@@ -1059,6 +1059,7 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
         msa_ft: setup.msa_ft,
         track_deg: setup.track_deg(),
         course_mag_deg: setup.course_mag_deg(),
+        variation_deg: setup.variation_deg(),
         kind,
         airport_dir: setup.airport_dir.as_deref(),
         runway_ends: setup.runway_ends,

@@ -58,6 +58,12 @@ pub struct Outcome {
     /// The lowest altitude the procedure codes on its final, ignoring the runway fix:
     /// a candidate for the minimum that costs nothing to read.
     pub coded_floor_ft: f64,
+    /// What the terrain model makes of the touchdown zone, for comparing against the
+    /// survey: the highest sample, the middle one, the lowest, and a low percentile.
+    pub dem_max_ft: f64,
+    pub dem_median_ft: f64,
+    pub dem_min_ft: f64,
+    pub dem_p25_ft: f64,
     pub limited_by: &'static str,
     /// What set our number, where something on the ground did.
     pub controlling: String,
@@ -124,6 +130,15 @@ pub fn run(truth: &Path, out: Option<&Path>, jobs: usize) -> Result<()> {
                         return None;
                     }
                 };
+                // What the terrain model would have said, even where a survey answered.
+                let samples = setup
+                    .threshold
+                    .and_then(|(lat, lon, bearing)| {
+                        let fine = crate::sources::copernicus::patch(&http, &cache, lat, lon, 2.0, 30.0).ok()?;
+                        Some(fine.touchdown_zone_samples(lat, lon, bearing?))
+                    })
+                    .unwrap_or_default();
+                let pick = |f: f64| if samples.is_empty() { f64::NAN } else { samples[((samples.len() - 1) as f64 * f) as usize] };
                 let est = crate::approach::estimate(&setup, case.approach());
                 let outcome = Outcome {
                     icao: case.icao.clone(),
@@ -135,6 +150,10 @@ pub fn run(truth: &Path, out: Option<&Path>, jobs: usize) -> Result<()> {
                     da_error_ft: est.altitude_ft - case.published_da_ft,
                     tdze_error_ft: case.published_tdze_ft.map(|t| setup.tdze_ft - t).unwrap_or(f64::NAN),
                     kind: if case.kind.trim().is_empty() { "ils".to_string() } else { case.kind.trim().to_string() },
+                    dem_max_ft: pick(1.0),
+                    dem_median_ft: pick(0.5),
+                    dem_min_ft: pick(0.0),
+                    dem_p25_ft: pick(0.25),
                     coded_floor_ft: setup
                         .final_legs()
                         .iter()
