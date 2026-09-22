@@ -98,6 +98,21 @@ impl Setup {
         Some(if diff(stored) <= diff(flipped) { stored } else { flipped })
     }
 
+    /// How far magnetic north is from true north here, in degrees, positive east.
+    ///
+    /// Not stated anywhere we can read, but the procedure gives its courses in magnetic
+    /// and the ground gives the same courses in true, so the difference is the answer.
+    pub fn variation_deg(&self) -> Option<f64> {
+        if let Some(measured) = self.procedures.magnetic_variation_deg {
+            return Some(measured);
+        }
+        // Failing that, the runway: our own build gives its bearing on the ground, and
+        // its number is that bearing in magnetic, to the nearest ten degrees.
+        let (_, _, bearing) = self.threshold?;
+        let number: f64 = self.procedure().runway.trim_end_matches(|c: char| c.is_alphabetic()).parse().ok()?;
+        Some(((bearing? - number * 10.0 + 540.0) % 360.0) - 180.0)
+    }
+
     /// The legs of the final approach segment.
     pub fn final_legs(&self) -> Vec<&procedures::Leg> {
         self.procedure().transitions.iter().filter(|t| t.part == "final").flat_map(|t| t.legs.iter()).collect()
