@@ -1,0 +1,131 @@
+//! Beacons: where they are, and what they are called.
+//!
+//! An approach outside the United States is usually written against a beacon rather than
+//! against named waypoints: Madeira's is a string of positions on radials from the
+//! Funchal DVOR/DME, and a fix called "FUN12" is simply twelve miles out on one of them.
+//! Those fixes have no position of their own in the data, so without the beacon there is
+//! nothing to draw.
+//!
+//! Layout, worked out from the files and checked against published frequencies and
+//! positions:
+//!
+//! ```text
+//! VOR 0x13   longitude +0x08  latitude +0x0C  elevation +0x10  frequency Hz  +0x14  ident +0x20
+//! NDB 0x17   frequency +0x08  longitude +0x0C  latitude +0x10  elevation +0x14  ident +0x20
+//! ```
+//!
+//! Both carry their name as a child record, which we do not need. Checked against
+//! Funchal (112.20, N32 44 50 W016 42 20) and Lambourne (115.60), which match the
+//! published plates exactly.
+
+use super::bgl;
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
+const SECTION_VOR: u32 = 0x13;
+const SECTION_NDB: u32 = 0x17;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Navaid {
+    pub lat: f64,
+    pub lon: f64,
+    /// Megahertz for a VOR, kilohertz for an NDB.
+    pub frequency: f64,
+}
+
+/// Every beacon the simulator knows, by ident. Read once: it is a few megabytes of file
+/// and a moment's work, and every approach after the first wants it.
+pub fn index() -> &'static HashMap<String, Navaid> {
+    static INDEX: OnceLock<HashMap<String, Navaid>> = OnceLock::new();
+    INDEX.get_or_init(load)
+}
+
+pub fn find(ident: &str) -> Option<Navaid> {
+    index().get(&ident.to_uppercase()).copied()
+}
+
+fn load() -> HashMap<String, Navaid> {
+    let mut out = HashMap::new();
+    for dir in super::nav_dirs() {
+        // The files sit in numbered folders under the scenery directory, so this walks a
+        // level down. The beacons are in their own files; the airport files are far
+        // larger and hold none of them.
+        let mut folders = vec![dir];
+        while let Some(folder) = folders.pop() {
+            let Ok(entries) = std::fs::read_dir(&folder) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    folders.push(path);
+                    continue;
+                }
+                if !path.file_name().map(|n| n.to_string_lossy().to_uppercase().starts_with("NVX")).unwrap_or(false) {
+                    continue;
+                }
+                if let Ok(data) = std::fs::read(&path) {
+                    read_file(&data, &mut out);
+                }
+            }
+        }
+    }
+    log::debug!("navaids: {} beacons", out.len());
+    out
+}
+
+fn read_file(d: &[u8], out: &mut HashMap<String, Navaid>) {
+    for (section, vor) in [(SECTION_VOR, true), (SECTION_NDB, false)] {
+        for rec in bgl::section_records(d, section) {
+            if rec.end - rec.start < 0x24 {
+                continue;
+            }
+            let ident = bgl::ident(bgl::u32le(d, rec.start + 0x20));
+            if ident.is_empty() {
+                continue;
+            }
+            let (lon_at, lat_at, freq_at) = if vor { (0x08, 0x0C, 0x14) } else { (0x0C, 0x10, 0x08) };
+            let lat = bgl::lat(bgl::u32le(d, rec.start + lat_at));
+            let lon = bgl::lon(bgl::u32le(d, rec.start + lon_at));
+            if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
+                continue;
+            }
+            let raw = bgl::u32le(d, rec.start + freq_at) as f64;
+            let frequency = if vor { raw / 1.0e6 } else { raw / 1000.0 };
+            // A beacon can be listed more than once; the first is as good as any, and a
+            // VOR is preferred over an NDB of the same name because procedures are
+            // written against it.
+            if vor {
+                out.insert(ident, Navaid { lat, lon, frequency });
+            } else {
+                out.entry(ident).or_insert(Navaid { lat, lon, frequency });
+            }
+        }
+    }
+}
+
+/// A position a given distance out on a radial from a beacon.
+///
+/// Radials are magnetic, so the variation has to be put back to get a bearing on the
+/// ground; at a few miles' range, flat trigonometry is well inside the width of the line
+/// this ends up being drawn with.
+pub fn along_radial(from: Navaid, radial_deg: f64, distance_nm: f64, variation_deg: f64) -> (f64, f64) {
+    let true_deg = (radial_deg + variation_deg).to_radians();
+    let north = distance_nm * true_deg.cos();
+    let east = distance_nm * true_deg.sin();
+    (from.lat + north / 60.0, from.lon + east / 60.0 / from.lat.to_radians().cos().max(0.05))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_radial_runs_the_way_it_points() {
+        let beacon = Navaid { lat: 50.0, lon: 0.0, frequency: 112.2 };
+        let north = along_radial(beacon, 0.0, 6.0, 0.0);
+        assert!((north.0 - 50.1).abs() < 1e-6, "{north:?}");
+        assert!(north.1.abs() < 1e-6);
+        let east = along_radial(beacon, 90.0, 6.0, 0.0);
+        assert!((east.0 - 50.0).abs() < 1e-6);
+        assert!(east.1 > 0.1);
+    }
+}

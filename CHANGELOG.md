@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (2026-09-21)
+## 0.5.0 (2026-09-22)
 
 - **Approach charts.** `amdbgen approach-chart <ICAO>` draws a full approach chart as a
   PDF, styled like an airline chart and branded "AMDB V1": a header, a briefing strip
@@ -28,9 +28,25 @@
   cleared by the required margin. The ground is assessed along the procedure's actual
   path through its fixes rather than a straight box out from the runway, which matters
   in a valley. The chart says which of the three things set the number.
+- **The procedure's own minimum**, where it codes one, instead of an estimate. An
+  approach without a glidepath ends at a missed approach point, and the altitude on that
+  leg is the altitude it descends to; Madeira's VOR/DME to runway 05 codes 940 ft, which
+  is what its published chart says. The chart says which it is showing.
+- **More of what a chart carries.** DME arcs are drawn as arcs, holding patterns as
+  racetracks turning the way the procedure says, fixes are marked as the initial,
+  intermediate and final approach fixes and named as a chart names them ("7 DME FUN"),
+  and the radio frequencies run across the page under the briefing strip. Fixes given
+  only as a radial and a distance from a beacon are placed from the beacon, with the
+  magnetic variation measured from the fixes that do carry a position — which is what
+  makes an approach outside the United States drawable at all.
+- **Circling minima** are worked out over a circle about the aerodrome, by aircraft
+  category, rather than down the approach.
 - `amdbgen minima-audit --truth <csv>` measures those estimates against a table of
-  published minima, split by whether the chart sits on its system minimum or was pushed
-  higher, and separately how close the estimated touchdown zone elevations are.
+  published minima, split by kind and by whether the chart sits on its system minimum or
+  was pushed higher, and separately how close the estimated touchdown zone elevations
+  are.
+- Fixed: the second altitude on a leg was read from the wrong place in the navigation
+  data, which put a constant 1,171 ft on charts as though it were a constraint.
 
 ## 0.4.2 (2026-09-19)
 

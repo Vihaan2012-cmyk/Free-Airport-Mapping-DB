@@ -6,6 +6,7 @@
 //! to draw for the user and is never written into anything we publish.
 
 pub mod bgl;
+pub mod navaids;
 pub mod procedures;
 
 use std::path::PathBuf;

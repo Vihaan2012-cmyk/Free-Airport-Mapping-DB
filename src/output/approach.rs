@@ -10,7 +10,7 @@
 
 use crate::minima::{Approach, Estimate, LimitedBy};
 use crate::sources::copernicus::Patch;
-use crate::sources::msfs::procedures::{AirportProcedures, Kind, Leg, Procedure, Transition};
+use crate::sources::msfs::procedures::{AirportProcedures, Kind, Leg, Procedure, Transition, Turn};
 use crate::sources::obstacles::Obstacle;
 use anyhow::{Context, Result};
 use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str};
@@ -23,7 +23,7 @@ const INK: f32 = 0.10;
 const RULE: f32 = 0.30;
 /// The smallest and largest the plan view will scale itself to.
 const PLAN_MIN_NM: f64 = 6.0;
-const PLAN_MAX_NM: f64 = 16.0;
+const PLAN_MAX_NM: f64 = 30.0;
 
 /// What the chart is drawn from.
 pub struct Chart<'a> {
@@ -104,6 +104,38 @@ fn label(c: &mut Content, font: Name, size: f32, x: f32, y: f32, s: &str, grey: 
     text(c, font, size, x, y, s, grey);
 }
 
+/// Where labels have already been put, so the next one does not land on top of them.
+#[derive(Default)]
+struct Taken {
+    boxes: Vec<(f32, f32, f32, f32)>,
+    /// Fixes already drawn, so the ways in that share one do not draw it again.
+    fixes: std::collections::HashSet<String>,
+}
+
+impl Taken {
+    /// True the first time a fix is seen.
+    fn first_time(&mut self, fix: &str) -> bool {
+        self.fixes.insert(fix.to_string())
+    }
+
+    fn free(&self, x: f32, y: f32, w: f32, h: f32) -> bool {
+        !self.boxes.iter().any(|(ox, oy, ow, oh)| x < ox + ow && *ox < x + w && y < oy + oh && *oy < y + h)
+    }
+
+    /// Put a label down if there is room, either where asked or a little below.
+    fn label(&mut self, c: &mut Content, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) -> bool {
+        let (w, h) = (text_width(font, size, s) + 2.0, size + 2.0);
+        for drop in [0.0, -h, -2.0 * h, h] {
+            if self.free(x, y + drop, w, h) {
+                label(c, font, size, x, y + drop, s, grey);
+                self.boxes.push((x, y + drop, w, h));
+                return true;
+            }
+        }
+        false
+    }
+}
+
 fn line(c: &mut Content, x1: f32, y1: f32, x2: f32, y2: f32, w: f32, grey: f32) {
     c.set_stroke_gray(grey);
     c.set_line_width(w);
@@ -179,16 +211,17 @@ impl View {
                 (dn * dn + de * de).sqrt()
             })
             .fold(0.0f64, f64::max);
-        // Room for the airport itself, then as much of the approach as will fit.
-        let span_nm = (far * 1.35).clamp(PLAN_MIN_NM, PLAN_MAX_NM);
-        // Slide the middle of the window back down the approach, so the airport sits
-        // off-centre with the final laid out in front of it.
+        // The approach runs out from the airport in one direction, so the window is
+        // centred between the two: the airport at one end, the farthest fix at the other,
+        // with a margin around both.
         let back = (track_deg + 180.0).to_radians();
-        let shift_nm = span_nm * 0.18;
+        let shift_nm = far / 2.0;
         let centre = (airport.0 + shift_nm * back.cos() / 60.0, airport.1 + shift_nm * back.sin() / 60.0 / cos);
+        let half_nm = (far / 2.0 * 1.2 + 1.5).clamp(PLAN_MIN_NM / 2.0, PLAN_MAX_NM / 2.0);
 
+        // The shorter side of the box has to hold that, whichever way the approach runs.
         let aspect = (w / h) as f64;
-        let (half_w_nm, half_h_nm) = if aspect >= 1.0 { (span_nm / 2.0, span_nm / 2.0 / aspect) } else { (span_nm / 2.0 * aspect, span_nm / 2.0) };
+        let (half_w_nm, half_h_nm) = if aspect >= 1.0 { (half_nm * aspect, half_nm) } else { (half_nm, half_nm / aspect) };
         let deg_h = half_h_nm * 2.0 / 60.0;
         let deg_w = half_w_nm * 2.0 / 60.0 / cos;
         View { west: centre.1 - deg_w / 2.0, north: centre.0 + deg_h / 2.0, deg_w, deg_h, x, y, w, h }
@@ -212,6 +245,108 @@ impl View {
     fn px_per_nm(&self) -> f32 {
         self.w / self.span_nm().max(0.001) as f32
     }
+}
+
+/// Working in miles about a point, which is how arcs and holding patterns are laid out
+/// before they are put on the page.
+#[derive(Debug, Clone, Copy)]
+struct Local {
+    lat: f64,
+    lon: f64,
+    cos: f64,
+}
+
+impl Local {
+    fn at(origin: (f64, f64)) -> Local {
+        Local { lat: origin.0, lon: origin.1, cos: origin.0.to_radians().cos().max(0.05) }
+    }
+
+    /// East and north of the origin, in miles.
+    fn to_nm(&self, lat: f64, lon: f64) -> (f64, f64) {
+        ((lon - self.lon) * 60.0 * self.cos, (lat - self.lat) * 60.0)
+    }
+
+    fn to_ll(&self, east_nm: f64, north_nm: f64) -> (f64, f64) {
+        (self.lat + north_nm / 60.0, self.lon + east_nm / 60.0 / self.cos)
+    }
+}
+
+/// The points of an arc of radius `radius_nm` from `from` to `to`.
+///
+/// A DME arc leg says only how far out it is flown; the centre is the navaid, and both
+/// ends of the arc are that far from it. Two circles of the right radius pass through
+/// both ends, and the turn direction picks which one, so the navaid's own position is
+/// never needed.
+fn arc_points(from: (f64, f64), to: (f64, f64), radius_nm: f64, turn: Option<Turn>) -> Vec<(f64, f64)> {
+    let local = Local::at(from);
+    let (ax, ay) = (0.0, 0.0);
+    let (bx, by) = local.to_nm(to.0, to.1);
+    let (dx, dy) = (bx - ax, by - ay);
+    let half = (dx * dx + dy * dy).sqrt() / 2.0;
+    if half < 0.05 || half > radius_nm {
+        return vec![from, to];
+    }
+    // The centre sits on the perpendicular bisector, this far off the midpoint.
+    let off = (radius_nm * radius_nm - half * half).sqrt();
+    let (mx, my) = ((ax + bx) / 2.0, (ay + by) / 2.0);
+    let (nx, ny) = (-dy / (half * 2.0), dx / (half * 2.0));
+    let sign = if matches!(turn, Some(Turn::Left)) { -1.0 } else { 1.0 };
+    let (cx, cy) = (mx + nx * off * sign, my + ny * off * sign);
+    let start = (ay - cy).atan2(ax - cx);
+    let end = (by - cy).atan2(bx - cx);
+    let mut sweep = end - start;
+    // Take the way round that matches the turn: right turns run clockwise.
+    while sweep > std::f64::consts::PI {
+        sweep -= std::f64::consts::TAU;
+    }
+    while sweep < -std::f64::consts::PI {
+        sweep += std::f64::consts::TAU;
+    }
+    let steps = ((sweep.abs().to_degrees() / 4.0) as usize).clamp(4, 90);
+    (0..=steps)
+        .map(|i| {
+            let a = start + sweep * i as f64 / steps as f64;
+            local.to_ll(cx + radius_nm * a.cos(), cy + radius_nm * a.sin())
+        })
+        .collect()
+}
+
+/// A holding pattern as a line on the ground: the inbound leg to the fix, the turn onto
+/// the outbound, the outbound leg alongside it, and the turn back.
+///
+/// Everything is worked out in miles east and north of the fix. The aircraft flies the
+/// inbound leg on `inbound_deg` and turns the way `turn` says, which is to the right
+/// unless the procedure says otherwise.
+fn hold_points(fix: (f64, f64), inbound_deg: f64, turn: Option<Turn>, leg_nm: f64) -> Vec<(f64, f64)> {
+    let local = Local::at(fix);
+    let c = inbound_deg.to_radians();
+    // The way the aircraft is going, and the side it turns towards.
+    let u = (c.sin(), c.cos());
+    let hand = if matches!(turn, Some(Turn::Left)) { -1.0 } else { 1.0 };
+    let s = (u.1 * hand, -u.0 * hand);
+    let radius = (leg_nm / 4.0).clamp(0.4, 1.2);
+
+    let mut pts: Vec<(f64, f64)> = Vec::new();
+    let arc = |pts: &mut Vec<(f64, f64)>, centre: (f64, f64), from: (f64, f64)| {
+        let start = (from.1 - centre.1).atan2(from.0 - centre.0);
+        for i in 1..=16 {
+            // A right-hand turn goes clockwise, which is the way angles decrease.
+            let a = start - hand * std::f64::consts::PI * i as f64 / 16.0;
+            pts.push((centre.0 + radius * a.cos(), centre.1 + radius * a.sin()));
+        }
+    };
+    // Inbound leg, ending at the fix.
+    let entry = (-u.0 * leg_nm, -u.1 * leg_nm);
+    pts.push(entry);
+    pts.push((0.0, 0.0));
+    // The turn at the fix, onto the outbound.
+    arc(&mut pts, (s.0 * radius, s.1 * radius), (0.0, 0.0));
+    // The outbound leg, alongside the inbound.
+    let outbound_end = (s.0 * radius * 2.0 - u.0 * leg_nm, s.1 * radius * 2.0 - u.1 * leg_nm);
+    pts.push(outbound_end);
+    // The turn back onto the inbound.
+    arc(&mut pts, (outbound_end.0 - s.0 * radius, outbound_end.1 - s.1 * radius), outbound_end);
+    pts.into_iter().map(|(east, north)| local.to_ll(east, north)).collect()
 }
 
 /// Heights shaded in bands, as a terrain picture rather than contours: quick to read and
@@ -291,8 +426,12 @@ fn draw_airport(c: &mut Content, dir: &FsPath, v: &View) -> bool {
 
 /// A fix, drawn where it actually is. Charts mark the final approach fix differently
 /// from the rest, so it can be picked out at a glance.
-fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, is_faf: bool, floor_ft: f64) {
+fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, role: Option<&str>, floor_ft: f64, taken: &mut Taken) {
+    let is_faf = role == Some("FAF");
     let (Some(lat), Some(lon)) = (leg.lat, leg.lon) else { return };
+    if leg.fix.is_empty() || !taken.first_time(&leg.fix) {
+        return;
+    }
     let (px, py) = v.at(lat, lon);
     if !v.inside((px, py), -6.0) {
         return;
@@ -317,26 +456,76 @@ fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, is_faf
         c.close_path();
         c.fill_nonzero();
     }
-    label(c, bold, 7.0, px + 6.0, py + 1.0, &leg.fix, INK);
+    if !taken.label(c, bold, 7.0, px + 6.0, py + 1.0, &leg.fix, INK) {
+        return;
+    }
+    let mut row = py - 7.0;
     if let Some(a) = leg.altitude_ft.filter(|a| *a > floor_ft) {
         let rule = match leg.altitude_rule {
             crate::sources::msfs::procedures::AltitudeRule::AtOrAbove => "+",
             crate::sources::msfs::procedures::AltitudeRule::AtOrBelow => "-",
             _ => "",
         };
-        label(c, font, 6.5, px + 6.0, py - 7.0, &format!("{a:.0}{rule}"), 0.28);
+        taken.label(c, font, 6.5, px + 6.0, row, &format!("{a:.0}{rule}"), 0.28);
+        row -= 7.0;
     }
+    // How the fix is defined, which is how a chart names it: "7 DME FUN".
+    if let (Some(rho), false) = (leg.rho_nm, leg.navaid.is_empty()) {
+        taken.label(c, font, 6.0, px + 6.0, row, &format!("{rho:.1} DME {}", leg.navaid), 0.4);
+        row -= 7.0;
+    }
+    if let Some(part) = role {
+        taken.label(c, bold, 6.0, px + 6.0, row, part, 0.15);
+    }
+}
+
+/// What part a fix plays in the approach, in the words a chart uses: the initial fix a
+/// transition starts from, the intermediate fix the final segment starts at, and the
+/// final approach fix where the descent begins.
+fn fix_roles(finals: &[&Leg]) -> Vec<Option<&'static str>> {
+    let faf = finals
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.altitude_ft.is_some() && !l.fix.is_empty() && !l.fix.starts_with("RW"))
+        .next_back()
+        .map(|(i, _)| i);
+    // The fix the final segment descends from: the last one before the runway that still
+    // holds an altitude, with the one before it the intermediate fix.
+    let faf = faf.filter(|i| *i + 1 < finals.len()).or(faf);
+    finals
+        .iter()
+        .enumerate()
+        .map(|(i, leg)| {
+            if Some(i) == faf {
+                Some("FAF")
+            } else if leg.path == "IF" && i == 0 {
+                Some("IF")
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// A run of legs as a line on the map, through the fixes that have a position.
 fn draw_track(c: &mut Content, v: &View, legs: &[&Leg], start: Option<(f64, f64)>, weight: f32, dashed: bool, grey: f32) -> Vec<(f32, f32)> {
     let mut pts: Vec<(f32, f32)> = Vec::new();
+    let mut last_ll: Option<(f64, f64)> = start;
     if let Some((lat, lon)) = start {
         pts.push(v.at(lat, lon));
     }
     for leg in legs {
         if let (Some(lat), Some(lon)) = (leg.lat, leg.lon) {
-            pts.push(v.at(lat, lon));
+            // An arc leg is flown round its navaid at a fixed distance, not straight.
+            match (leg.path.as_str(), leg.rho_nm, last_ll) {
+                ("AF", Some(radius), Some(from)) => {
+                    for p in arc_points(from, (lat, lon), radius, leg.turn).into_iter().skip(1) {
+                        pts.push(v.at(p.0, p.1));
+                    }
+                }
+                _ => pts.push(v.at(lat, lon)),
+            }
+            last_ll = Some((lat, lon));
         }
     }
     if pts.len() < 2 {
@@ -375,6 +564,36 @@ fn arrow_head(c: &mut Content, from: (f32, f32), to: (f32, f32), grey: f32) {
     c.line_to(to.0 - ux * 7.0 - nx * 3.0, to.1 - uy * 7.0 - ny * 3.0);
     c.close_path();
     c.fill_nonzero();
+}
+
+/// The holding patterns a procedure ends in, drawn as the racetrack a chart draws.
+fn draw_holds(c: &mut Content, font: Name, v: &View, legs: &[&Leg]) {
+    for leg in legs {
+        if !matches!(leg.path.as_str(), "HM" | "HA" | "HF") {
+            continue;
+        }
+        let (Some(lat), Some(lon)) = (leg.lat, leg.lon) else { continue };
+        let Some(inbound) = leg.course_deg else { continue };
+        let leg_nm = leg.distance_m.map(|m| m / 1852.0).filter(|nm| *nm > 0.3 && *nm < 12.0).unwrap_or(4.0);
+        let pts: Vec<(f32, f32)> = hold_points((lat, lon), inbound, leg.turn, leg_nm).into_iter().map(|p| v.at(p.0, p.1)).collect();
+        if pts.iter().all(|p| !v.inside(*p, 40.0)) {
+            continue;
+        }
+        c.set_stroke_gray(INK);
+        c.set_line_width(1.1);
+        for (i, (px, py)) in pts.iter().enumerate() {
+            if i == 0 {
+                c.move_to(*px, *py);
+            } else {
+                c.line_to(*px, *py);
+            }
+        }
+        c.stroke();
+        if let Some(alt) = leg.altitude_ft {
+            let p = v.at(lat, lon);
+            label(c, font, 6.5, p.0 + 6.0, p.1 - 14.0, &format!("{alt:.0}"), 0.3);
+        }
+    }
 }
 
 /// Obstacles, as the spike a chart uses, with the top above sea level beside it. The one
@@ -507,6 +726,10 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         None => {}
     }
 
+    // Every hold the procedure ends in, drawn where it is flown.
+    let mut holds: Vec<&Leg> = Vec::new();
+    // The final is labelled first, so where labels crowd it is the arrival that gives way.
+    let mut taken = Taken::default();
     // The arrival that feeds the approach, lightest of all.
     if let Some(star) = ch.star {
         for t in &star.transitions {
@@ -518,22 +741,23 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
                 }
             }
             for leg in &legs {
-                draw_fix(c, font, bold, &v, leg, false, ch.tdze_ft);
+                draw_fix(c, font, bold, &v, leg, None, ch.tdze_ft, &mut taken);
             }
+            holds.extend(legs.iter().copied());
         }
     }
 
-    // The ways in to the approach, thin.
+    // The ways in to the approach, thin, each starting at an initial approach fix.
     for t in feeder_transitions(ch.procedure) {
         let legs: Vec<&Leg> = t.legs.iter().collect();
         draw_track(c, &v, &legs, None, 0.9, false, 0.35);
-        for leg in &legs {
-            draw_fix(c, font, bold, &v, leg, false, ch.tdze_ft);
+        for (i, leg) in legs.iter().enumerate() {
+            draw_fix(c, font, bold, &v, leg, (i == 0).then_some("IAF"), ch.tdze_ft, &mut taken);
         }
+        holds.extend(legs.iter().copied());
     }
 
     // The final, heavy, ending at the threshold.
-    let faf_fix = finals.iter().rev().find(|l| l.altitude_ft.is_some() && !l.fix.is_empty()).map(|l| l.fix.clone());
     let end = if ch.threshold.is_some() { Some(centre) } else { None };
     let mut track_pts = draw_track(c, &v, &finals, None, 2.0, false, INK);
     if let Some((lat, lon)) = end {
@@ -543,10 +767,11 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         }
         track_pts.push(p);
     }
-    for leg in &finals {
-        let is_faf = faf_fix.as_deref() == Some(leg.fix.as_str());
-        draw_fix(c, font, bold, &v, leg, is_faf, ch.tdze_ft);
+    let roles = fix_roles(&finals);
+    for (leg, role) in finals.iter().zip(roles) {
+        draw_fix(c, font, bold, &v, leg, role, ch.tdze_ft, &mut taken);
     }
+    holds.extend(finals.iter().copied());
     // The inbound course, written along the final the way a chart does.
     if track_pts.len() >= 2 {
         let a = track_pts[0];
@@ -562,9 +787,11 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
             arrow_head(c, pts[pts.len() - 2], pts[pts.len() - 1], 0.15);
         }
         for leg in &missed {
-            draw_fix(c, font, bold, &v, leg, false, ch.tdze_ft);
+            draw_fix(c, font, bold, &v, leg, None, ch.tdze_ft, &mut taken);
         }
+        holds.extend(missed.iter().copied());
     }
+    draw_holds(c, font, &v, &holds);
 
     draw_obstacles(c, font, bold, &v, ch.obstacles, ch.tdze_ft + 150.0, est.obstacle_top_ft.filter(|_| est.limited_by == LimitedBy::Obstacle));
     c.restore_state();
@@ -693,7 +920,8 @@ fn draw_minima(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f
     box_outline(c, x, y, w, h, 1.2, INK);
     fill_box(c, x, y + h - 14.0, w, 14.0, 0.14);
     text(c, bold, 8.0, x + 6.0, y + h - 10.5, &format!("STRAIGHT-IN LANDING RWY {}", ch.procedure.runway), 1.0);
-    text_right(c, font, 7.0, x + w - 6.0, y + h - 10.5, "AMDB V1 ESTIMATE - NOT A PUBLISHED MINIMUM", 1.0);
+    let stamp = if est.limited_by == LimitedBy::Coded { "FROM THE PROCEDURE'S OWN CODED MINIMUM" } else { "AMDB V1 ESTIMATE - NOT A PUBLISHED MINIMUM" };
+    text_right(c, font, 7.0, x + w - 6.0, y + h - 10.5, stamp, 1.0);
 
     // The number itself, in the box on the left.
     let col = 150.0;
@@ -704,6 +932,10 @@ fn draw_minima(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f
 
     // How it was reached, in the words a chart would not use but a reader wants.
     let why = match est.limited_by {
+        LimitedBy::Coded => format!(
+            "This is the procedure's own minimum, read from the navigation data rather than worked out here: the approach descends to {:.0} ft at its missed approach point. Terrain under the approach reaches {:.0} ft.",
+            est.altitude_ft, est.highest_terrain_ft
+        ),
         LimitedBy::SystemMinimum => format!(
             "Set by the system minimum for a {} approach: {:.0} ft above the touchdown zone, which is the floor no chart goes below. Nothing under the approach reaches it, so a published chart should carry this same number.",
             est.approach.label(),
@@ -744,6 +976,52 @@ fn draw_minima(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f
         text(c, font, 7.0, x + col + 8.0, row, &l, 0.4);
         row -= 9.0;
     }
+}
+
+/// The radios, across the page under the briefing strip, in the order they are used.
+fn draw_frequencies(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32) {
+    let list = ch.airport.briefing_frequencies();
+    if list.is_empty() {
+        return;
+    }
+    box_outline(c, x, y, w, h, 0.8, RULE);
+    let cw = w / list.len().max(3) as f32;
+    for (i, f) in list.iter().enumerate() {
+        let cx = x + i as f32 * cw;
+        if i > 0 {
+            line(c, cx, y + 2.0, cx, y + h - 2.0, 0.6, 0.6);
+        }
+        text(c, font, 6.0, cx + 6.0, y + h - 8.0, &f.kind, 0.45);
+        text(c, bold, 8.5, cx + 6.0, y + 4.0, &format!("{:.3}", f.mhz), INK);
+    }
+}
+
+/// The notes a chart carries, as far as they can be worked out from the data rather than
+/// copied from a state's own chart: what the approach is measured from, and what stands
+/// near it.
+fn chart_notes(ch: &Chart, est: &Estimate) -> Vec<String> {
+    let mut out = Vec::new();
+    let finals = final_legs(ch.procedure);
+    let mut navaids: Vec<&str> = finals.iter().filter(|l| !l.navaid.is_empty() && l.rho_nm.is_some()).map(|l| l.navaid.as_str()).collect();
+    navaids.sort_unstable();
+    navaids.dedup();
+    if !navaids.is_empty() {
+        out.push(format!("Fixes on this approach are measured from {} DME.", navaids.join(" and ")));
+    }
+    if est.highest_terrain_ft > ch.tdze_ft + 500.0 {
+        out.push(format!("Terrain under the approach reaches {:.0} ft.", est.highest_terrain_ft));
+    }
+    if let Some(top) = ch.obstacles.iter().filter_map(|o| o.top_ft).fold(None, |a: Option<f64>, t| Some(a.map_or(t, |a| a.max(t)))) {
+        if top > ch.tdze_ft + 300.0 {
+            out.push(format!("Highest obstacle near the airport {top:.0} ft."));
+        }
+    }
+    if ch.tdze_surveyed {
+        out.push("Touchdown zone elevation is the published survey.".to_string());
+    } else {
+        out.push("Touchdown zone elevation is read from the terrain model.".to_string());
+    }
+    out
 }
 
 /// The strip of numbers a crew reads first, in boxes across the page.
@@ -855,18 +1133,24 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
     text(&mut c, b, 13.0, name_x, head_y + head_h - 17.0, heading.trim_end(), 1.0);
     text(&mut c, f, 7.5, name_x, head_y + head_h - 29.0, &format!("{:.4}, {:.4}", ch.airport.lat, ch.airport.lon), 0.8);
     let star_note = ch.star.map(|s| format!(" - VIA {}", s.name)).unwrap_or_default();
-    text_right(&mut c, f, 7.5, W - MARGIN - 8.0, head_y + head_h - 29.0, &format!("{} - estimated minimum{star_note}", ch.kind.label().to_uppercase()), 0.8);
+    let source = if est.limited_by == LimitedBy::Coded { "coded minimum" } else { "estimated minimum" };
+    text_right(&mut c, f, 7.5, W - MARGIN - 8.0, head_y + head_h - 29.0, &format!("{} - {source}{star_note}", ch.kind.label().to_uppercase()), 0.8);
 
     let strip_h = 30.0;
     let strip_y = head_y - 4.0 - strip_h;
     draw_briefing(&mut c, f, b, ch, MARGIN, strip_y, W - 2.0 * MARGIN, strip_h, est, track);
 
+    let freq_h = 18.0;
+    let freq_y = strip_y - 3.0 - freq_h;
+    draw_frequencies(&mut c, f, b, ch, MARGIN, freq_y, W - 2.0 * MARGIN, freq_h);
+    let below_strip = if ch.airport.briefing_frequencies().is_empty() { strip_y } else { freq_y };
+
     let min_h = 86.0;
     let min_y = MARGIN + 26.0;
-    let prof_h = 146.0;
-    let prof_y = min_y + min_h + 18.0;
+    let prof_h = 140.0;
+    let prof_y = min_y + min_h + 30.0;
     let plan_y = prof_y + prof_h + 6.0;
-    let plan_h = strip_y - 6.0 - plan_y;
+    let plan_h = below_strip - 6.0 - plan_y;
     let v = draw_plan(&mut c, f, b, ch, MARGIN, plan_y, W - 2.0 * MARGIN, plan_h, est, track);
 
     // A caption under the plan, saying what the picture is made of.
@@ -880,7 +1164,7 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
 
     // The missed approach, in its own line above the minima band, as charts do.
     let missed = part_legs(ch.procedure, "missed");
-    let missed_y = min_y + min_h + 6.0;
+    let missed_y = min_y + min_h + 19.0;
     text(&mut c, b, 7.0, MARGIN + 2.0, missed_y, "MISSED APPROACH:", INK);
     let room = W - 2.0 * MARGIN - 86.0;
     let mut sentence = missed_text(&missed);
@@ -889,12 +1173,23 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
     }
     text(&mut c, f, 7.0, MARGIN + 86.0, missed_y, &sentence, 0.2);
 
+    // The notes, in one line under the missed approach.
+    let notes = chart_notes(ch, est).join("  ");
+    for (i, row) in wrap(&notes, 150).into_iter().take(2).enumerate() {
+        text(&mut c, f, 6.5, MARGIN + 2.0, missed_y - 9.0 - i as f32 * 8.0, &row, 0.35);
+    }
+
     draw_minima(&mut c, f, b, ch, MARGIN, min_y, W - 2.0 * MARGIN, min_h, est);
 
     // Footer.
     line(&mut c, MARGIN, MARGIN + 18.0, W - MARGIN, MARGIN + 18.0, 0.8, RULE);
-    let stamp = chrono::Utc::now().format("%d %b %Y").to_string().to_uppercase();
-    text(&mut c, f, 6.5, MARGIN, MARGIN + 9.0, "NOT FOR REAL-WORLD NAVIGATION. The minimum on this chart is calculated, not published: fly the published chart.", 0.25);
+    let printed = chrono::Utc::now().format("%d %b %Y").to_string().to_uppercase();
+    let caveat = if est.limited_by == LimitedBy::Coded {
+        "NOT FOR REAL-WORLD NAVIGATION. The minimum is the one coded in the simulator's navigation data: fly the published chart."
+    } else {
+        "NOT FOR REAL-WORLD NAVIGATION. The minimum on this chart is calculated, not published: fly the published chart."
+    };
+    text(&mut c, f, 6.5, MARGIN, MARGIN + 9.0, caveat, 0.25);
     text(
         &mut c,
         f,
@@ -902,7 +1197,7 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
         MARGIN,
         MARGIN + 1.0,
         &format!(
-            "AMDB V1 - {stamp} - procedure from {} - terrain Copernicus DEM (ESA) - obstacles {} - airport OpenStreetMap and the X-Plane Scenery Gateway",
+            "AMDB V1 - {printed} - procedure from {} - terrain Copernicus DEM (ESA) - obstacles {} - airport OpenStreetMap and the X-Plane Scenery Gateway",
             ch.airport.source,
             ch.obstacles.first().map(|o| o.source).unwrap_or("none found")
         ),
@@ -952,17 +1247,7 @@ mod tests {
     use crate::sources::msfs::procedures::AltitudeRule;
 
     fn leg(path: &str, fix: &str, alt: Option<f64>) -> Leg {
-        Leg {
-            path: path.into(),
-            fix: fix.into(),
-            altitude_rule: AltitudeRule::None,
-            altitude_ft: alt,
-            altitude2_ft: None,
-            course_deg: None,
-            distance_m: None,
-            lat: None,
-            lon: None,
-        }
+        Leg { path: path.into(), fix: fix.into(), altitude_ft: alt, ..Leg::default() }
     }
 
     #[test]

@@ -12,6 +12,8 @@ pub const REC_WAYPOINT: u16 = 0x22;
 /// Record ids. MSFS numbers the airport record differently from the older simulators.
 pub const REC_AIRPORT: u16 = 0x56;
 pub const REC_NAME: u16 = 0x19;
+/// A radio frequency the airport is worked on.
+pub const REC_COM: u16 = 0x12;
 
 const MAGIC: u32 = 0x1992_0201;
 

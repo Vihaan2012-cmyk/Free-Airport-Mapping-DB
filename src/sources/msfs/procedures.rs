@@ -16,11 +16,27 @@
 //!         count at +0x06, then fixed 72-byte legs
 //! ```
 //!
-//! A leg is a path type (the ARINC path terminator), the fix it ends at, altitude
-//! constraints in metres, and for the types that need them a course in degrees and a
-//! distance in metres. The path numbering is the one the simulators have used since
-//! FSX; every transition read started with an initial fix, which is what that numbering
-//! predicts, so it is taken as confirmed.
+//! A leg is 72 bytes:
+//!
+//! ```text
+//! +0x00 path type (the ARINC path terminator)   +0x18 distance from that navaid, metres
+//! +0x01 how to read the altitudes               +0x1C the leg's own course, degrees
+//! +0x02 turn direction, 1 left and 2 right      +0x20 the leg's own length, metres
+//! +0x04 the fix it ends at                      +0x24 altitude, metres
+//! +0x08 that fix's region                       +0x28 second altitude, metres
+//! +0x0C the navaid it is measured from          +0x2C -1 where there is no constraint
+//! +0x10 that navaid's region                    +0x30 always 357.9; not a height
+//! +0x14 radial from that navaid, degrees
+//! ```
+//!
+//! The navaid, radial and distance are how a chart writes a fix: "12 DME FUN" is a fix
+//! twelve miles out on a radial from the Funchal beacon, and an arc leg is flown at that
+//! distance around it. The turn direction was read off a published chart to settle which
+//! value means which way: Madeira's hold at FUSUL is a left-hand pattern and carries a 1.
+//!
+//! The path numbering is the one the simulators have used since FSX; every transition
+//! read started with an initial fix, which is what that numbering predicts, so it is
+//! taken as confirmed.
 
 use super::bgl::{self, Record};
 use anyhow::{Context, Result};
@@ -86,6 +102,36 @@ fn metres(v: f32) -> Option<f64> {
     (v.is_finite() && v > 0.0 && v < 1.0e7).then(|| (v as f64).round())
 }
 
+/// A leg with nothing filled in, for tests and for callers that build one by hand.
+impl Default for Leg {
+    fn default() -> Self {
+        Leg {
+            path: String::new(),
+            fix: String::new(),
+            altitude_rule: AltitudeRule::None,
+            altitude_ft: None,
+            altitude2_ft: None,
+            course_deg: None,
+            distance_m: None,
+            navaid: String::new(),
+            theta_deg: None,
+            rho_nm: None,
+            turn: None,
+            placed_on_radial: false,
+            lat: None,
+            lon: None,
+        }
+    }
+}
+
+/// Which way a turn is flown, where the leg says.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Turn {
+    Left,
+    Right,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Leg {
     /// ARINC path terminator: IF, TF, CF, DF, HM and so on.
@@ -105,6 +151,23 @@ pub struct Leg {
     /// Leg length in metres, for the path types that have one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub distance_m: Option<f64>,
+    /// The navaid this leg is measured from, where it names one.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub navaid: String,
+    /// Radial from that navaid, degrees.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theta_deg: Option<f64>,
+    /// Distance from that navaid in miles: what a chart prints as "12 DME FUN", and the
+    /// radius an arc leg is flown at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rho_nm: Option<f64>,
+    /// Which way the turn goes, on the legs that turn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn: Option<Turn>,
+    /// True when the position was worked out from a radial and a distance rather than
+    /// read from the waypoint table.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub placed_on_radial: bool,
     /// Where the fix is, when the waypoint records name it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lat: Option<f64>,
@@ -138,14 +201,83 @@ pub struct Procedure {
     pub transitions: Vec<Transition>,
 }
 
+/// A frequency an airport is worked on: what it is for, the frequency itself, and the
+/// name it is called by.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Frequency {
+    pub kind: String,
+    pub mhz: f64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
+/// What each of the coded kinds is. The numbering runs 1 to 15 across every airport in
+/// the data; 4 never appears, so it is left unnamed rather than guessed at.
+fn com_kind(code: u16) -> &'static str {
+    match code {
+        1 => "ATIS",
+        2 => "MULTICOM",
+        3 => "UNICOM",
+        5 => "GROUND",
+        6 => "TOWER",
+        7 => "DELIVERY",
+        8 => "APPROACH",
+        9 => "DEPARTURE",
+        10 => "CENTRE",
+        11 => "FSS",
+        12 => "AWOS",
+        13 => "ASOS",
+        14 => "PRE-TAXI",
+        15 => "REMOTE DELIVERY",
+        _ => "RADIO",
+    }
+}
+
+/// The frequencies an airport is worked on, in the order the file lists them.
+fn frequencies(d: &[u8], rec: &Record) -> Vec<Frequency> {
+    let mut out = Vec::new();
+    for child in bgl::records(d, rec.start + 0x44, rec.end) {
+        if child.id != bgl::REC_COM || child.end - child.start < 14 {
+            continue;
+        }
+        let code = u16::from_le_bytes([d[child.start + 0x06], d[child.start + 0x07]]);
+        let hz = bgl::u32le(d, child.start + 0x08);
+        // The VHF air band, with a little room either side for the military fields that
+        // carry frequencies above it.
+        if !(100_000_000..=400_000_000).contains(&hz) {
+            continue;
+        }
+        let raw = &d[child.start + 0x0C..child.end];
+        let name: String = raw.iter().take_while(|b| **b != 0).map(|b| *b as char).filter(|c| c.is_ascii_graphic() || *c == ' ').collect();
+        out.push(Frequency { kind: com_kind(code).to_string(), mhz: (hz as f64 / 1000.0).round() / 1000.0, name: name.trim().to_string() });
+    }
+    out
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirportProcedures {
     pub icao: String,
     pub lat: f64,
     pub lon: f64,
     pub procedures: Vec<Procedure>,
+    /// The frequencies the airport is worked on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frequencies: Vec<Frequency>,
     /// The file this came from, for reporting a decoding problem.
     pub source: String,
+}
+
+impl AirportProcedures {
+    /// The frequencies a chart prints, one of each kind, in the order a crew uses them.
+    pub fn briefing_frequencies(&self) -> Vec<&Frequency> {
+        let mut out = Vec::new();
+        for want in ["ATIS", "APPROACH", "TOWER", "GROUND", "DELIVERY"] {
+            if let Some(f) = self.frequencies.iter().find(|f| f.kind == want) {
+                out.push(f);
+            }
+        }
+        out
+    }
 }
 
 fn legs(d: &[u8], rec: &Record, fixes: &Fixes) -> Vec<Leg> {
@@ -159,16 +291,26 @@ fn legs(d: &[u8], rec: &Record, fixes: &Fixes) -> Vec<Leg> {
         let path = *PATHS.get(d[b] as usize).unwrap_or(&"");
         let fix = bgl::ident(bgl::u32le(d, b + 4));
         let (lat, lon) = fixes.get(&fix).copied().map(|(a, o)| (Some(a), Some(o))).unwrap_or((None, None));
+        let theta_deg = degrees(bgl::f32le(d, b + 0x14));
+        let rho_nm = metres(bgl::f32le(d, b + 0x18)).map(|m| (m / 1852.0 * 10.0).round() / 10.0);
         out.push(Leg {
             path: path.to_string(),
             fix,
             altitude_rule: AltitudeRule::from(d[b + 1]),
             altitude_ft: feet(bgl::f32le(d, b + 0x24)),
-            altitude2_ft: feet(bgl::f32le(d, b + 0x30)),
-            // Two course/distance pairs are carried; the first that is filled in is the
-            // one the leg flies.
-            course_deg: degrees(bgl::f32le(d, b + 0x14)).or_else(|| degrees(bgl::f32le(d, b + 0x1C))),
-            distance_m: metres(bgl::f32le(d, b + 0x18)).or_else(|| metres(bgl::f32le(d, b + 0x20))),
+            altitude2_ft: feet(bgl::f32le(d, b + 0x28)),
+            // The leg's own course where it has one, else the radial it is flown along.
+            course_deg: degrees(bgl::f32le(d, b + 0x1C)).or(theta_deg),
+            distance_m: metres(bgl::f32le(d, b + 0x20)),
+            navaid: bgl::ident(bgl::u32le(d, b + 0x0C)),
+            theta_deg,
+            rho_nm,
+            turn: match d[b + 2] {
+                1 => Some(Turn::Left),
+                2 => Some(Turn::Right),
+                _ => None,
+            },
+            placed_on_radial: false,
             lat,
             lon,
         });
@@ -255,6 +397,74 @@ fn header_runway(d: &[u8], rec: &Record) -> String {
     format!("{number:02}{designator}")
 }
 
+/// Put the fixes that have no position of their own where they belong.
+///
+/// A fix like "FUN12" is not in the waypoint table: it is a position on a radial from a
+/// beacon, and the leg says which beacon, which radial and how far. Outside the United
+/// States most approaches are written that way, so without this the plan view of an
+/// approach is nearly empty.
+///
+/// Radials are magnetic. The variation is not stated anywhere we can read, so it is
+/// measured: any fix that does have a position, and is also given as a radial from a
+/// beacon, says what the difference between the two is here. Where no fix says, the
+/// fixes that need one cannot be placed, and are left where they were - unplaced.
+fn place_fixes_on_radials(procedures: &mut [Procedure]) {
+    let mut known: Vec<f64> = Vec::new();
+    for leg in procedures.iter().flat_map(|p| p.transitions.iter()).flat_map(|t| t.legs.iter()) {
+        let (Some(lat), Some(lon), Some(theta)) = (leg.lat, leg.lon, leg.theta_deg) else { continue };
+        let Some(beacon) = super::navaids::find(&leg.navaid) else { continue };
+        let north = lat - beacon.lat;
+        let east = (lon - beacon.lon) * beacon.lat.to_radians().cos().max(0.05);
+        if north.hypot(east) * 60.0 < 0.5 {
+            continue;
+        }
+        let true_deg = (east.atan2(north).to_degrees() + 360.0) % 360.0;
+        known.push((true_deg - theta + 540.0) % 360.0 - 180.0);
+    }
+    // The middle of what the fixes say, which shrugs off one badly coded leg.
+    let variation = if known.is_empty() {
+        None
+    } else {
+        known.sort_by(f64::total_cmp);
+        Some(known[known.len() / 2])
+    };
+    for leg in procedures.iter_mut().flat_map(|p| p.transitions.iter_mut()).flat_map(|t| t.legs.iter_mut()) {
+        if leg.lat.is_some() {
+            continue;
+        }
+        // A leg that ends at the beacon itself ends where the beacon is.
+        if let Some(beacon) = super::navaids::find(&leg.fix) {
+            leg.lat = Some(beacon.lat);
+            leg.lon = Some(beacon.lon);
+            leg.placed_on_radial = true;
+            continue;
+        }
+        let (Some(variation), Some(theta), Some(rho)) = (variation, leg.theta_deg, leg.rho_nm) else { continue };
+        let Some(beacon) = super::navaids::find(&leg.navaid) else { continue };
+        let (lat, lon) = super::navaids::along_radial(beacon, theta, rho, variation);
+        leg.lat = Some(lat);
+        leg.lon = Some(lon);
+        leg.placed_on_radial = true;
+    }
+    // A fix that one leg has placed is the same fix wherever else it is named: a hold
+    // gives only its fix and its inbound course, and has to borrow the position from the
+    // leg that flew there.
+    let mut known_fixes: std::collections::HashMap<String, (f64, f64)> = std::collections::HashMap::new();
+    for leg in procedures.iter().flat_map(|p| p.transitions.iter()).flat_map(|t| t.legs.iter()) {
+        if let (Some(lat), Some(lon)) = (leg.lat, leg.lon) {
+            known_fixes.entry(leg.fix.clone()).or_insert((lat, lon));
+        }
+    }
+    for leg in procedures.iter_mut().flat_map(|p| p.transitions.iter_mut()).flat_map(|t| t.legs.iter_mut()) {
+        if leg.lat.is_none() {
+            if let Some((lat, lon)) = known_fixes.get(&leg.fix) {
+                leg.lat = Some(*lat);
+                leg.lon = Some(*lon);
+            }
+        }
+    }
+}
+
 /// Fix positions, by ident.
 pub type Fixes = std::collections::HashMap<String, (f64, f64)>;
 
@@ -313,6 +523,7 @@ fn airport(d: &[u8], rec: &Record, file: &Path, fixes: &Fixes) -> Option<Airport
     if procedures.is_empty() {
         return None;
     }
+    place_fixes_on_radials(&mut procedures);
     // An approach to no particular runway takes a letter, the way a circling approach
     // is named on a chart.
     let mut letter = b'A';
@@ -336,6 +547,7 @@ fn airport(d: &[u8], rec: &Record, file: &Path, fixes: &Fixes) -> Option<Airport
         lat: bgl::lat(bgl::u32le(d, rec.start + 0x10)),
         lon: bgl::lon(bgl::u32le(d, rec.start + 0x0C)),
         procedures,
+        frequencies: frequencies(d, rec),
         source: file.file_name().unwrap_or_default().to_string_lossy().to_string(),
     })
 }
@@ -394,8 +606,8 @@ mod tests {
             name: String::new(),
             part: "final".into(),
             legs: vec![
-                Leg { path: "IF".into(), fix: "MORRY".into(), altitude_rule: AltitudeRule::At, altitude_ft: None, altitude2_ft: None, course_deg: None, distance_m: None, lat: None, lon: None },
-                Leg { path: "TF".into(), fix: "RW13R".into(), altitude_rule: AltitudeRule::None, altitude_ft: None, altitude2_ft: None, course_deg: None, distance_m: None, lat: None, lon: None },
+                Leg { path: "IF".into(), fix: "MORRY".into(), altitude_rule: AltitudeRule::At, ..Leg::default() },
+                Leg { path: "TF".into(), fix: "RW13R".into(), ..Leg::default() },
             ],
         }];
         assert_eq!(runway_of(&t), "13R");

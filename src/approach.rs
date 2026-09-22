@@ -98,6 +98,11 @@ impl Setup {
         Some(if diff(stored) <= diff(flipped) { stored } else { flipped })
     }
 
+    /// The legs of the final approach segment.
+    pub fn final_legs(&self) -> Vec<&procedures::Leg> {
+        self.procedure().transitions.iter().filter(|t| t.part == "final").flat_map(|t| t.legs.iter()).collect()
+    }
+
     /// How far a fix is from the threshold, in nautical miles, from where it actually
     /// is. The file's own distance is to the approach's navaid, not along the leg.
     pub fn distance_nm(&self, lat: f64, lon: f64) -> f64 {
@@ -353,8 +358,27 @@ pub fn prepare(http: &Http, cache: &Cache, idx: &AirportIndex, icao: &str, appro
 }
 
 /// The minimum for a prepared approach.
+/// The circling minima for every aircraft category, where the procedure does not code
+/// one of its own.
+pub fn circling_table(setup: &Setup) -> Vec<(char, f64, Option<String>)> {
+    crate::minima::CIRCLING_AREA
+        .iter()
+        .enumerate()
+        .map(|(i, (letter, _, _))| {
+            let (ft, what) = crate::minima::circling_minimum(&setup.patch, &setup.obstacles, (setup.procedures.lat, setup.procedures.lon), setup.field_elev_ft, i);
+            (*letter, ft, what)
+        })
+        .collect()
+}
+
 pub fn estimate(setup: &Setup, kind: crate::minima::Approach) -> crate::minima::Estimate {
     let path = setup.path();
+    // Where the procedure codes its own minimum, that is the answer, and the terrain is
+    // only looked at so the chart can say what is under the approach.
+    if let Some(coded) = crate::minima::coded_minimum(&setup.final_legs(), setup.tdze_ft) {
+        let highest = crate::minima::highest_terrain(&setup.patch, &path, kind).unwrap_or(setup.tdze_ft);
+        return crate::minima::from_coded(kind, setup.tdze_ft, coded, highest);
+    }
     let mut terrain = crate::minima::limiting_terrain_limit(&setup.patch, &path, kind, setup.tdze_ft);
     // The chart prints the highest ground near the approach whether or not it set the
     // number, so it is looked up even when nothing was limited by it.
@@ -363,6 +387,15 @@ pub fn estimate(setup: &Setup, kind: crate::minima::Approach) -> crate::minima::
             Some(t) => t.top_ft = t.top_ft.max(top),
             None => terrain = Some(crate::minima::Limit { top_ft: top, required_ft: f64::NEG_INFINITY, what: "terrain".to_string() }),
         }
+    }
+    // Circling is flown about the aerodrome rather than down the approach, so it is
+    // worked out over the whole area instead. The smallest category is what the single
+    // figure reports; the chart prints all four.
+    if kind == crate::minima::Approach::Circling {
+        let (ft, what) = crate::minima::circling_minimum(&setup.patch, &setup.obstacles, (setup.procedures.lat, setup.procedures.lon), setup.field_elev_ft, 0);
+        let highest = terrain.as_ref().map(|t| t.top_ft).unwrap_or(setup.tdze_ft);
+        let limit = crate::minima::Limit { top_ft: highest, required_ft: ft, what: what.clone().unwrap_or_else(|| "terrain".into()) };
+        return crate::minima::estimate_with(kind, setup.field_elev_ft, Some(limit), None);
     }
     let obstacle = crate::minima::limiting_obstacle(&setup.obstacles, &path, kind, setup.tdze_ft);
     crate::minima::estimate_with(kind, setup.tdze_ft, terrain, obstacle)
