@@ -1655,7 +1655,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     let thr = ch.threshold.unwrap_or((ch.airport.lat, ch.airport.lon));
     // How far out the profile runs: to the farthest fix on the final, or ten miles.
     let total_nm = legs.iter().filter_map(|l| fix_distance_nm(l, thr)).fold(9.0, f64::max);
-    let (left, right) = (x + 46.0, x + w - 16.0);
+    let (left, right) = (x + 46.0, x + w - 54.0);
     let at_nm = |nm: f64| right - (nm / total_nm) as f32 * (right - left);
 
     // The ground under the approach, from the terrain model.
@@ -1696,6 +1696,13 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     for (px, py, _) in points.iter() {
         c.line_to(*px, *py);
     }
+    // An aircraft arrives at the first fix level, having been let down to that altitude
+    // long before, so the path runs flat to the edge of the paper rather than climbing
+    // off it.
+    if let Some((px, py, _)) = points.last() {
+        let _ = px;
+        c.line_to(at_nm(total_nm), *py);
+    }
     c.stroke();
 
     // Everything the profile marks, from the threshold outwards: the fixes that carry an
@@ -1713,8 +1720,8 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     let mut marks: Vec<(f64, f32, f32, String, Option<String>)> = Vec::new();
     for (px, py, leg) in &points {
         if !leg.fix.starts_with("RW") {
-            let s = format!("{:.0}", leg.altitude_ft.unwrap_or(0.0));
-            label(c, bold, 7.5, px - text_width(bold, 7.5, &s) / 2.0, py + 4.0, &s, INK);
+            let s = format!("{:.0}'", leg.altitude_ft.unwrap_or(0.0));
+            label(c, bold, 8.0, px - text_width(bold, 8.0, &s) / 2.0, py + 4.5, &s, INK);
         }
         if !leg.fix.is_empty() {
             let nm = fix_distance_nm(leg, thr).unwrap_or(0.0);
@@ -1741,6 +1748,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
                 line(c, bx, by + step, bx + (bh - step).min(bw), by + step + (bh - step).min(bw).min(step), 0.4, 0.3);
             }
             marks.push((nm, px, py, kind.label().to_string(), Some(format!("GS {height:.0}'"))));
+
         }
     }
     // The published profile is ticked at distances from the localiser rather than at the
@@ -1753,7 +1761,9 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
             if nm < 0.02 || nm > total_nm {
                 continue;
             }
-            if marks.iter().any(|(had, _, _, _, _)| (had - nm).abs() < 0.25) {
+            // A checkpoint on top of a marker is the same place twice; one a tenth of a
+            // mile further on is the missed approach point and is named in its own right.
+            if marks.iter().any(|(had, _, _, _, _)| (had - nm).abs() < 0.08) {
                 continue;
             }
             let px = at_nm(nm);
@@ -1774,7 +1784,20 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         last_x = *px;
         let mut row = name_row;
         text_centred(c, bold, 7.0, *px, row, name, INK);
-        row -= 6.5;
+        row -= 5.5;
+        // A marker sounds as well as shows, and the sound is how it is told from the
+        // others: the inner one a run of dots, the outer one dashes.
+        if let Some(sound) = match *name {
+            ref n if n == "IM" => Some("EEEE"),
+            ref n if n == "MM" => Some("MM"),
+            ref n if n == "OM" => Some("TT"),
+            _ => None,
+        } {
+            draw_morse(c, *px - 7.0, row, sound, 0.2);
+            row -= 5.0;
+        } else {
+            row -= 1.0;
+        }
         if let Some(under) = under {
             text_centred(c, font, 5.2, *px, row, under, 0.4);
             row -= 6.5;
@@ -1806,10 +1829,10 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     if ch.glidepath_deg.is_some() {
         let slope = ch.glidepath_deg.unwrap_or(3.0);
         let tip = (at_nm(0.0), at_ft(ch.tdze_ft + crossing_ft));
-        for spread in [0.7f64, -0.7] {
+        for spread in [0.45f64, -0.45] {
             let angle = (slope + spread).to_radians().tan();
             let far_ft = ch.tdze_ft + crossing_ft + total_nm * 6076.115 * angle;
-            line(c, tip.0, tip.1, at_nm(total_nm), at_ft(far_ft), 0.4, 0.55);
+            line(c, tip.0, tip.1, at_nm(total_nm), at_ft(far_ft), 0.5, 0.45);
         }
     }
     // Where the approach is left for the runway, and where it may not be flown past: a
@@ -1875,11 +1898,8 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     c.fill_nonzero();
 
     // Glidepath angle and threshold crossing height, in the corner a chart puts them.
-    label(c, font, 6.5, at_nm(0.0) - 46.0, tch + 9.0, &format!("TCH {crossing_ft:.0}'"), 0.3);
-    text_right(c, font, 6.5, x + w - 8.0, y + 4.0, &format!("TDZE {:.0}'", ch.tdze_ft), 0.3);
-    if let Some(deg) = ch.glidepath_deg {
-        text(c, bold, 7.0, x + 6.0, y + 14.0, &format!("GP {deg:.2}"), INK);
-    }
+    text(c, font, 6.5, at_nm(0.0) + 8.0, tch + 9.0, &format!("TCH {crossing_ft:.0}'"), 0.3);
+    text(c, font, 6.5, at_nm(0.0) + 8.0, tch - 1.0, &format!("TDZE {:.0}'", ch.tdze_ft), 0.3);
     text(c, font, 6.0, x + 6.0, y + 6.0, &format!("{total_nm:.1} NM"), 0.35);
 
     // From the final approach fix to the missed approach point, and how long that takes
