@@ -317,6 +317,114 @@ impl Path {
     }
 }
 
+/// The lowest altitude that clears everything in one direction from the airport.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sector {
+    /// The bearings this sector runs between, clockwise, degrees magnetic.
+    pub from_deg: f64,
+    pub to_deg: f64,
+    pub altitude_ft: f64,
+}
+
+/// The safe altitudes around an airport, by quadrant.
+///
+/// A chart does not print one figure for the whole circle: an airport with a mountain on
+/// one side and sea on the other would carry the mountain's altitude all the way round,
+/// which is safe but useless. It is split into quadrants, each clearing whatever stands
+/// in it by a thousand feet, and neighbouring quadrants that come to the same figure are
+/// printed as one.
+pub fn safe_altitude_sectors(
+    patch: &crate::sources::copernicus::Patch,
+    obstacles: &[crate::sources::obstacles::Obstacle],
+    centre: (f64, f64),
+    radius_nm: f64,
+    variation_deg: f64,
+    aerodrome_elev_ft: f64,
+) -> Vec<Sector> {
+    // The quadrants a chart uses, centred on the cardinal directions.
+    const QUADRANTS: [(f64, f64); 4] = [(315.0, 45.0), (45.0, 135.0), (135.0, 225.0), (225.0, 315.0)];
+    /// How far outside its own sector a figure has to clear.
+    const BUFFER_NM: f64 = 5.0;
+    /// How far above the aerodrome the ground has to rise to count as mountainous, and
+    /// so to be cleared by two thousand feet rather than one.
+    const MOUNTAINOUS_FT: f64 = 3000.0;
+    let mut highest = [f64::NEG_INFINITY; 4];
+    let cos = centre.0.to_radians().cos().max(0.05);
+    let mut place = |lat: f64, lon: f64, top_ft: f64| {
+        let dn = (lat - centre.0) * 60.0;
+        let de = (lon - centre.1) * 60.0 * cos;
+        let distance = dn.hypot(de);
+        if distance > radius_nm {
+            return;
+        }
+        // Magnetic, because that is how a chart labels the boundaries.
+        let bearing = (de.atan2(dn).to_degrees() - variation_deg + 360.0) % 360.0;
+        // A sector also has to clear what stands just outside it: five miles' worth of
+        // buffer, which near the middle of the circle is most of the way round and far
+        // out is a couple of degrees.
+        let buffer_deg = if distance > 0.2 { (BUFFER_NM / distance).atan().to_degrees().min(180.0) } else { 180.0 };
+        for (i, (from, to)) in QUADRANTS.iter().enumerate() {
+            let from = (from - buffer_deg + 360.0) % 360.0;
+            let to = (to + buffer_deg) % 360.0;
+            let inside = if from > to { bearing >= from || bearing < to } else { bearing >= from && bearing < to };
+            if inside {
+                highest[i] = highest[i].max(top_ft);
+            }
+        }
+    };
+    for row in 0..patch.height {
+        for col in 0..patch.width {
+            let h = patch.at(row, col);
+            if !h.is_finite() {
+                continue;
+            }
+            let (lat, lon) = patch.position(row, col);
+            place(lat, lon, h as f64 / 0.3048);
+        }
+    }
+    for o in obstacles {
+        if let Some(top) = o.top_ft {
+            place(o.lat, o.lon, top);
+        }
+    }
+    let mut out: Vec<Sector> = QUADRANTS
+        .iter()
+        .zip(highest)
+        .map(|((from, to), top)| Sector {
+            from_deg: *from,
+            to_deg: *to,
+            // A thousand feet above whatever is there, to the next hundred, and two
+            // thousand where the ground is mountainous, which is what a chart does and
+            // what makes Madeira's western sector the eight thousand it is published at.
+            // Where the quadrant is all sea, the floor a chart never goes below.
+            altitude_ft: if top.is_finite() {
+                let clearance = if top - aerodrome_elev_ft > MOUNTAINOUS_FT { 2000.0 } else { 1000.0 };
+                ((top + clearance) / 100.0).ceil() * 100.0
+            } else {
+                2000.0
+            },
+        })
+        .collect();
+    // Neighbours that come to the same figure are one sector.
+    let mut merged: Vec<Sector> = Vec::new();
+    for sector in out.drain(..) {
+        match merged.last_mut() {
+            Some(last) if last.altitude_ft == sector.altitude_ft => last.to_deg = sector.to_deg,
+            _ => merged.push(sector),
+        }
+    }
+    // The first and last may meet round the back of the circle.
+    if merged.len() > 1 {
+        let first = merged[0];
+        let last = *merged.last().expect("checked");
+        if first.altitude_ft == last.altitude_ft {
+            merged[0].from_deg = last.from_deg;
+            merged.pop();
+        }
+    }
+    merged
+}
+
 /// Circling is not flown along the approach at all: the aircraft manoeuvres visually
 /// about the aerodrome, so what matters is everything within a radius of it, and the
 /// radius depends on how fast the aeroplane is.

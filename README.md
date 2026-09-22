@@ -260,9 +260,10 @@ table, frequencies, scale bar; portrait or landscape to fit the field.
 ### Approach charts
 
 ```
-amdbgen approach-chart EDDF --approach 27L --open         # ILS to 27L, PDF
+amdbgen approach-chart EDDF --approach 27L --open          # ILS to 27L, PDF
 amdbgen approach-chart EDDF --approach 27L --star BIG1A    # ...with an arrival feeding it
 amdbgen approach-chart EDDF --list                         # every approach and arrival EDDF has
+amdbgen approach-charts --list airports.txt --out-dir out  # a whole list of airports at once
 ```
 
 A full approach chart, styled like an airline chart and branded "AMDB V1". It needs
@@ -278,7 +279,19 @@ DME arcs flown as arcs rather than as straight lines; holding patterns as racetr
 turning the way the procedure says; obstacles; and the missed approach. A fix that the
 data gives only as a radial and a distance from a beacon — which is how most approaches
 outside the United States are written — is placed from the beacon, with the magnetic
-variation measured from the fixes that do carry a position. Obstacles come from the FAA's Digital
+variation measured from the fixes that do carry a position.
+
+Around it: terrain tinted by elevation with a key, a compass rose carrying that measured
+variation, degrees and minutes ruled along the edges, the minimum safe altitude by
+quadrant, and, where the approach is long enough that the airport would otherwise be a
+few millimetres of grey, an inset of the airport at its own scale.
+
+`approach-charts` does a list of airports in one run, which reads the navigation data,
+the obstacle file, the runway file and the beacons once between all of them instead of
+once each: about a second a chart the first time an area is drawn, and a tenth of that
+once its terrain is cached. `--every-runway` draws each runway rather than the airport's
+fullest approach, `--jobs` sets how many airports run at once, and `--no-msa` leaves off
+the safe-altitude ring, which is the one part that reads terrain far from the airport. Obstacles come from the FAA's Digital
 Obstacle File in the United States and from OpenStreetMap everywhere else (see
 Sources); OpenStreetMap gives heights above the ground, so the terrain model converts
 them to height above sea level before they can be weighed against the approach.
@@ -322,10 +335,22 @@ the procedure's actual path through its fixes rather than a straight box out fro
 runway, because a box is badly wrong in a valley: it takes in the walls either side of a
 procedure that is actually threading between them.
 
+How much clearance is kept, and how wide an area it is kept over, depend on how finely
+the course can be held: a localiser or an RNAV track keeps 250 ft over an area a mile
+either side, a course held on a beacon keeps 300 ft over an area two and a half miles
+wide, since it wanders further. Beyond the middle of that area the clearance tapers away
+to nothing at the edge, as it does in the rules.
+
 Circling is not flown down the approach at all — the aircraft manoeuvres visually about
-the aerodrome — so it is worked out over a circle around the airport instead, whose
-radius depends on the aircraft category, with a floor for each category that no circling
-minimum goes below.
+the aerodrome — so it is worked out over the arcs swung from every runway end, at a
+radius that depends on the aircraft category, with a floor for each category that no
+circling minimum goes below.
+
+The safe altitude printed in the corner follows the same idea: the circle within 25 NM is
+split into quadrants, each clearing whatever stands in it (and within five miles outside
+it) by a thousand feet, or two thousand where the ground is mountainous. Madeira's
+western sector comes out at 8,000 ft against a published 8,200, and its eastern at 3,400
+against 3,500.
 
 The result is an estimate, and the chart says which of the four things — the procedure's
 own coded minimum, the system minimum, terrain, or an obstacle — set it.
@@ -350,11 +375,15 @@ them, which carries straight through to the minimum.
 
 Approaches **without** a glidepath are a different matter. Measured against 346 published
 minima read off the same charts — localiser, VOR, NDB, RNAV without vertical guidance,
-and circling — the median error is about 90 ft, and it runs low as often as high. Those
+and circling — the median error is about 60 ft, and it runs low as often as high. Those
 minima are designed segment by segment against rules this does not reproduce, so where
-the procedure codes no minimum of its own, treat the figure as an indication of the right
-order of magnitude and nothing more. Where it does code one, the chart simply reports it
-and the question does not arise.
+the procedure codes no minimum of its own, treat the figure as the right order of
+magnitude rather than a number to fly. Where it does code one, the chart simply reports
+it and the question does not arise.
+
+The clearances and areas above are the published ones, not values fitted to that set. A
+fitted version, trained on half of it and measured on the half it had not seen, came out
+five feet better and behaved badly on the kinds with few examples.
 
 #### Checking the estimator
 
