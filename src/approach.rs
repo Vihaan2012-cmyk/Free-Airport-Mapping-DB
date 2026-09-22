@@ -42,6 +42,10 @@ pub struct Setup {
     pub tdze_ft: f64,
     pub field_elev_ft: f64,
     pub airport_name: Option<String>,
+    /// The other code the airport is known by, and the town and region it serves, which
+    /// a chart heads its page with.
+    pub airport_iata: Option<String>,
+    pub airport_place: Option<String>,
     pub airport_dir: Option<PathBuf>,
     pub msa_ft: Option<f64>,
     /// The same, by quadrant, which is how a chart prints it.
@@ -378,6 +382,17 @@ pub fn prepare_from(procedures: AirportProcedures, http: &Http, cache: &Cache, i
     let entry = idx.get(&icao);
     let field_elev_ft = entry.as_ref().and_then(|e| e.elevation_ft).unwrap_or(0.0);
     let airport_name = entry.as_ref().and_then(|e| e.name.clone());
+    let airport_iata = entry.as_ref().and_then(|e| e.iata.clone()).filter(|s| s.len() == 3);
+    let airport_place = entry.as_ref().and_then(|e| match (e.city.as_deref(), e.region.as_deref()) {
+        (Some(city), Some(region)) => {
+            // The region is given as a country-qualified code; a chart prints the part
+            // that names the state.
+            let state = region.rsplit('-').next().unwrap_or(region);
+            Some(format!("{city}, {state}"))
+        }
+        (Some(city), None) => Some(city.to_string()),
+        _ => None,
+    });
     if !opts.quiet {
         crate::term::info(&format!("{icao}: RW{runway} approach, field elevation {field_elev_ft:.0} ft"));
     }
@@ -468,6 +483,8 @@ pub fn prepare_from(procedures: AirportProcedures, http: &Http, cache: &Cache, i
         tdze_ft,
         field_elev_ft,
         airport_name,
+        airport_iata,
+        airport_place,
         msa_ft,
         msa_sectors,
         tdze_surveyed: surveyed.is_some(),
