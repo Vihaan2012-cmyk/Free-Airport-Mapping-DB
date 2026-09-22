@@ -46,6 +46,8 @@ pub struct Setup {
     /// a chart heads its page with.
     pub airport_iata: Option<String>,
     pub airport_place: Option<String>,
+    /// The other airports near this one, for the map to name.
+    pub nearby_airports: Vec<(String, f64, f64)>,
     pub airport_dir: Option<PathBuf>,
     pub msa_ft: Option<f64>,
     /// The same, by quadrant, which is how a chart prints it.
@@ -383,6 +385,21 @@ pub fn prepare_from(procedures: AirportProcedures, http: &Http, cache: &Cache, i
     let field_elev_ft = entry.as_ref().and_then(|e| e.elevation_ft).unwrap_or(0.0);
     let airport_name = entry.as_ref().and_then(|e| e.name.clone());
     let airport_iata = entry.as_ref().and_then(|e| e.iata.clone()).filter(|s| s.len() == 3);
+    // The airports round about, which a chart names so that a reader looking down at a
+    // runway knows whether it is the one he is going to. Only those within the piece of
+    // country a plan view covers, nearest first.
+    let cos = procedures.lat.to_radians().cos().max(0.05);
+    let mut nearby: Vec<(f64, String, f64, f64)> = idx
+        .by_icao
+        .iter()
+        .filter(|(other, _)| other.as_str() != icao)
+        .filter_map(|(other, e)| {
+            let nm = ((e.lat - procedures.lat) * 60.0).hypot((e.lon - procedures.lon) * 60.0 * cos);
+            (nm <= 14.0).then(|| (nm, crate::output::approach::shorten_place(e.name.as_deref().unwrap_or(other)), e.lat, e.lon))
+        })
+        .collect();
+    nearby.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let nearby_airports: Vec<(String, f64, f64)> = nearby.into_iter().take(6).map(|(_, name, lat, lon)| (name, lat, lon)).collect();
     let airport_place = entry.as_ref().and_then(|e| match (e.city.as_deref(), e.region.as_deref()) {
         (Some(city), Some(region)) => {
             // The region is given as a country-qualified code; a chart prints the part
@@ -485,6 +502,7 @@ pub fn prepare_from(procedures: AirportProcedures, http: &Http, cache: &Cache, i
         airport_name,
         airport_iata,
         airport_place,
+        nearby_airports,
         msa_ft,
         msa_sectors,
         tdze_surveyed: surveyed.is_some(),

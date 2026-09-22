@@ -302,6 +302,12 @@ pub struct ChartText {
     /// the like. Which system it is decides how much the visibility may be reduced, and
     /// it is drawn beside the missed approach.
     pub approach_lights: Option<String>,
+    /// The amendment this procedure is at, and when it took effect: "Amdt 30B 21MAY20".
+    /// A chart stamps it down the edge of the page.
+    pub amendment: Option<String>,
+    /// What a chart writes under a fix's name — that it is a radar fix, or a DME one.
+    /// Nothing in the coded procedure says it; the chart does.
+    pub fix_notes: std::collections::HashMap<String, String>,
 }
 
 /// The lighting systems a chart names, longest first so that ALSF-2 is not read as ALSF.
@@ -389,6 +395,35 @@ pub fn chart_text(pdf: &[u8]) -> ChartText {
     checkpoints.sort_by(|a, b| b.total_cmp(a));
     checkpoints.dedup_by(|a, b| (*a - *b).abs() < 0.05);
     out.dme_checkpoints = checkpoints;
+
+    // The amendment, which a chart stamps down its edge: the number the procedure is at
+    // and the date it took effect.
+    out.amendment = items.iter().find_map(|i| {
+        let t = i.text.trim();
+        t.to_uppercase().starts_with("AMDT").then(|| t.split_whitespace().collect::<Vec<_>>().join(" "))
+    });
+
+    // What a chart writes under a fix: RADAR, or DME, which says how the fix is found.
+    // The word sits directly under the name, in the plan and again in the profile.
+    for item in &items {
+        let word = item.text.trim().to_uppercase();
+        if !matches!(word.as_str(), "RADAR" | "DME" | "RADAR FIX") {
+            continue;
+        }
+        // The name sits directly above it; other scraps of the drawing may sit between,
+        // so the nearest one that reads like a fix is the one it belongs to.
+        let mut candidates: Vec<&Item> = items
+            .iter()
+            .filter(|o| (o.x - item.x).abs() < 7.0 && o.y > item.y && o.y - item.y < 24.0)
+            .collect();
+        candidates.sort_by(|a, b| (a.y - item.y).total_cmp(&(b.y - item.y)));
+        if let Some(name) = candidates.iter().find_map(|o| {
+            let name = o.text.trim().to_uppercase();
+            (name.len() == 5 && name.chars().all(|c| c.is_ascii_uppercase())).then_some(name)
+        }) {
+            out.fix_notes.insert(name, format!("{word} FIX"));
+        }
+    }
 
     out.approach_lights = items.iter().find_map(|i| {
         let t = i.text.trim().to_uppercase();
