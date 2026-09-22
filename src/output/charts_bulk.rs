@@ -159,6 +159,8 @@ fn one(
         published_loc_visibility: localiser.as_ref().map(|l| l.visibility.clone()),
         published_loc: localiser.as_ref().map(|l| (l.altitude_ft, l.height_ft)),
         published_loc_columns: localiser.as_ref().map(|l| l.categories.as_slice()).unwrap_or(&[]),
+        airport_iata: setup.airport_iata.as_deref(),
+        airport_place: setup.airport_place.as_deref(),
         dme_checkpoints: published.as_ref().map(|p| p.text.dme_checkpoints.as_slice()).unwrap_or(&[]),
         approach_lights: published.as_ref().and_then(|p| p.text.approach_lights.as_deref()),
         missed_airway: missed_airway.as_deref(),

@@ -75,6 +75,9 @@ pub struct Chart<'a> {
     /// What the safe altitude ring is measured from, which is the published centre where
     /// there is a published one and the airport itself where there is not.
     pub msa_caption: String,
+    /// What the airport is called by its other code, and where in the world it is.
+    pub airport_iata: Option<&'a str>,
+    pub airport_place: Option<&'a str>,
     /// The distances from the localiser the published profile is ticked at.
     pub dme_checkpoints: &'a [f64],
     /// The approach lighting the runway has, as the chart names it.
@@ -289,25 +292,28 @@ impl View {
     /// printed chart.
     fn around(airport: (f64, f64), track_deg: f64, points: &[(f64, f64)], x: f32, y: f32, w: f32, h: f32) -> View {
         let cos = airport.0.to_radians().cos().max(0.05);
-        let far = points
-            .iter()
-            .map(|(lat, lon)| {
-                let dn = (lat - airport.0) * 60.0;
-                let de = (lon - airport.1) * 60.0 * cos;
-                (dn * dn + de * de).sqrt()
-            })
-            .fold(0.0f64, f64::max);
+        let nm_from_airport = |(lat, lon): (f64, f64)| ((lat - airport.0) * 60.0, (lon - airport.1) * 60.0 * cos);
+        let far = points.iter().map(|p| nm_from_airport(*p)).fold(0.0f64, |m, (dn, de)| m.max(dn.hypot(de)));
         // The approach runs out from the airport in one direction, so the window is
-        // centred between the two: the airport at one end, the farthest fix at the other,
-        // with a margin around both.
+        // pushed that way — but not the whole distance. A chart leaves country beyond the
+        // airport as well as behind it, and an airport squeezed against the edge of the
+        // paper is the first thing that looks wrong.
+        const TOWARDS_THE_APPROACH: f64 = 0.45;
         let back = (track_deg + 180.0).to_radians();
-        let shift_nm = far / 2.0;
-        let centre = (airport.0 + shift_nm * back.cos() / 60.0, airport.1 + shift_nm * back.sin() / 60.0 / cos);
-        let half_nm = (far / 2.0 * 0.95 + 0.55).clamp(PLAN_MIN_NM / 2.0, PLAN_MAX_NM / 2.0);
-
-        // The shorter side of the box has to hold that, whichever way the approach runs.
+        let shift = far * TOWARDS_THE_APPROACH;
+        let centre = (airport.0 + shift * back.cos() / 60.0, airport.1 + shift * back.sin() / 60.0 / cos);
+        // Then it is opened out until it holds everything, with a margin.
+        const MARGIN_NM: f64 = 0.9;
+        let from_centre = |(lat, lon): (f64, f64)| ((lat - centre.0) * 60.0, (lon - centre.1) * 60.0 * cos);
+        let (mut half_n, mut half_e) = (0.0f64, 0.0f64);
+        for point in points.iter().copied().chain([airport]) {
+            let (dn, de) = from_centre(point);
+            half_n = half_n.max(dn.abs() + MARGIN_NM);
+            half_e = half_e.max(de.abs() + MARGIN_NM);
+        }
         let aspect = (w / h) as f64;
-        let (half_w_nm, half_h_nm) = if aspect >= 1.0 { (half_nm * aspect, half_nm) } else { (half_nm, half_nm / aspect) };
+        let half_h_nm = (half_n.max(half_e / aspect)).clamp(PLAN_MIN_NM / 2.0, PLAN_MAX_NM / 2.0);
+        let half_w_nm = half_h_nm * aspect;
         let deg_h = half_h_nm * 2.0 / 60.0;
         let deg_w = half_w_nm * 2.0 / 60.0 / cos;
         View { west: centre.1 - deg_w / 2.0, north: centre.0 + deg_h / 2.0, deg_w, deg_h, x, y, w, h }
@@ -462,44 +468,97 @@ const TERRAIN_BANDS: [(f64, (f32, f32, f32)); 5] = [
     (f64::MAX, (0.76, 0.55, 0.36)),
 ];
 
-/// The tint for a height, or nothing where the ground is below the lowest band.
-fn terrain_tint(height_ft: f64) -> Option<(f32, f32, f32)> {
-    if height_ft < TERRAIN_BANDS[0].0 {
-        return None;
-    }
-    TERRAIN_BANDS.iter().find(|(top, _)| height_ft < *top).map(|(_, tint)| *tint)
-}
 
 /// Heights tinted in bands, as a terrain picture rather than contours: quick to read and
 /// honest about what the model can say.
 fn draw_terrain(c: &mut Content, patch: &Patch, v: &View, field_ft: f64) {
-    let cw = (patch.step_lon / v.deg_w) as f32 * v.w + 0.4;
-    let ch = (patch.step_lat / v.deg_h) as f32 * v.h + 0.4;
-    for row in 0..patch.height {
-        for col in 0..patch.width {
-            let ht = patch.at(row, col);
-            if !ht.is_finite() {
-                continue;
-            }
-            let height = ht as f64 / 0.3048;
-            // Sea first, then the ground above it. Ground no higher than the airport is
-            // not worth tinting whatever its height above the sea: an airport on a
-            // plateau would otherwise sit in a wash of colour.
-            let tint = if height <= WATER_FT && field_ft >= WATER_NEEDS_FIELD_FT {
-                Some(WATER_TINT)
-            } else {
-                terrain_tint(height).filter(|_| height > field_ft + 250.0)
-            };
-            let Some((r, g, b)) = tint else { continue };
-            let (lat, lon) = patch.position(row, col);
-            let (px, py) = v.at(lat, lon);
-            if !v.inside((px, py), 0.0) {
-                continue;
-            }
-            c.set_fill_rgb(r, g, b);
-            c.rect(px, py - ch, cw, ch);
-            c.fill_nonzero();
+    // From the top down: each band paints everything below its own ceiling, and the next
+    // one paints over the middle of it, so what is left of each is the ring between one
+    // height and the next. The ground the airport stands on is painted out again, so that
+    // an airport on a plateau does not sit in a wash of colour, and the sea goes on last.
+    let floor = (field_ft + 250.0).max(TERRAIN_BANDS[0].0);
+    for (top, (r, g, b)) in TERRAIN_BANDS.iter().rev() {
+        if *top <= floor {
+            continue;
         }
+        let top = if *top == f64::MAX { 40_000.0 } else { *top };
+        fill_below(c, patch, v, top, (*r, *g, *b));
+    }
+    fill_below(c, patch, v, floor, (1.0, 1.0, 1.0));
+    if field_ft >= WATER_NEEDS_FIELD_FT {
+        fill_below(c, patch, v, WATER_FT, WATER_TINT);
+    }
+}
+
+/// Everything lower than a height, filled in one colour.
+///
+/// Drawn as a shape rather than as a field of squares. A square to each reading turns a
+/// coastline into a staircase, which is what the eye sees first and what no chart has;
+/// taking the line where the ground actually crosses the height, along each edge between
+/// two readings, gives the coast back its shape. It is the marching squares of any
+/// contour map: each cell of four readings contributes the piece of itself that lies
+/// below the height, with its corners where the crossings fall.
+fn fill_below(c: &mut Content, patch: &Patch, v: &View, height_ft: f64, tint: (f32, f32, f32)) {
+    let metres = height_ft * 0.3048;
+    let at = |row: usize, col: usize| -> Option<(f32, f32, f64)> {
+        let h = patch.at(row, col);
+        if !h.is_finite() {
+            return None;
+        }
+        let (lat, lon) = patch.position(row, col);
+        let (px, py) = v.at(lat, lon);
+        Some((px, py, h as f64))
+    };
+    let (mut started, mut drawn) = (false, 0usize);
+    for row in 0..patch.height.saturating_sub(1) {
+        for col in 0..patch.width.saturating_sub(1) {
+            // The four readings of one cell, going round it.
+            let corners = [at(row, col), at(row, col + 1), at(row + 1, col + 1), at(row + 1, col)];
+            let Some(corners) = corners.iter().copied().collect::<Option<Vec<_>>>() else { continue };
+            if corners.iter().all(|(_, _, h)| *h > metres) {
+                continue;
+            }
+            // Anything wholly off the paper is not worth the arithmetic.
+            if corners.iter().all(|(px, py, _)| !v.inside((*px, *py), 30.0)) {
+                continue;
+            }
+            let mut shape: Vec<(f32, f32)> = Vec::with_capacity(8);
+            for i in 0..4 {
+                let (ax, ay, ah) = corners[i];
+                let (bx, by, bh) = corners[(i + 1) % 4];
+                if ah <= metres {
+                    shape.push((ax, ay));
+                }
+                // Where the ground crosses the height between two readings, the crossing
+                // is where it would fall if it changed evenly between them.
+                if (ah <= metres) != (bh <= metres) {
+                    let f = ((metres - ah) / (bh - ah)).clamp(0.0, 1.0) as f32;
+                    shape.push((ax + (bx - ax) * f, ay + (by - ay) * f));
+                }
+            }
+            if shape.len() < 3 {
+                continue;
+            }
+            if !started {
+                c.set_fill_rgb(tint.0, tint.1, tint.2);
+                started = true;
+            }
+            c.move_to(shape[0].0, shape[0].1);
+            for point in &shape[1..] {
+                c.line_to(point.0, point.1);
+            }
+            c.close_path();
+            drawn += 1;
+            // One path may not hold the whole coast; a very long one is slow to draw.
+            if drawn >= 4000 {
+                c.fill_nonzero();
+                drawn = 0;
+                started = false;
+            }
+        }
+    }
+    if started {
+        c.fill_nonzero();
     }
 }
 
@@ -1096,8 +1155,10 @@ fn draw_furniture(
     // a key running to 2,625 ft over an airport whose highest ground is sixty tells the
     // reader nothing and makes the page look like it failed to draw.
     let swatch = 8.0;
-    let bands = TERRAIN_BANDS.iter().take_while(|(top, _)| *top < highest_ft).count() + 1;
-    let bands = bands.min(TERRAIN_BANDS.len());
+    // Only the bands that are painted: at an airport by the sea nothing is, and a key
+    // listing a colour that appears nowhere is worse than no key.
+    let bands = TERRAIN_BANDS.iter().take_while(|(top, _)| *top < highest_ft).count();
+    let bands = if highest_ft > TERRAIN_BANDS[0].0 { (bands + 1).min(TERRAIN_BANDS.len()) } else { 0 };
     let rows = bands + usize::from(has_water);
     if rows == 0 {
         return;
@@ -1138,38 +1199,6 @@ fn draw_furniture(
     }
     text(c, font, 6.5, bx + bar + 3.0, by - 2.0, &format!("{step_nm:.0} NM"), INK);
 
-    // What the tints mean, above the scale bar. Only the bands the ground here reaches:
-    // a key running to 2,625 ft over an airport whose highest ground is sixty tells the
-    // reader nothing and makes the page look like it failed to draw.
-    let swatch = 8.0;
-    let bands = TERRAIN_BANDS.iter().take_while(|(top, _)| *top < highest_ft).count() + 1;
-    let bands = bands.min(TERRAIN_BANDS.len());
-    let rows = bands + usize::from(has_water);
-    if rows == 0 {
-        return;
-    }
-    let key_h = rows as f32 * swatch + 12.0;
-    let (kx, ky) = (v.x + 10.0, v.y + 30.0);
-    fill_box(c, kx - 4.0, ky - 4.0, 54.0, key_h, 1.0);
-    text(c, font, 5.5, kx, ky + key_h - 12.0, "ELEVATION", 0.4);
-    if has_water {
-        let (r, g, b) = WATER_TINT;
-        c.set_fill_rgb(r, g, b);
-        c.rect(kx, ky, 13.0, swatch - 1.5);
-        c.fill_nonzero();
-        box_outline(c, kx, ky, 13.0, swatch - 1.5, 0.3, 0.6);
-        text(c, font, 5.5, kx + 16.0, ky + 1.0, "WATER", 0.35);
-    }
-    let ky = ky + if has_water { swatch } else { 0.0 };
-    for (i, (top, (r, g, b))) in TERRAIN_BANDS.iter().take(bands).enumerate() {
-        let row = ky + (bands - 1 - i) as f32 * swatch;
-        c.set_fill_rgb(*r, *g, *b);
-        c.rect(kx, row, 13.0, swatch - 1.5);
-        c.fill_nonzero();
-        box_outline(c, kx, row, 13.0, swatch - 1.5, 0.3, 0.6);
-        let label = if *top == f64::MAX || i + 1 == bands { format!("{:.0}+", if i == 0 { 0.0 } else { TERRAIN_BANDS[i - 1].0 }) } else { format!("{top:.0}") };
-        text(c, font, 5.5, kx + 16.0, row + 1.0, &label, 0.35);
-    }
 
     // Scale bar, bottom left.
     let px_nm = v.px_per_nm();
@@ -1187,75 +1216,7 @@ fn draw_furniture(
 }
 
 /// How wide the inset is, in miles.
-const INSET_NM: f64 = 2.2;
 
-/// The airport again, close up.
-///
-/// The plan view has to hold an approach that runs twenty miles out, at which scale the
-/// airport is a few millimetres of grey. A chart answers that with an inset: the same
-/// airport at a scale where the runways are runways, in the corner where there is
-/// nothing else to show.
-fn draw_inset(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32) {
-    let centre = ch.threshold.unwrap_or((ch.airport.lat, ch.airport.lon));
-    let cos = centre.0.to_radians().cos().max(0.05);
-    let aspect = (w / h) as f64;
-    let half = INSET_NM / 2.0;
-    let (half_w, half_h) = if aspect >= 1.0 { (half * aspect, half) } else { (half, half / aspect) };
-    let v = View {
-        west: centre.1 - half_w / 60.0 / cos,
-        north: centre.0 + half_h / 60.0,
-        deg_w: half_w * 2.0 / 60.0 / cos,
-        deg_h: half_h * 2.0 / 60.0,
-        x,
-        y,
-        w,
-        h,
-    };
-    fill_box(c, x, y, w, h, 1.0);
-    c.save_state();
-    c.rect(x, y, w, h);
-    c.clip_nonzero();
-    c.end_path();
-    draw_terrain(c, ch.patch, &v, ch.field_elev_ft);
-    if let Some(dir) = ch.airport_dir {
-        draw_airport(c, dir, &v);
-    }
-    // The landing runway, and the threshold the approach ends at.
-    if let Some((near, far)) = ch.runway_ends {
-        let (nx, ny) = v.at(near.0, near.1);
-        let (fx, fy) = v.at(far.0, far.1);
-        line(c, nx, ny, fx, fy, 6.0, 1.0);
-        line(c, nx, ny, fx, fy, 3.4, INK);
-        // Which end is being landed on, and what it is called.
-        c.set_fill_gray(INK);
-        circle(c, nx, ny, 2.6);
-        c.fill_nonzero();
-        label(c, bold, 6.5, nx + 5.0, ny - 8.0, &ch.procedure.runway, INK);
-        // What the runway is, and what it has to guide an approach by.
-        let mut about = Vec::new();
-        if let Some((length, width)) = ch.runway_size {
-            about.push(format!("{length:.0}m x {width:.0}m"));
-        }
-        if !ch.runway_lighting.is_empty() {
-            about.push(ch.runway_lighting.join(" "));
-        }
-        if !about.is_empty() {
-            label(c, font, 5.5, x + 4.0, y + 4.0, &about.join("   "), 0.3);
-        }
-    }
-    // The last of the final, so the inset joins on to the picture above it.
-    let finals = final_legs(ch.procedure);
-    let mut track: Vec<&Leg> = finals.iter().rev().take(2).rev().copied().collect();
-    track.retain(|l| l.lat.is_some());
-    if !track.is_empty() {
-        draw_track(c, &v, &track, None, 1.6, false, INK);
-    }
-    c.restore_state();
-    box_outline(c, x, y, w, h, 1.0, INK);
-    fill_box(c, x + 1.0, y + h - 11.0, w - 2.0, 10.0, 1.0);
-    // What it is across, not what it is tall: the box is wider than it is high.
-    text(c, bold, 6.0, x + 4.0, y + h - 8.5, &format!("{}  {:.1} NM ACROSS", ch.airport.icao, v.span_nm()), INK);
-}
 
 /// The plan view: terrain, the airport, the procedure and what stands up under it.
 #[allow(clippy::too_many_arguments)]
@@ -1418,6 +1379,18 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         if pts.len() >= 2 {
             arrow_head(c, pts[pts.len() - 2], pts[pts.len() - 1], 0.15);
         }
+        // Into the box that shows where it ends, so the track is not left hanging in the
+        // middle of the sea.
+        if let (Some((bx, by, _, bh)), Some(last)) = (corners.first().copied(), pts.last().copied()) {
+            let entry = (bx, by + bh / 2.0);
+            let previous = pts.get(pts.len().saturating_sub(2)).copied().unwrap_or(last);
+            if last.0 > previous.0 && entry.0 > previous.0 {
+                c.save_state();
+                c.set_dash_pattern([3.0, 2.0], 0.0);
+                line(c, previous.0, previous.1, entry.0, entry.1, 1.4, 0.15);
+                c.restore_state();
+            }
+        }
         // The airway it joins, in the black flag a chart writes an airway in. The fix it
         // runs to is usually well off the map, so the flag goes as far out along the
         // track as the paper allows.
@@ -1475,13 +1448,6 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         let beacon = ch.navaids.iter().find(|b| b.ident == hold.fix);
         let (bx, by) = (x + w - bw - 6.0, y + 6.0);
         draw_hold_box(c, font, bold, bx, by, bw, bh, hold, beacon, "ALTERNATE MISSED APCH");
-    }
-    // The airport close up, in the bottom corner, but only when the plan is too wide to
-    // show it properly on its own.
-    if v.span_nm() > 9.0 {
-        let (iw, ih) = (140.0, 122.0);
-        let above = if ch.alternate_hold.is_some() { 74.0 } else { 16.0 };
-        draw_inset(c, font, bold, ch, x + w - iw - 6.0, y + above, iw, ih);
     }
     // Whether there is any sea in sight, so the key only mentions it when there is.
     let has_water = ch.field_elev_ft >= WATER_NEEDS_FIELD_FT
@@ -1703,7 +1669,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     // difference between the two fixes' distances from the runway.
     let faf_at = legs.iter().position(|l| l.role == Some(FixRole::Final));
     let map_at = legs.iter().position(|l| l.role == Some(FixRole::MissedApproachPoint)).unwrap_or(legs.len().saturating_sub(1));
-    let segment = match faf_at {
+    let _segment = match faf_at {
         Some(start) if map_at >= start => {
             // The missed approach point is often the runway itself, which carries no
             // position of its own: it is the threshold.
@@ -1729,131 +1695,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     label(c, bold, 7.5, x + 4.0, my + 2.0, &format!("{:.0}", est.altitude_ft), 0.0);
 }
 
-/// The band along the bottom: the number, how it was reached, and what it is not.
-fn draw_minima(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate) {
-    box_outline(c, x, y, w, h, 1.2, INK);
-    fill_box(c, x, y + h - 14.0, w, 14.0, 0.14);
-    // An approach named for a letter has no runway to name in the heading.
-    let lettered = ch.procedure.runway.len() == 1 && ch.procedure.runway.chars().all(|c| c.is_ascii_alphabetic());
-    let heading = if ch.circling_only && lettered {
-        "CIRCLING TO LAND".to_string()
-    } else if ch.circling_only {
-        format!("CIRCLING TO LAND RWY {}", ch.procedure.runway)
-    } else {
-        format!("STRAIGHT-IN LANDING RWY {}", ch.procedure.runway)
-    };
-    text(c, bold, 8.0, x + 6.0, y + h - 10.5, &heading, 1.0);
-    let stamp = match est.limited_by {
-        LimitedBy::Published => "AS PUBLISHED BY THE FAA",
-        LimitedBy::Coded => "FROM THE PROCEDURE'S OWN CODED MINIMUM",
-        _ => "AMDB V1 ESTIMATE - NOT A PUBLISHED MINIMUM",
-    };
-    text_right(c, font, 7.0, x + w - 6.0, y + h - 10.5, stamp, 1.0);
 
-    // The number itself, in the box on the left.
-    let col = 150.0;
-    line(c, x + col, y, x + col, y + h - 14.0, 0.8, RULE);
-    text(c, font, 7.0, x + 8.0, y + h - 26.0, est.approach.label(), 0.3);
-    text(c, bold, 22.0, x + 8.0, y + h - 52.0, &format!("{:.0}'", est.altitude_ft), INK);
-    text(c, font, 9.0, x + 8.0, y + h - 63.0, &format!("({:.0}' above touchdown)", est.height_ft), 0.25);
-
-    // How it was reached, in the words a chart would not use but a reader wants.
-    let why = match est.limited_by {
-        LimitedBy::Published => format!(
-            "Read from the FAA's own chart, \"{}\", where this line is printed as {}. Nothing here is estimated. Terrain under the approach reaches {:.0} ft.",
-            ch.published.map(|p| p.chart.as_str()).unwrap_or("the published approach chart"),
-            ch.published.map(|p| p.label.as_str()).unwrap_or("the straight-in minimum"),
-            est.highest_terrain_ft
-        ),
-        LimitedBy::Coded => format!(
-            "This is the procedure's own minimum, read from the navigation data rather than worked out here: the approach descends to {:.0} ft at its missed approach point. Terrain under the approach reaches {:.0} ft.",
-            est.altitude_ft, est.highest_terrain_ft
-        ),
-        LimitedBy::SystemMinimum => format!(
-            "Set by the system minimum for a {} approach: {:.0} ft above the touchdown zone, which is the floor no chart goes below. Nothing under the approach reaches it, so a published chart should carry this same number.",
-            est.approach.label(),
-            est.approach.system_minimum_ft()
-        ),
-        LimitedBy::Terrain => format!(
-            "Set by terrain under the approach, which reaches {:.0} ft; the minimum clears it by {:.0} ft.",
-            est.highest_terrain_ft,
-            est.approach.obstacle_margin_ft()
-        ),
-        LimitedBy::Obstacle => format!(
-            "Set by an obstacle under the approach: {} topping out at {:.0} ft, cleared by {:.0} ft. Highest terrain nearby is {:.0} ft.",
-            est.obstacle.as_deref().unwrap_or("an obstacle"),
-            est.obstacle_top_ft.unwrap_or(0.0),
-            est.approach.obstacle_margin_ft(),
-            est.highest_terrain_ft
-        ),
-    };
-    let mut row = y + h - 26.0;
-    for l in wrap(&why, 62) {
-        text(c, font, 7.0, x + col + 8.0, row, &l, 0.2);
-        row -= 9.0;
-    }
-    // With the glidepath out, the same chart publishes a higher minimum flown down the
-    // localiser alone. A chart prints it beside the other, and an aircraft that loses its
-    // glidepath on the way in needs it.
-    if let Some((alt, hat)) = ch.published_loc {
-        let row = y + 28.0;
-        text(c, font, 6.0, x + 8.0, row, "LOC (GS OUT)", 0.4);
-        text(c, bold, 10.0, x + 62.0, row, &format!("{alt:.0}'"), INK);
-        text(c, font, 7.0, x + 92.0, row, &format!("({hat:.0}')"), 0.3);
-    }
-    // Circling, by aircraft category: the faster the aeroplane, the wider it goes and
-    // the more it has to clear.
-    if !ch.circling.is_empty() {
-        let cy = y + 6.0;
-        text(c, font, 6.0, x + 8.0, cy + 9.0, "CIRCLING", 0.4);
-        for (i, (letter, ft)) in ch.circling.iter().enumerate() {
-            let cx = x + 8.0 + i as f32 * 34.0;
-            text(c, font, 5.5, cx, cy, &letter.to_string(), 0.45);
-            text(c, bold, 7.5, cx + 7.0, cy, &format!("{ft:.0}"), INK);
-        }
-    }
-    let where_from = if ch.tdze_surveyed {
-        ", as surveyed and published for this runway end"
-    } else if ch.threshold.is_some() {
-        ", the highest the terrain model finds in the first 3,000 ft of the runway"
-    } else {
-        " (the airport's own elevation: no built runway to measure at)"
-    };
-    if let Some(coded) = ch.coded_ft.filter(|ft| (ft - est.altitude_ft).abs() > 5.0) {
-        row -= 3.0;
-        let line = format!("The procedure itself codes {coded:.0} ft at its missed approach point.");
-        text(c, font, 7.0, x + col + 8.0, row, &line, 0.2);
-        row -= 9.0;
-    }
-    let tail = format!(
-        "Touchdown zone {:.0} ft{}. Obstacles: {}.",
-        ch.tdze_ft,
-        where_from,
-        if ch.obstacles.is_empty() { "none near this approach, or no obstacle source answered".to_string() } else { format!("{} near this airport, from {}", ch.obstacles.len(), ch.obstacles[0].source) }
-    );
-    for l in wrap(&tail, 62) {
-        text(c, font, 7.0, x + col + 8.0, row, &l, 0.4);
-        row -= 9.0;
-    }
-}
-
-/// The radios, across the page under the briefing strip, in the order they are used.
-fn draw_frequencies(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32) {
-    let list = ch.airport.briefing_frequencies();
-    if list.is_empty() {
-        return;
-    }
-    box_outline(c, x, y, w, h, 0.8, RULE);
-    let cw = w / list.len().max(3) as f32;
-    for (i, f) in list.iter().enumerate() {
-        let cx = x + i as f32 * cw;
-        if i > 0 {
-            line(c, cx, y + 2.0, cx, y + h - 2.0, 0.6, 0.6);
-        }
-        text(c, font, 6.0, cx + 6.0, y + h - 8.0, &f.kind, 0.45);
-        text(c, bold, 8.5, cx + 6.0, y + 4.0, &format!("{:.3}", f.mhz), INK);
-    }
-}
 
 /// The notes a chart carries, as far as they can be worked out from the data rather than
 /// copied from a state's own chart: what the approach is measured from, and what stands
@@ -1965,14 +1807,26 @@ fn draw_briefing_strip(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f
     line(c, inner_x, data_y, x + w - msa_w, data_y, 0.8, INK);
 
     // The missed approach, in the words a chart uses.
-    text(c, bold, 7.0, inner_x + 5.0, missed_y + missed_h - 9.0, "MISSED APCH:", INK);
+    text(c, bold, 7.5, inner_x + 5.0, missed_y + missed_h - 10.0, "MISSED APCH:", INK);
     let missed = ch
         .published
         .and_then(|p| p.text.missed_approach.clone())
         .unwrap_or_else(|| missed_text(&part_legs(ch.procedure, "missed")));
-    let room = ((inner_w - 74.0) / 3.3) as usize;
-    for (i, l) in wrap(&missed, room.max(20)).into_iter().take(2).enumerate() {
-        text(c, font, 7.5, inner_x + 62.0, missed_y + missed_h - 9.0 - i as f32 * 9.0, &l, INK);
+    // Set as large as the row will take: this is the one thing on the page that is read
+    // in a hurry, and a chart gives it the whole line.
+    let left = inner_x + 66.0;
+    let room = inner_w - 72.0;
+    let (mut size, mut lines) = (10.5f32, Vec::new());
+    while size > 6.0 {
+        lines = wrap_to_width(&missed, font, size, room);
+        if lines.len() <= 2 {
+            break;
+        }
+        size -= 0.5;
+    }
+    let top = missed_y + missed_h - if lines.len() > 1 { 9.0 } else { (missed_h + size) / 2.0 - 2.0 };
+    for (i, l) in lines.iter().take(2).enumerate() {
+        text(c, font, size, left, top - i as f32 * (size + 1.5), l, INK);
     }
     line(c, inner_x, missed_y, x + w - msa_w, missed_y, 0.8, INK);
 
@@ -2125,6 +1979,22 @@ fn faf_to_map_nm(ch: &Chart) -> f64 {
         .sum()
 }
 
+/// What the standard allowance adds to a visibility when the lights are out.
+///
+/// An approach flown to a runway visual range of 1,800 ft needs 2,400 with the touchdown
+/// zone and centreline lights unserviceable, and 4,000 with the approach lights out.
+/// These are the ordinary allowances rather than anything read off a chart.
+fn lights_out(visibility: &str) -> (String, String) {
+    let rvr: Option<u32> = visibility.strip_prefix("RVR ").and_then(|v| v.trim().parse().ok());
+    match rvr {
+        Some(18) => ("RVR 24".into(), "RVR 40".into()),
+        Some(24) => ("RVR 40".into(), "RVR 50".into()),
+        Some(40) => ("RVR 50".into(), "RVR 60".into()),
+        Some(other) => (format!("RVR {}", other + 6), format!("RVR {}", other + 12)),
+        None => (String::new(), String::new()),
+    }
+}
+
 /// The minima, in the table a chart prints them in: the straight-in landing on the left,
 /// by aircraft category, and circling to land on the right.
 ///
@@ -2184,7 +2054,7 @@ fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32
         let column = published.and_then(|p| p.categories.get(i).or_else(|| p.categories.first()));
         let visibility = column.map(|c| c.visibility.clone()).unwrap_or_default();
         if !visibility.is_empty() {
-            let allowance = lights_out(&visibility, i);
+            let allowance = lights_out(&visibility);
             let third = main_w / 3.0;
             text_centred(c, font, 7.0, x + 16.0 + third * 0.5, middle, &visibility, 0.1);
             text_centred(c, font, 7.0, x + 16.0 + third * 1.5, middle, &allowance.0, 0.3);
@@ -2215,58 +2085,17 @@ fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32
     line(c, x, sub_y + 11.0, x + straight_w, sub_y + 11.0, 0.4, 0.7);
 }
 
-/// What the standard allowance adds to a visibility when the lights are out.
-///
-/// An approach flown to a runway visual range of 1,800 ft needs 2,400 with the touchdown
-/// zone and centreline lights unserviceable, and 4,000 with the approach lights out.
-/// These are the ordinary allowances rather than anything read off a chart.
-fn lights_out(visibility: &str, category: usize) -> (String, String) {
-    let _ = category;
-    let rvr: Option<u32> = visibility.strip_prefix("RVR ").and_then(|v| v.trim().parse().ok());
-    match rvr {
-        Some(18) => ("RVR 24".into(), "RVR 40".into()),
-        Some(24) => ("RVR 40".into(), "RVR 50".into()),
-        Some(40) => ("RVR 50".into(), "RVR 60".into()),
-        Some(other) => (format!("RVR {}", other + 6), format!("RVR {}", other + 12)),
-        None => (String::new(), String::new()),
-    }
-}
 
-/// The strip of numbers a crew reads first, in boxes across the page.
-fn draw_briefing(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate, track_deg: f64) {
-    let cells: Vec<(String, String)> = vec![
-        (
-            if ch.course_mag_deg.is_some() { "FINAL CRS".into() } else { "FINAL CRS (T)".to_string() },
-            format!("{:03.0}", ch.course_mag_deg.unwrap_or(track_deg)),
-        ),
-        ("TDZE".into(), format!("{:.0}'", ch.tdze_ft)),
-        ("APT ELEV".into(), format!("{:.0}'", ch.field_elev_ft)),
-        ("MSA 25 NM".into(), ch.msa_ft.map(|m| format!("{m:.0}'")).unwrap_or_else(|| "-".into())),
-        ("DA(H)".into(), format!("{:.0}'({:.0}')", est.altitude_ft, est.height_ft)),
-    ];
-    let cw = w / cells.len() as f32;
-    box_outline(c, x, y, w, h, 1.2, INK);
-    for (i, (k, v)) in cells.iter().enumerate() {
-        let cx = x + i as f32 * cw;
-        if i > 0 {
-            line(c, cx, y, cx, y + h, 0.8, RULE);
-        }
-        text(c, font, 6.5, cx + 6.0, y + h - 10.0, k, 0.4);
-        text(c, bold, 12.0, cx + 6.0, y + 7.0, v, INK);
-    }
-}
-
-fn wrap(s: &str, width: usize) -> Vec<String> {
-    let mut out = vec![String::new()];
+/// Words broken into lines that fit a width, at the size they will be set in.
+fn wrap_to_width(s: &str, font: Name, size: f32, width: f32) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
     for word in s.split_whitespace() {
-        let last = out.last_mut().unwrap();
-        if last.len() + word.len() + 1 > width {
-            out.push(word.to_string());
-        } else {
-            if !last.is_empty() {
+        match out.last_mut() {
+            Some(last) if text_width(font, size, &format!("{last} {word}")) <= width => {
                 last.push(' ');
+                last.push_str(word);
             }
-            last.push_str(word);
+            _ => out.push(word.to_string()),
         }
     }
     out
@@ -2333,32 +2162,44 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
 
     // Header: the name block on the left, the procedure on the right, the way a chart
     // puts its identity where the thumb falls.
-    let head_h = 42.0;
+    let head_h = 46.0;
     let head_y = H - MARGIN - head_h;
     fill_box(&mut c, MARGIN, head_y, W - 2.0 * MARGIN, head_h, 0.10);
-    text(&mut c, b, 15.0, MARGIN + 8.0, head_y + head_h - 18.0, "AMDB V1", 1.0);
-    text(&mut c, f, 6.5, MARGIN + 8.0, head_y + head_h - 28.0, "FREE AIRPORT", 0.75);
-    text(&mut c, f, 6.5, MARGIN + 8.0, head_y + head_h - 36.0, "MAPPING DATABASE", 0.75);
-    line(&mut c, MARGIN + 96.0, head_y + 4.0, MARGIN + 96.0, head_y + head_h - 4.0, 0.8, 0.6);
-    let title = title_of(ch.procedure);
-    text_right(&mut c, b, 13.0, W - MARGIN - 8.0, head_y + head_h - 17.0, &title, 1.0);
-    let name_x = MARGIN + 106.0;
+    // Left: what the place is called, by its codes and by its name.
+    let idents = match ch.airport_iata {
+        Some(iata) if !iata.is_empty() => format!("{}/{}", ch.airport.icao, iata),
+        _ => ch.airport.icao.clone(),
+    };
+    text(&mut c, b, 15.0, MARGIN + 8.0, head_y + head_h - 20.0, &idents, 1.0);
     let short_name = shorten(ch.airport_name.unwrap_or(""));
-    let room = W - MARGIN - 16.0 - text_width(b, 13.0, &title) - name_x;
-    let mut heading = format!("{}  {}", ch.airport.icao, short_name);
-    while text_width(b, 13.0, &heading) > room && heading.len() > ch.airport.icao.len() + 4 {
-        heading.pop();
+    text(&mut c, f, 9.0, MARGIN + 8.0, head_y + head_h - 32.0, &short_name, 0.9);
+    text(&mut c, f, 6.0, MARGIN + 8.0, head_y + 5.0, &format!("{:.4}, {:.4}", ch.airport.lat, ch.airport.lon), 0.7);
+
+    // Right: where in the world it is, and which procedure this is.
+    let title = ch
+        .published
+        .map(|p| p.chart.clone())
+        .unwrap_or_else(|| title_of(ch.procedure));
+    text_right(&mut c, b, 14.0, W - MARGIN - 8.0, head_y + head_h - 19.0, &title, 1.0);
+    if let Some(place) = ch.airport_place {
+        text_right(&mut c, f, 9.0, W - MARGIN - 8.0, head_y + head_h - 32.0, &place.to_uppercase(), 0.9);
     }
-    text(&mut c, b, 13.0, name_x, head_y + head_h - 17.0, heading.trim_end(), 1.0);
-    text(&mut c, f, 7.5, name_x, head_y + head_h - 29.0, &format!("{:.4}, {:.4}", ch.airport.lat, ch.airport.lon), 0.8);
-    let star_note = ch.star.map(|s| format!(" - VIA {}", s.name)).unwrap_or_default();
     let source = match est.limited_by {
         LimitedBy::Published => "published minimum",
         LimitedBy::Coded => "coded minimum",
         _ => "estimated minimum",
     };
     let circling_note = if ch.circling_only { " - CIRCLING ONLY" } else { "" };
-    text_right(&mut c, f, 7.5, W - MARGIN - 8.0, head_y + head_h - 29.0, &format!("{}{circling_note} - {source}{star_note}", ch.kind.label().to_uppercase()), 0.8);
+    let star_note = ch.star.map(|s| format!(" - VIA {}", s.name)).unwrap_or_default();
+    text_right(&mut c, f, 6.0, W - MARGIN - 8.0, head_y + 5.0, &format!("{}{circling_note} - {source}{star_note}", ch.kind.label().to_uppercase()), 0.7);
+
+    // Middle: whose chart it is, and what it was drawn from.
+    let middle = MARGIN + (W - 2.0 * MARGIN) / 2.0;
+    text_centred(&mut c, b, 13.0, middle, head_y + head_h - 19.0, "AMDB V1", 1.0);
+    text_centred(&mut c, f, 5.5, middle, head_y + head_h - 28.0, "FREE AIRPORT MAPPING DATABASE", 0.7);
+    if let Some((from, to)) = &ch.airac {
+        text_centred(&mut c, f, 6.5, middle, head_y + 5.0, &format!("EFF {from} - {to}"), 0.85);
+    }
 
     // The bands of the page, in the order a chart has always had them: what to brief,
     // then the picture, then the descent, then the speeds, then the minima.
