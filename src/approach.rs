@@ -721,14 +721,35 @@ pub fn published_localiser(
     cache: &crate::cache::Cache,
     setup: &Setup,
     kind: crate::minima::Approach,
-) -> Option<(f64, f64, String)> {
+) -> Option<crate::sources::dtpp::Published> {
     if kind != crate::minima::Approach::PrecisionCat1 || setup.is_circling_only() {
         return None;
     }
     let procedure = setup.procedure();
     let line = crate::sources::dtpp::Line::StraightIn(crate::sources::msfs::procedures::ApproachType::Localiser);
-    let read = crate::sources::dtpp::published(http, cache, &setup.procedures.icao, line, &procedure.runway, procedure.suffix, setup.tdze_ft)?;
-    Some((read.altitude_ft, read.height_ft, read.visibility))
+    crate::sources::dtpp::published(http, cache, &setup.procedures.icao, line, &procedure.runway, procedure.suffix, setup.tdze_ft)
+}
+
+/// The airway a published missed approach joins, where it names one.
+///
+/// A chart writes it in a black flag on the track: V-44 out of Kennedy. It is in the
+/// sentence the state publishes and nowhere else — "heading 099 and V44 to DPK VOR/DME
+/// and hold" — so it is picked out of that by its shape: a letter for the sort of airway,
+/// then a number.
+pub fn missed_airway(text: &str) -> Option<String> {
+    text.split(|c: char| c.is_whitespace() || c == ',').find_map(|word| {
+        let word = word.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-');
+        let bare = word.replace('-', "");
+        let mut chars = bare.chars();
+        let first = chars.next()?;
+        let rest: String = chars.collect();
+        let sort = matches!(first, 'V' | 'J' | 'Q' | 'T' | 'B' | 'A' | 'G' | 'L' | 'M' | 'N' | 'R' | 'W' | 'Y' | 'Z');
+        let numbered = !rest.is_empty() && rest.len() <= 3 && rest.chars().all(|c| c.is_ascii_digit());
+        (sort && numbered).then(|| {
+            // Written with a hyphen, the way a chart writes it.
+            format!("{first}-{rest}")
+        })
+    })
 }
 
 /// What the missed approach from a given minimum asks for.

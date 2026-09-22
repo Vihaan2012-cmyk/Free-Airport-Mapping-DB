@@ -295,7 +295,17 @@ pub struct ChartText {
     pub notes: Vec<String>,
     /// The fix an alternate missed approach holds at, where the chart names one.
     pub alternate_missed_fix: Option<String>,
+    /// The distances from the localiser the profile is marked at, nearest last. A chart
+    /// ticks its profile at these and gives the distance between each pair.
+    pub dme_checkpoints: Vec<f64>,
+    /// The approach lighting the runway has, as the chart names it: ALSF-2, MALSR, and
+    /// the like. Which system it is decides how much the visibility may be reduced, and
+    /// it is drawn beside the missed approach.
+    pub approach_lights: Option<String>,
 }
+
+/// The lighting systems a chart names, longest first so that ALSF-2 is not read as ALSF.
+const LIGHTING: [&str; 10] = ["ALSF-2", "ALSF-1", "SSALR", "SSALF", "MALSR", "MALSF", "ODALS", "ALSF", "MALS", "SALS"];
 
 /// The words on a chart, which are worth having because they are the ones a state wrote.
 ///
@@ -355,6 +365,35 @@ pub fn chart_text(pdf: &[u8]) -> ChartText {
             .min_by(|a, b| (label.y - a.y).total_cmp(&(label.y - b.y)));
         out.alternate_missed_fix = below.and_then(|i| i.text.split_whitespace().next().map(|s| s.to_string()));
     }
+    // The profile is ticked at distances from the localiser: the ident with the distance
+    // written under it. Kennedy's reads I-JFK over 3.1, and the gaps between those ticks
+    // are the segment distances a chart prints along the bottom.
+    let looks_like_localiser = |s: &str| {
+        let s = s.trim().replace('-', "");
+        s.len() == 4 && s.starts_with('I') && s.chars().all(|c| c.is_ascii_uppercase())
+    };
+    let mut checkpoints: Vec<f64> = items
+        .iter()
+        .filter(|i| looks_like_localiser(&i.text))
+        .filter_map(|label| {
+            items
+                .iter()
+                .filter(|i| (i.x - label.x).abs() < 6.0 && i.y < label.y && label.y - i.y < 11.0)
+                .find_map(|i| {
+                    let t = i.text.trim();
+                    let (whole, rest) = t.split_once('.')?;
+                    (whole.len() <= 2 && rest.len() == 1 && whole.chars().chain(rest.chars()).all(|c| c.is_ascii_digit())).then(|| t.parse::<f64>().ok())?
+                })
+        })
+        .collect();
+    checkpoints.sort_by(|a, b| b.total_cmp(a));
+    checkpoints.dedup_by(|a, b| (*a - *b).abs() < 0.05);
+    out.dme_checkpoints = checkpoints;
+
+    out.approach_lights = items.iter().find_map(|i| {
+        let t = i.text.trim().to_uppercase();
+        LIGHTING.iter().find(|l| t == **l).map(|l| (*l).to_string())
+    });
     out
 }
 

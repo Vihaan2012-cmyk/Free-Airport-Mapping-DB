@@ -134,6 +134,8 @@ fn one(
         .as_ref()
         .and_then(|p| p.text.alternate_missed_fix.clone())
         .and_then(|fix| crate::sources::navdata::hold_towards(&fix, at));
+    // The airway the published missed approach joins, which only its own words give.
+    let missed_airway = published.as_ref().and_then(|p| p.text.missed_approach.as_deref()).and_then(crate::approach::missed_airway);
     // The localiser minimum for a glidepath failure, read off the same chart.
     let localiser = crate::approach::published_localiser(http, cache, &setup, kind);
     let published_msa = crate::sources::navdata::msa(&setup.procedures.icao, (setup.procedures.lat, setup.procedures.lon));
@@ -154,8 +156,12 @@ fn one(
         threshold_crossing_ft: runway_record.and_then(|r| r.threshold_crossing_ft),
         alternate_hold: alternate_hold.as_ref(),
         missed_hold: missed_hold.as_ref(),
-        published_loc_visibility: localiser.as_ref().map(|(_, _, v)| v.clone()),
-        published_loc: localiser.as_ref().map(|(a, h, _)| (*a, *h)),
+        published_loc_visibility: localiser.as_ref().map(|l| l.visibility.clone()),
+        published_loc: localiser.as_ref().map(|l| (l.altitude_ft, l.height_ft)),
+        published_loc_columns: localiser.as_ref().map(|l| l.categories.as_slice()).unwrap_or(&[]),
+        dme_checkpoints: published.as_ref().map(|p| p.text.dme_checkpoints.as_slice()).unwrap_or(&[]),
+        approach_lights: published.as_ref().and_then(|p| p.text.approach_lights.as_deref()),
+        missed_airway: missed_airway.as_deref(),
         published: published.as_ref(),
         airport: &setup.procedures,
         airport_name: setup.airport_name.as_deref(),
