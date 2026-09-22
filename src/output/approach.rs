@@ -1680,30 +1680,63 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     }
     line(c, left - 30.0, ground_y, right, ground_y, 1.0, INK);
 
-    // The descent itself, from each fix's altitude down to the threshold crossing.
-    let mut points: Vec<(f32, f32, &Leg)> = Vec::new();
-    for leg in legs.iter().rev() {
+    // The descent as it is actually flown, which is what a chart draws: level at each
+    // altitude until the next descent begins, down to the next, level again, and from the
+    // final approach fix down the glidepath itself. Drawn as one long slope it would say
+    // something untrue — that an aircraft leaves the first fix descending and arrives at
+    // the second still descending, when what it does is come down early and wait.
+    //
+    // How steeply it comes down between two fixes is not published; three hundred feet to
+    // the mile is the ordinary figure and is what the step is drawn at.
+    const STEP_DOWN_FT_PER_NM: f64 = 318.0;
+    let mut fixes: Vec<(f64, f64, &Leg)> = Vec::new();
+    for leg in legs.iter() {
         if let Some(a) = leg.altitude_ft.filter(|a| *a > ch.tdze_ft) {
-            // The fix at the runway has no position of its own: it is the threshold.
             let nm = fix_distance_nm(leg, thr).unwrap_or(0.0).max(0.0);
-            points.push((at_nm(nm), at_ft(a), leg));
+            fixes.push((nm, a, leg));
         }
     }
-    let tch = at_ft(ch.tdze_ft + ch.threshold_crossing_ft.unwrap_or(50.0));
+    // Farthest out first, which is the way the aircraft meets them.
+    fixes.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let crossing_ft = ch.threshold_crossing_ft.unwrap_or(50.0);
+    let tch = at_ft(ch.tdze_ft + crossing_ft);
+    // The fix the glidepath is joined at: from there the path is the glidepath and not a
+    // series of steps.
+    let faf_nm = legs
+        .iter()
+        .find(|l| l.role == Some(crate::sources::msfs::procedures::FixRole::Final))
+        .and_then(|l| fix_distance_nm(l, thr))
+        .or_else(|| fixes.last().map(|(nm, _, _)| *nm));
+
+    let mut path: Vec<(f32, f32)> = Vec::new();
+    if let Some((first_nm, first_ft, _)) = fixes.first().copied() {
+        // Level in from the edge of the paper to the first fix.
+        path.push((at_nm(total_nm), at_ft(first_ft)));
+        path.push((at_nm(first_nm), at_ft(first_ft)));
+        for pair in fixes.windows(2) {
+            let ((from_nm, from_ft, _), (to_nm, to_ft, _)) = (pair[0], pair[1]);
+            if to_ft < from_ft - 20.0 {
+                // Down at the ordinary gradient, then level until the fix itself.
+                let run = ((from_ft - to_ft) / STEP_DOWN_FT_PER_NM).min(from_nm - to_nm);
+                path.push((at_nm(from_nm - run), at_ft(to_ft)));
+            }
+            path.push((at_nm(to_nm), at_ft(to_ft)));
+        }
+        let _ = first_nm;
+    }
+    // And from the final approach fix, the glidepath to the threshold.
+    path.push((at_nm(0.0), tch));
     c.set_stroke_gray(INK);
     c.set_line_width(1.6);
-    c.move_to(at_nm(0.0), tch);
-    for (px, py, _) in points.iter() {
-        c.line_to(*px, *py);
+    if let Some(first) = path.first() {
+        c.move_to(first.0, first.1);
+        for point in &path[1..] {
+            c.line_to(point.0, point.1);
+        }
+        c.stroke();
     }
-    // An aircraft arrives at the first fix level, having been let down to that altitude
-    // long before, so the path runs flat to the edge of the paper rather than climbing
-    // off it.
-    if let Some((px, py, _)) = points.last() {
-        let _ = px;
-        c.line_to(at_nm(total_nm), *py);
-    }
-    c.stroke();
+    // The points the altitudes are written at, which are the fixes themselves.
+    let points: Vec<(f32, f32, &Leg)> = fixes.iter().map(|(nm, ft, leg)| (at_nm(*nm), at_ft(*ft), *leg)).collect();
 
     // Everything the profile marks, from the threshold outwards: the fixes that carry an
     // altitude, and the marker beacons the approach crosses on its way in. A chart names
@@ -1716,7 +1749,6 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
             format!("D{nm:.1} {ident}")
         })
     };
-    let crossing_ft = ch.threshold_crossing_ft.unwrap_or(50.0);
     let mut marks: Vec<(f64, f32, f32, String, Option<String>)> = Vec::new();
     for (px, py, leg) in &points {
         if !leg.fix.starts_with("RW") {
@@ -1777,7 +1809,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     // place on the descent it stands for.
     let name_row = y + h - 11.0;
     let mut last_x = f32::NEG_INFINITY;
-    for (_, px, py, name, under) in &marks {
+    for (_, px, _py, name, under) in &marks {
         if *px - last_x < 26.0 {
             continue;
         }
@@ -1808,7 +1840,10 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
                 row -= 6.5;
             }
         }
-        line(c, *px, row + 4.0, *px, *py, 0.4, 0.5);
+        c.save_state();
+        c.set_dash_pattern([2.0, 2.0], 0.0);
+        line(c, *px, row + 4.0, *px, ground_y - 12.0, 0.4, 0.55);
+        c.restore_state();
     }
     // How far it is from each to the next, along the bottom between tick marks.
     let ticks: Vec<(f64, f32)> = marks.iter().map(|(nm, px, _, _, _)| (*nm, *px)).chain([(0.0, at_nm(0.0))]).collect();
@@ -1819,20 +1854,20 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         if gap < 0.05 || (b.1 - a.1).abs() < 18.0 {
             continue;
         }
-        line(c, a.1, rule_y - 3.0, a.1, rule_y + 3.0, 0.5, 0.5);
-        line(c, b.1, rule_y - 3.0, b.1, rule_y + 3.0, 0.5, 0.5);
+        line(c, a.1, rule_y - 4.0, a.1, rule_y + 5.0, 0.5, 0.5);
+        line(c, b.1, rule_y - 4.0, b.1, rule_y + 5.0, 0.5, 0.5);
         text_centred(c, font, 6.0, (a.1 + b.1) / 2.0, rule_y - 2.0, &format!("{gap:.1}"), 0.3);
     }
 
     // The beam itself: a glidepath is not a line but a wedge, and a chart draws it as
     // one, widening away from the runway.
-    if ch.glidepath_deg.is_some() {
-        let slope = ch.glidepath_deg.unwrap_or(3.0);
+    if let (Some(slope), Some(reach)) = (ch.glidepath_deg, faf_nm) {
         let tip = (at_nm(0.0), at_ft(ch.tdze_ft + crossing_ft));
-        for spread in [0.45f64, -0.45] {
+        let reach = reach + 0.2;
+        for spread in [0.5f64, -0.5] {
             let angle = (slope + spread).to_radians().tan();
-            let far_ft = ch.tdze_ft + crossing_ft + total_nm * 6076.115 * angle;
-            line(c, tip.0, tip.1, at_nm(total_nm), at_ft(far_ft), 0.5, 0.45);
+            let far_ft = ch.tdze_ft + crossing_ft + reach * 6076.115 * angle;
+            line(c, tip.0, tip.1, at_nm(reach), at_ft(far_ft), 0.5, 0.45);
         }
     }
     // Where the approach is left for the runway, and where it may not be flown past: a
