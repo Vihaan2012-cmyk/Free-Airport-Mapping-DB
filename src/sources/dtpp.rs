@@ -164,6 +164,8 @@ pub struct Published {
     pub categories: Vec<Column>,
     /// The circling line from the same chart, where it carries one, by category.
     pub circling: Vec<Column>,
+    /// What the chart says in words: the missed approach, the notes, the alternate.
+    pub text: ChartText,
 }
 
 /// Which line of the band is wanted.
@@ -219,6 +221,7 @@ pub fn published(
         None
     })?;
     published.chart = chart.name.clone();
+    published.text = chart_text(&bytes);
     if !sane(&published, touchdown_ft) {
         log::info!(
             "{icao}: {} on {} reads {:.0}/{:.0}, which does not agree with a touchdown zone of {touchdown_ft:.0} ft",
@@ -261,6 +264,7 @@ pub fn read_chart(pdf: &[u8], chart_name: &str, line: Line, runway: &str) -> Opt
         label: read.label,
         chart: chart_name.to_string(),
         circling,
+        text: ChartText::default(),
     })
 }
 
@@ -277,6 +281,81 @@ pub fn charts_at(http: &Http, cache: &Cache, icao: &str) -> Vec<ChartRef> {
         return Vec::new();
     }
     index(http, cache).get(&icao.to_uppercase()).cloned().unwrap_or_default()
+}
+
+
+/// What a chart says in words rather than in numbers.
+#[derive(Debug, Clone, Default)]
+pub struct ChartText {
+    /// The missed approach, as the state publishes it: "Climb to 800 then climbing right
+    /// turn to 4000 heading 099 and V44 to DPK VOR/DME and hold."
+    pub missed_approach: Option<String>,
+    /// The notes printed with the procedure: radar required, simultaneous approaches
+    /// authorised, and the like.
+    pub notes: Vec<String>,
+    /// The fix an alternate missed approach holds at, where the chart names one.
+    pub alternate_missed_fix: Option<String>,
+}
+
+/// The words on a chart, which are worth having because they are the ones a state wrote.
+///
+/// Our own missed approach sentence is assembled from the coded legs and reads like it;
+/// the chart's own is what a crew is briefed. The notes cannot be worked out from
+/// anything at all — that radar is required to join a procedure, or that simultaneous
+/// approaches are authorised, is a decision rather than a measurement.
+pub fn chart_text(pdf: &[u8]) -> ChartText {
+    let items = text_items(pdf);
+    let mut out = ChartText::default();
+    let Some(anchor) = items.iter().find(|i| i.text.trim_start().to_uppercase().starts_with("MISSED APPROACH")) else {
+        return out;
+    };
+    // The sentence runs on below itself, at the same left edge, until the lines stop.
+    let mut lines: Vec<(f64, String)> = vec![(anchor.y, anchor.text.trim().to_string())];
+    let mut y = anchor.y;
+    loop {
+        let next = items
+            .iter()
+            .filter(|i| (i.x - anchor.x).abs() < 3.0 && i.y < y - 1.0 && y - i.y < 12.0)
+            .max_by(|a, b| a.y.total_cmp(&b.y));
+        match next {
+            Some(item) => {
+                y = item.y;
+                lines.push((item.y, item.text.trim().to_string()));
+            }
+            None => break,
+        }
+    }
+    let joined: String = lines.iter().map(|(_, s)| s.as_str()).collect::<Vec<_>>().join(" ");
+    let sentence = joined.split_once(':').map(|(_, rest)| rest).unwrap_or(&joined).split_whitespace().collect::<Vec<_>>().join(" ");
+    if !sentence.is_empty() {
+        out.missed_approach = Some(sentence);
+    }
+
+    // The notes sit beside the missed approach, in the same band of the page.
+    let top = anchor.y + 16.0;
+    let bottom = anchor.y - 16.0;
+    let mut notes: Vec<(f64, String)> = items
+        .iter()
+        .filter(|i| i.x < anchor.x - 20.0 && i.y <= top && i.y >= bottom)
+        .map(|i| (i.y, i.text.trim().to_string()))
+        .filter(|(_, s)| s.len() > 14 && s.ends_with('.') && s.contains(' '))
+        .collect();
+    notes.sort_by(|a, b| b.0.total_cmp(&a.0));
+    out.notes = notes.into_iter().map(|(_, s)| s).collect();
+
+    // The alternate missed approach, which a chart gives as a fix in its own corner.
+    if let Some(label) = items.iter().find(|i| i.text.trim().eq_ignore_ascii_case("ALTERNATE")) {
+        let below = items
+            .iter()
+            .filter(|i| (i.x - label.x).abs() < 14.0 && i.y < label.y && label.y - i.y < 34.0)
+            .filter(|i| {
+                let t = i.text.trim();
+                t.len() >= 5 && t.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) && !t.eq_ignore_ascii_case("MISSED") && !t.to_uppercase().starts_with("APCH")
+            })
+            .min_by(|a, b| (label.y - a.y).total_cmp(&(label.y - b.y)));
+        out.alternate_missed_fix = below.and_then(|i| i.text.split_whitespace().next().map(|s| s.to_string()));
+    }
+    out
 }
 
 /// Whether a reading can be believed.

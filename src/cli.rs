@@ -1101,8 +1101,17 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
     let ils = crate::sources::navdata::ils(&setup.procedures.icao, &procedure.runway);
     // The published safe altitudes where a navigation database carries them, and ours
     // worked out from the terrain where it does not.
-    // The hold the missed approach ends in, where the navigation database publishes one.
-    let missed_hold = crate::output::approach::missed_hold_fix(procedure).and_then(|fix| crate::sources::navdata::hold_at(&fix));
+    // What the runway itself publishes: the height the glidepath crosses it at.
+    let runway_record = crate::sources::navdata::runway(&setup.procedures.icao, &procedure.runway);
+    // The hold the missed approach ends in, and the one flown instead where the chart
+    // names an alternate. Both are entered from the airport's side, which is how the
+    // right one is picked out of the several a fix can carry.
+    let at = (setup.procedures.lat, setup.procedures.lon);
+    let missed_hold = crate::output::approach::missed_hold_fix(procedure).and_then(|fix| crate::sources::navdata::hold_towards(&fix, at));
+    let alternate_hold = published
+        .as_ref()
+        .and_then(|p| p.text.alternate_missed_fix.clone())
+        .and_then(|fix| crate::sources::navdata::hold_towards(&fix, at));
     // The localiser minimum for a glidepath failure, read off the same chart.
     let localiser = crate::approach::published_localiser(&http, &cache, &setup, kind);
     let published_msa = crate::sources::navdata::msa(&setup.procedures.icao, (setup.procedures.lat, setup.procedures.lon));
@@ -1120,6 +1129,8 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
         ils: ils.as_ref(),
         msa_caption,
         glidepath_deg: kind.has_glidepath().then(|| ils.as_ref().and_then(|i| i.glidepath_deg).unwrap_or(3.0)),
+        threshold_crossing_ft: runway_record.and_then(|r| r.threshold_crossing_ft),
+        alternate_hold: alternate_hold.as_ref(),
         missed_hold: missed_hold.as_ref(),
         published_loc_visibility: localiser.as_ref().map(|(_, _, v)| v.clone()),
         published_loc: localiser.as_ref().map(|(a, h, _)| (*a, *h)),
