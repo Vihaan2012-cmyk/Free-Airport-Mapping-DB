@@ -123,6 +123,10 @@ fn one(
     let ils = crate::sources::navdata::ils(&setup.procedures.icao, &procedure.runway);
     // The published safe altitudes where a navigation database carries them, and ours
     // worked out from the terrain where it does not.
+    // The hold the missed approach ends in, where the navigation database publishes one.
+    let missed_hold = crate::output::approach::missed_hold_fix(procedure).and_then(|fix| crate::sources::navdata::hold_at(&fix));
+    // The localiser minimum for a glidepath failure, read off the same chart.
+    let localiser = crate::approach::published_localiser(http, cache, &setup, kind);
     let published_msa = crate::sources::navdata::msa(&setup.procedures.icao, (setup.procedures.lat, setup.procedures.lon));
     let msa_sectors: Vec<crate::minima::Sector> = match &published_msa {
         Some(m) => m.sectors.iter().map(|s| crate::minima::Sector { from_deg: s.from_deg, to_deg: s.to_deg, altitude_ft: s.altitude_ft }).collect(),
@@ -138,7 +142,9 @@ fn one(
         ils: ils.as_ref(),
         msa_caption,
         glidepath_deg: kind.has_glidepath().then(|| ils.as_ref().and_then(|i| i.glidepath_deg).unwrap_or(3.0)),
-        published_loc: crate::approach::published_localiser(http, cache, &setup, kind),
+        missed_hold: missed_hold.as_ref(),
+        published_loc_visibility: localiser.as_ref().map(|(_, _, v)| v.clone()),
+        published_loc: localiser.as_ref().map(|(a, h, _)| (*a, *h)),
         published: published.as_ref(),
         airport: &setup.procedures,
         airport_name: setup.airport_name.as_deref(),

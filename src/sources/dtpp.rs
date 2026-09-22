@@ -158,10 +158,12 @@ pub struct Published {
     pub label: String,
     /// Which chart it was read from.
     pub chart: String,
+    /// What is flown to the minimum: "RVR 18", "1", "1\u{bd}".
+    pub visibility: String,
     /// Every aircraft category, left to right, where the row prints them separately.
-    pub categories: Vec<(f64, f64)>,
+    pub categories: Vec<Column>,
     /// The circling line from the same chart, where it carries one, by category.
-    pub circling: Vec<(f64, f64)>,
+    pub circling: Vec<Column>,
 }
 
 /// Which line of the band is wanted.
@@ -254,6 +256,7 @@ pub fn read_chart(pdf: &[u8], chart_name: &str, line: Line, runway: &str) -> Opt
     Some(Published {
         altitude_ft: read.altitude_ft,
         height_ft: read.height_ft,
+        visibility: read.visibility,
         categories: read.categories,
         label: read.label,
         chart: chart_name.to_string(),
@@ -375,9 +378,10 @@ pub struct Item {
 struct Reading {
     altitude_ft: f64,
     height_ft: f64,
+    visibility: String,
     /// Every aircraft category printed on the row, left to right. One entry where the
     /// categories share a minimum, four where they do not.
-    categories: Vec<(f64, f64)>,
+    categories: Vec<Column>,
     label: String,
 }
 
@@ -419,8 +423,8 @@ fn read_line(items: &[Item], line: Line, runway: &str, tight: bool) -> Option<Re
     rows.sort_by(|a, b| b.1.total_cmp(&a.1));
     for (x, y, label) in rows {
         let categories = row_values(items, x, y, tolerance);
-        if let Some(&(altitude, height)) = categories.first() {
-            return Some(Reading { altitude_ft: altitude, height_ft: height, categories, label });
+        if let Some(first) = categories.first() {
+            return Some(Reading { altitude_ft: first.altitude_ft, height_ft: first.height_ft, visibility: first.visibility.clone(), categories, label });
         }
     }
     None
@@ -434,15 +438,15 @@ fn read_line(items: &[Item], line: Line, runway: &str, tight: bool) -> Option<Re
 /// the altitude before it. Where the four differ the pairs are often printed as two
 /// stacked lines rather than one, which is why a column's two halves are found by where
 /// they sit across the page rather than by which line they are on.
-fn row_values(items: &[Item], row_x: f64, row_y: f64, tolerance: f64) -> Vec<(f64, f64)> {
+fn row_values(items: &[Item], row_x: f64, row_y: f64, tolerance: f64) -> Vec<Column> {
     let mut near: Vec<&Item> = items.iter().filter(|o| (o.y - row_y).abs() <= tolerance && o.x >= row_x - 2.0).collect();
     near.sort_by(|a, b| a.x.total_cmp(&b.x));
-    let mut altitudes: Vec<(f64, f64)> = Vec::new();
+    let mut altitudes: Vec<(f64, f64, String)> = Vec::new();
     let mut heights: Vec<(f64, f64)> = Vec::new();
     for item in near {
         let text = item.text.trim();
-        if let Some(altitude) = altitude_token(text) {
-            altitudes.push((item.x, altitude as f64));
+        if let Some((altitude, visibility)) = altitude_token(text) {
+            altitudes.push((item.x, altitude as f64, visibility));
         } else if let Some(height) = height_token(text) {
             heights.push((item.x, height as f64));
         }
@@ -454,7 +458,7 @@ fn row_values(items: &[Item], row_x: f64, row_y: f64, tolerance: f64) -> Vec<(f6
     let mut used = vec![false; heights.len()];
     altitudes
         .into_iter()
-        .filter_map(|(ax, altitude)| {
+        .filter_map(|(ax, altitude, visibility)| {
             let nearest = heights
                 .iter()
                 .enumerate()
@@ -462,9 +466,18 @@ fn row_values(items: &[Item], row_x: f64, row_y: f64, tolerance: f64) -> Vec<(f6
                 .min_by(|(_, a), (_, b)| (a.0 - ax).abs().total_cmp(&(b.0 - ax).abs()))
                 .map(|(i, h)| (i, h.1))?;
             used[nearest.0] = true;
-            Some((altitude, nearest.1))
+            Some(Column { altitude_ft: altitude, height_ft: nearest.1, visibility })
         })
         .collect()
+}
+
+/// One column of a minima row: what a single aircraft category is given.
+#[derive(Debug, Clone)]
+pub struct Column {
+    pub altitude_ft: f64,
+    pub height_ft: f64,
+    /// What a chart prints beside it: "RVR 18", "1", "1\u{bd}".
+    pub visibility: String,
 }
 
 /// Whether a string is the label of the row wanted, and whether its runway number was
@@ -548,18 +561,28 @@ fn leading_number(text: &str) -> Option<(u32, usize, &str)> {
     Some((digits.parse().ok()?, digits.len(), &text[digits.len()..]))
 }
 
-/// An altitude, as a minima band writes one: "640-1", "1040/40", or on its own.
-fn altitude_token(text: &str) -> Option<u32> {
+/// An altitude, as a minima band writes one: "640-1", "1040/40", or on its own — and
+/// with it the visibility, which is printed in the same breath.
+///
+/// A slash means runway visual range in hundreds of feet, so "692/18" is a decision
+/// altitude of 692 ft flown to an RVR of 1,800; a hyphen means statute miles, so "640-1"
+/// is a mile. Both are what a chart prints beside the altitude, and neither needs another
+/// source.
+fn altitude_token(text: &str) -> Option<(u32, String)> {
     let (value, len, rest) = leading_number(text.trim())?;
     if !(3..=5).contains(&len) {
         return None;
     }
     let rest = rest.trim_start();
-    if rest.starts_with('/') || rest.starts_with('-') {
-        return Some(value);
+    if let Some(vis) = rest.strip_prefix('/') {
+        let vis = vis.trim();
+        return Some((value, if vis.is_empty() { String::new() } else { format!("RVR {vis}") }));
+    }
+    if let Some(vis) = rest.strip_prefix('-') {
+        return Some((value, vis.trim().to_string()));
     }
     // A bare number, which has to be big enough not to be a page or amendment number.
-    (rest.is_empty() && value > 50).then_some(value)
+    (rest.is_empty() && value > 50).then_some((value, String::new()))
 }
 
 /// A height above touchdown: the number outside the brackets in "618 (700-1)". The one
@@ -853,9 +876,10 @@ mod tests {
 
     #[test]
     fn an_altitude_is_the_figure_before_the_visibility() {
-        assert_eq!(altitude_token("640-1"), Some(640));
-        assert_eq!(altitude_token("1040/40"), Some(1040));
-        assert_eq!(altitude_token("4640"), Some(4640));
+        assert_eq!(altitude_token("640-1"), Some((640, "1".to_string())));
+        assert_eq!(altitude_token("1040/40"), Some((1040, "RVR 40".to_string())));
+        assert_eq!(altitude_token("692/18"), Some((692, "RVR 18".to_string())));
+        assert_eq!(altitude_token("4640"), Some((4640, String::new())));
         assert_eq!(altitude_token("12"), None);
         assert_eq!(altitude_token("618 (700-1)"), None);
     }
