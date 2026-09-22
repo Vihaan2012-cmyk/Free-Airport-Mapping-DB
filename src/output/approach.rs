@@ -10,7 +10,7 @@
 
 use crate::minima::{Approach, Estimate, LimitedBy};
 use crate::sources::copernicus::Patch;
-use crate::sources::msfs::procedures::{AirportProcedures, Kind, Leg, Procedure, Transition, Turn};
+use crate::sources::msfs::procedures::{AirportProcedures, FixRole, Kind, Leg, Procedure, Transition, Turn};
 use crate::sources::obstacles::Obstacle;
 use anyhow::{Context, Result};
 use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str};
@@ -55,9 +55,16 @@ pub struct Chart<'a> {
     /// How far magnetic north is from true north here, positive east.
     pub variation_deg: Option<f64>,
     pub kind: Approach,
+    /// The circling minimum for each aircraft category, where one was worked out.
+    pub circling: &'a [(char, f64)],
     pub airport_dir: Option<&'a FsPath>,
     /// Both ends of the landing runway, threshold first.
     pub runway_ends: Option<((f64, f64), (f64, f64))>,
+    /// How long and wide the landing runway is, in metres, and its lights.
+    pub runway_size: Option<(f64, f64)>,
+    pub runway_lighting: &'a [&'static str],
+    /// The dates the navigation data is in force between.
+    pub airac: Option<(String, String)>,
 }
 
 fn ascii(s: &str) -> Vec<u8> {
@@ -241,9 +248,12 @@ impl View {
         p.0 >= self.x - slack && p.0 <= self.x + self.w + slack && p.1 >= self.y - slack && p.1 <= self.y + self.h + slack
     }
 
-    /// Nautical miles across the window.
+    /// Nautical miles across the window, measured at the middle of it: a degree of
+    /// longitude shrinks as you go north, so taking it at the top edge would put the
+    /// scale bar out by half a percent.
     fn span_nm(&self) -> f64 {
-        self.deg_w * 60.0 * self.north.to_radians().cos()
+        let middle = self.north - self.deg_h / 2.0;
+        self.deg_w * 60.0 * middle.to_radians().cos()
     }
 
     fn px_per_nm(&self) -> f32 {
@@ -360,6 +370,12 @@ fn hold_points(fix: (f64, f64), inbound_deg: f64, turn: Option<Turn>, leg_nm: f6
 /// a glance where the ground is high, not to read a height off it. These are the bands an
 /// aeronautical chart uses, in the tints it uses, kept pale enough that the procedure
 /// drawn over them stays the thing the eye goes to.
+/// The tint for water. An airport at or below sea level has no sea to speak of near it
+/// and would have its own ground painted blue, so this is only used where the airport
+/// stands clear of it.
+const WATER_TINT: (f32, f32, f32) = (0.80, 0.90, 0.95);
+const WATER_FT: f64 = 1.0;
+
 const TERRAIN_BANDS: [(f64, (f32, f32, f32)); 5] = [
     (656.0, (0.93, 0.93, 0.88)),
     (1312.0, (0.95, 0.89, 0.75)),
@@ -388,10 +404,15 @@ fn draw_terrain(c: &mut Content, patch: &Patch, v: &View, field_ft: f64) {
                 continue;
             }
             let height = ht as f64 / 0.3048;
-            // Ground no higher than the airport is not worth tinting whatever its height
-            // above the sea: an airport on a plateau would otherwise sit in a wash of
-            // colour.
-            let Some((r, g, b)) = terrain_tint(height).filter(|_| height > field_ft + 250.0) else { continue };
+            // Sea first, then the ground above it. Ground no higher than the airport is
+            // not worth tinting whatever its height above the sea: an airport on a
+            // plateau would otherwise sit in a wash of colour.
+            let tint = if height <= WATER_FT && field_ft >= 15.0 {
+                Some(WATER_TINT)
+            } else {
+                terrain_tint(height).filter(|_| height > field_ft + 250.0)
+            };
+            let Some((r, g, b)) = tint else { continue };
             let (lat, lon) = patch.position(row, col);
             let (px, py) = v.at(lat, lon);
             if !v.inside((px, py), 0.0) {
@@ -452,8 +473,9 @@ fn draw_airport(c: &mut Content, dir: &FsPath, v: &View) -> bool {
 /// from the rest, so it can be picked out at a glance.
 fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, role: Option<&str>, floor_ft: f64, taken: &mut Taken) {
     let is_faf = role == Some("FAF");
+    // The missed approach point is marked where it falls, which is often the runway.
     let (Some(lat), Some(lon)) = (leg.lat, leg.lon) else { return };
-    if leg.fix.is_empty() || !taken.first_time(&leg.fix) {
+    if leg.fix.is_empty() || leg.fix.starts_with("RW") || !taken.first_time(&leg.fix) {
         return;
     }
     let (px, py) = v.at(lat, lon);
@@ -514,32 +536,9 @@ fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, role: 
     }
 }
 
-/// What part a fix plays in the approach, in the words a chart uses: the initial fix a
-/// transition starts from, the intermediate fix the final segment starts at, and the
-/// final approach fix where the descent begins.
+/// What part each fix plays, as the data marks it.
 fn fix_roles(finals: &[&Leg]) -> Vec<Option<&'static str>> {
-    let faf = finals
-        .iter()
-        .enumerate()
-        .filter(|(_, l)| l.altitude_ft.is_some() && !l.fix.is_empty() && !l.fix.starts_with("RW"))
-        .next_back()
-        .map(|(i, _)| i);
-    // The fix the final segment descends from: the last one before the runway that still
-    // holds an altitude, with the one before it the intermediate fix.
-    let faf = faf.filter(|i| *i + 1 < finals.len()).or(faf);
-    finals
-        .iter()
-        .enumerate()
-        .map(|(i, leg)| {
-            if Some(i) == faf {
-                Some("FAF")
-            } else if leg.path == "IF" && i == 0 {
-                Some("IF")
-            } else {
-                None
-            }
-        })
-        .collect()
+    finals.iter().map(|leg| leg.role.map(FixRole::label)).collect()
 }
 
 /// A run of legs as a line on the map, through the fixes that have a position.
@@ -690,7 +689,7 @@ fn degrees_minutes(value: f64, is_latitude: bool) -> String {
 /// North arrow, scale bar and the minimum safe altitude ring: the furniture that tells
 /// you how to read the map.
 #[allow(clippy::too_many_arguments)]
-fn draw_furniture(c: &mut Content, font: Name, bold: Name, v: &View, msa_ft: Option<f64>, sectors: &[crate::minima::Sector], variation_deg: Option<f64>, runway_deg: Option<f64>) {
+fn draw_furniture(c: &mut Content, font: Name, bold: Name, v: &View, msa_ft: Option<f64>, sectors: &[crate::minima::Sector], variation_deg: Option<f64>, runway_deg: Option<f64>, has_water: bool) {
     // Degrees and minutes along the edges, as a chart rules them.
     let step = (if v.span_nm() > 24.0 { 20.0 } else if v.span_nm() > 10.0 { 10.0 } else { 5.0 }) / 60.0;
     let mut lat = (v.north / step).floor() * step;
@@ -746,10 +745,20 @@ fn draw_furniture(c: &mut Content, font: Name, bold: Name, v: &View, msa_ft: Opt
 
     // What the tints mean, above the scale bar.
     let swatch = 8.0;
-    let key_h = TERRAIN_BANDS.len() as f32 * swatch + 12.0;
+    let rows = TERRAIN_BANDS.len() + usize::from(has_water);
+    let key_h = rows as f32 * swatch + 12.0;
     let (kx, ky) = (v.x + 10.0, v.y + 30.0);
     fill_box(c, kx - 4.0, ky - 4.0, 54.0, key_h, 1.0);
     text(c, font, 5.5, kx, ky + key_h - 12.0, "ELEVATION", 0.4);
+    if has_water {
+        let (r, g, b) = WATER_TINT;
+        c.set_fill_rgb(r, g, b);
+        c.rect(kx, ky, 13.0, swatch - 1.5);
+        c.fill_nonzero();
+        box_outline(c, kx, ky, 13.0, swatch - 1.5, 0.3, 0.6);
+        text(c, font, 5.5, kx + 16.0, ky + 1.0, "WATER", 0.35);
+    }
+    let ky = ky + if has_water { swatch } else { 0.0 };
     for (i, (top, (r, g, b))) in TERRAIN_BANDS.iter().enumerate() {
         let row = ky + (TERRAIN_BANDS.len() - 1 - i) as f32 * swatch;
         c.set_fill_rgb(*r, *g, *b);
@@ -810,7 +819,7 @@ fn draw_furniture(c: &mut Content, font: Name, bold: Name, v: &View, msa_ft: Opt
 }
 
 /// How wide the inset is, in miles.
-const INSET_NM: f64 = 2.5;
+const INSET_NM: f64 = 2.2;
 
 /// The airport again, close up.
 ///
@@ -847,12 +856,24 @@ fn draw_inset(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f3
     if let Some((near, far)) = ch.runway_ends {
         let (nx, ny) = v.at(near.0, near.1);
         let (fx, fy) = v.at(far.0, far.1);
-        line(c, nx, ny, fx, fy, 5.0, 1.0);
-        line(c, nx, ny, fx, fy, 2.6, INK);
-        // Which end is being landed on.
+        line(c, nx, ny, fx, fy, 6.0, 1.0);
+        line(c, nx, ny, fx, fy, 3.4, INK);
+        // Which end is being landed on, and what it is called.
         c.set_fill_gray(INK);
-        circle(c, nx, ny, 2.2);
+        circle(c, nx, ny, 2.6);
         c.fill_nonzero();
+        label(c, bold, 6.5, nx + 5.0, ny - 8.0, &ch.procedure.runway, INK);
+        // What the runway is, and what it has to guide an approach by.
+        let mut about = Vec::new();
+        if let Some((length, width)) = ch.runway_size {
+            about.push(format!("{length:.0}m x {width:.0}m"));
+        }
+        if !ch.runway_lighting.is_empty() {
+            about.push(ch.runway_lighting.join(" "));
+        }
+        if !about.is_empty() {
+            label(c, font, 5.5, x + 4.0, y + 4.0, &about.join("   "), 0.3);
+        }
     }
     // The last of the final, so the inset joins on to the picture above it.
     let finals = final_legs(ch.procedure);
@@ -864,8 +885,8 @@ fn draw_inset(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f3
     c.restore_state();
     box_outline(c, x, y, w, h, 1.0, INK);
     fill_box(c, x + 1.0, y + h - 11.0, w - 2.0, 10.0, 1.0);
-    text(c, bold, 6.0, x + 4.0, y + h - 8.5, &format!("{}  {:.0} NM ACROSS", ch.airport.icao, INSET_NM), INK);
-    let _ = font;
+    // What it is across, not what it is tall: the box is wider than it is high.
+    text(c, bold, 6.0, x + 4.0, y + h - 8.5, &format!("{}  {:.1} NM ACROSS", ch.airport.icao, v.span_nm()), INK);
 }
 
 /// The plan view: terrain, the airport, the procedure and what stands up under it.
@@ -986,10 +1007,18 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
     // The airport close up, in the bottom corner, but only when the plan is too wide to
     // show it properly on its own.
     if v.span_nm() > 9.0 {
-        let (iw, ih) = (118.0, 104.0);
+        let (iw, ih) = (140.0, 122.0);
         draw_inset(c, font, bold, ch, x + w - iw - 6.0, y + 16.0, iw, ih);
     }
-    draw_furniture(c, font, bold, &v, ch.msa_ft, ch.msa_sectors, ch.variation_deg, Some(track_deg));
+    // Whether there is any sea in sight, so the key only mentions it when there is.
+    let has_water = ch.field_elev_ft >= 15.0
+        && (0..ch.patch.height).step_by(4).any(|row| {
+            (0..ch.patch.width).step_by(4).any(|col| {
+                let h = ch.patch.at(row, col);
+                h.is_finite() && (h as f64 / 0.3048) <= WATER_FT
+            })
+        });
+    draw_furniture(c, font, bold, &v, ch.msa_ft, ch.msa_sectors, ch.variation_deg, Some(track_deg), has_water);
     box_outline(c, x, y, w, h, 1.2, INK);
     v
 }
@@ -1094,11 +1123,68 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
             line(c, *px, ground_y - 3.0, *px, *py, 0.4, 0.5);
         }
     }
+    // How far it is from each fix to the next, written between them the way a chart
+    // writes it.
+    let mut ordered: Vec<&(f32, f32, &Leg)> = points.iter().collect();
+    ordered.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for pair in ordered.windows(2) {
+        let (left, right) = (pair[0], pair[1]);
+        let (Some(a), Some(b)) = (fix_distance_nm(left.2, thr), fix_distance_nm(right.2, thr)) else { continue };
+        let gap = (a - b).abs();
+        if gap < 0.3 || right.0 - left.0 < 26.0 {
+            continue;
+        }
+        let middle = (left.0 + right.0) / 2.0;
+        label(c, font, 6.0, middle - 9.0, ground_y - 19.0, &format!("{gap:.1} NM"), 0.35);
+    }
 
     // Glidepath angle and threshold crossing height, in the corner a chart puts them.
     label(c, font, 6.5, at_nm(0.0) - 44.0, tch + 9.0, "TCH 50", 0.3);
     text(c, bold, 8.0, x + 6.0, y + h - 12.0, "GP 3.00", INK);
     text(c, font, 6.5, x + 6.0, y + h - 21.0, &format!("{total_nm:.1} NM"), 0.35);
+
+    // From the final approach fix to the missed approach point, and how long that takes
+    // at the speeds an aeroplane flies it: a crew times the last segment, so a chart
+    // always carries this.
+    // From the fix marked as the final approach fix to the one marked as the missed
+    // approach point, both of which the data states, measured the way it is flown: an
+    // approach that passes over its beacon and carries on covers more ground than the
+    // difference between the two fixes' distances from the runway.
+    let faf_at = legs.iter().position(|l| l.role == Some(FixRole::Final));
+    let map_at = legs.iter().position(|l| l.role == Some(FixRole::MissedApproachPoint)).unwrap_or(legs.len().saturating_sub(1));
+    let segment = match faf_at {
+        Some(start) if map_at >= start => {
+            // The missed approach point is often the runway itself, which carries no
+            // position of its own: it is the threshold.
+            let where_it_is = |leg: &Leg| leg.lat.zip(leg.lon).unwrap_or(thr);
+            legs[start..=map_at]
+                .windows(2)
+                .map(|pair| {
+                    let (a, b) = (where_it_is(pair[0]), where_it_is(pair[1]));
+                    let dn = (b.0 - a.0) * 60.0;
+                    let de = (b.1 - a.1) * 60.0 * a.0.to_radians().cos().max(0.05);
+                    dn.hypot(de)
+                })
+                .sum::<f64>()
+        }
+        _ => 0.0,
+    };
+    if segment > 0.5 {
+        const SPEEDS: [f64; 6] = [80.0, 100.0, 120.0, 140.0, 160.0, 180.0];
+        let (tw, th) = (12.0 + SPEEDS.len() as f32 * 21.0, 22.0);
+        let (tx, ty) = (x + w - tw - 6.0, y + h - th - 6.0);
+        fill_box(c, tx, ty, tw, th, 1.0);
+        box_outline(c, tx, ty, tw, th, 0.7, RULE);
+        text(c, font, 5.5, tx + 3.0, ty + th - 8.0, "KT", 0.4);
+        text(c, font, 5.5, tx + 3.0, ty + 3.0, "MIN", 0.4);
+        for (i, speed) in SPEEDS.iter().enumerate() {
+            let cx = tx + 12.0 + i as f32 * 21.0;
+            let minutes = segment / speed * 60.0;
+            text(c, font, 6.0, cx, ty + th - 8.0, &format!("{speed:.0}"), 0.25);
+            text(c, bold, 6.0, cx, ty + 3.0, &format!("{}:{:02.0}", minutes as u32, (minutes.fract() * 60.0).round()), INK);
+        }
+        text(c, font, 5.5, tx - 2.0 - text_width(font, 5.5, "FAF TO MAP 0.0 NM"), ty + 7.0, &format!("FAF TO MAP {segment:.1} NM"), 0.35);
+    }
 
     // The minimum, across the profile.
     let my = at_ft(est.altitude_ft);
@@ -1152,6 +1238,17 @@ fn draw_minima(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f
     for l in wrap(&why, 62) {
         text(c, font, 7.0, x + col + 8.0, row, &l, 0.2);
         row -= 9.0;
+    }
+    // Circling, by aircraft category: the faster the aeroplane, the wider it goes and
+    // the more it has to clear.
+    if !ch.circling.is_empty() {
+        let cy = y + 8.0;
+        text(c, font, 6.0, x + 8.0, cy + 9.0, "CIRCLING", 0.4);
+        for (i, (letter, ft)) in ch.circling.iter().enumerate() {
+            let cx = x + 8.0 + i as f32 * 34.0;
+            text(c, font, 5.5, cx, cy, &letter.to_string(), 0.45);
+            text(c, bold, 7.5, cx + 7.0, cy, &format!("{ft:.0}"), INK);
+        }
     }
     let where_from = if ch.tdze_surveyed {
         ", as surveyed and published for this runway end"
@@ -1391,8 +1488,8 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
         MARGIN,
         MARGIN + 1.0,
         &format!(
-            "AMDB V1 - {printed} - procedure from {} - terrain Copernicus DEM (ESA) - obstacles {} - airport OpenStreetMap and the X-Plane Scenery Gateway",
-            ch.airport.source,
+            "AMDB V1 - drawn {printed} - navigation data {} - terrain Copernicus DEM (ESA) - obstacles {} - airport OpenStreetMap and the X-Plane Scenery Gateway",
+            ch.airac.as_ref().map(|(from, to)| format!("in force {from} to {to}")).unwrap_or_else(|| ch.airport.source.clone()),
             ch.obstacles.first().map(|o| o.source).unwrap_or("none found")
         ),
         0.45,

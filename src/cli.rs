@@ -1067,6 +1067,7 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
         None => None,
     };
     let est = crate::approach::estimate(&setup, kind);
+    let circling: Vec<(char, f64)> = crate::approach::circling_table(&setup).into_iter().map(|(letter, ft, _)| (letter, ft)).collect();
 
     let out = out.unwrap_or_else(|| PathBuf::from(format!("{icao}-RW{}-approach.pdf", procedure.runway)));
     let chart = crate::output::approach::Chart {
@@ -1087,8 +1088,12 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
         course_mag_deg: setup.course_mag_deg(),
         variation_deg: setup.variation_deg(),
         kind,
+        circling: &circling,
         airport_dir: setup.airport_dir.as_deref(),
         runway_ends: setup.runway_ends,
+        runway_size: setup.runway_detail.as_ref().and_then(|t| t.landing_m.zip(t.width_m)),
+        runway_lighting: setup.runway_detail.as_ref().map(|t| t.lighting.as_slice()).unwrap_or(&[]),
+        airac: crate::sources::msfs::airac_dates(),
     };
     crate::output::approach::write(&chart, &est, &out)?;
     crate::term::success(&format!(

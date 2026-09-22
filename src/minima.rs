@@ -181,19 +181,24 @@ pub fn required_altitude(approach: Approach, touchdown_elev_ft: f64, top_ft: f64
     (penetration > 0.0).then(|| touchdown_elev_ft + approach.system_minimum_ft() + penetration)
 }
 
-/// The minimum the procedure itself codes, where it codes one.
+/// The altitude the procedure itself codes at its missed approach point.
 ///
-/// An approach without a glidepath ends its final segment at a missed approach point
-/// rather than at the runway, and the altitude on that last leg is the altitude the
-/// aircraft may descend to: the published minimum. An approach with a glidepath ends at
-/// the runway itself, and that altitude is the height it crosses the threshold at, which
-/// is not a minimum at all — so only the first kind gives us one.
+/// Where the final segment ends at a fix rather than at the runway, that fix carries an
+/// altitude, and in some of the world's data it is the published minimum: Madeira's
+/// VOR/DME to runway 05 codes 940 ft, which is exactly what its chart says.
+///
+/// It is not that everywhere. Measured against 346 published American minima it came out
+/// a median 260 ft *below* the published figure on the approaches where it appears, so
+/// it is not the answer on its own — it is used as a floor, which can raise a minimum
+/// but never lower one. Where it is the published figure it wins, and where it is some
+/// lower crossing altitude the terrain and obstacles still have their say.
 pub fn coded_minimum(final_legs: &[&crate::sources::msfs::procedures::Leg], touchdown_elev_ft: f64) -> Option<f64> {
-    let last = final_legs.last()?;
-    if last.fix.starts_with("RW") || last.fix.is_empty() {
+    use crate::sources::msfs::procedures::FixRole;
+    let map = final_legs.iter().rev().find(|l| l.role == Some(FixRole::MissedApproachPoint)).or(final_legs.last())?;
+    if map.fix.starts_with("RW") || map.fix.is_empty() {
         return None;
     }
-    let altitude = last.altitude_ft?;
+    let altitude = map.altitude_ft?;
     // A published minimum is never at the ground and never in the flight levels.
     (altitude > touchdown_elev_ft + 150.0 && altitude < touchdown_elev_ft + 5000.0).then_some(altitude)
 }

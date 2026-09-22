@@ -7,6 +7,59 @@
 
 pub mod bgl;
 pub mod navaids;
+
+/// The dates the navigation data is in force between, as the simulator records them.
+///
+/// The cycle file carries two dates and almost nothing else readable: the day the data
+/// came into force and the day it goes out. A chart is only as current as its data, so
+/// it is worth saying which.
+pub fn airac_dates() -> Option<(String, String)> {
+    for dir in nav_dirs() {
+        let mut folders = vec![dir];
+        while let Some(folder) = folders.pop() {
+            let Ok(entries) = std::fs::read_dir(&folder) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    folders.push(path);
+                    continue;
+                }
+                if !path.file_name().map(|n| n.to_string_lossy().eq_ignore_ascii_case("AIRACCycle.bgl")).unwrap_or(false) {
+                    continue;
+                }
+                let Ok(data) = std::fs::read(&path) else { continue };
+                let dates = day_month_year(&data);
+                if dates.len() >= 2 {
+                    return Some((dates[0].clone(), dates[1].clone()));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Every "dd-mm-yy" in a file, in the order they appear.
+fn day_month_year(d: &[u8]) -> Vec<String> {
+    const MONTHS: [&str; 12] = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    let mut out = Vec::new();
+    for w in d.windows(8) {
+        let digits = |i: usize| w[i].is_ascii_digit();
+        if !(digits(0) && digits(1) && w[2] == b'-' && digits(3) && digits(4) && w[5] == b'-' && digits(6) && digits(7)) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(w);
+        let (day, month, year) = (&text[0..2], &text[3..5], &text[6..8]);
+        let Ok(month_number) = month.parse::<usize>() else { continue };
+        if !(1..=12).contains(&month_number) {
+            continue;
+        }
+        let pretty = format!("{day} {} 20{year}", MONTHS[month_number - 1]);
+        if !out.contains(&pretty) {
+            out.push(pretty);
+        }
+    }
+    out
+}
 pub mod procedures;
 
 use std::path::PathBuf;
