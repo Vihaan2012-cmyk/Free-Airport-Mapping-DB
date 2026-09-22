@@ -124,6 +124,50 @@ impl Setup {
         measured.or(rough)
     }
 
+    /// True where the approach cannot be landed off straight ahead.
+    ///
+    /// An approach whose final course is more than thirty degrees off the runway is not
+    /// flown to a landing: the aircraft breaks off and manoeuvres visually, so only
+    /// circling minima apply to it. Madeira's approach to runway 05 comes in on 211 to a
+    /// runway pointing 050, and its published chart is titled a circling one.
+    pub fn is_circling_only(&self) -> bool {
+        // An approach named for a letter rather than a runway — a VOR-A, an NDB-B — serves
+        // the aerodrome and not a runway. There is nothing to land straight off.
+        let runway = &self.procedure().runway;
+        if runway.len() == 1 && runway.chars().all(|c| c.is_ascii_alphabetic()) {
+            return true;
+        }
+        let Some((lat, lon, Some(runway_bearing))) = self.threshold else { return false };
+        // The track is taken from the last fix to the threshold, so a fix almost on top
+        // of the threshold gives a bearing that means nothing. Only a long enough
+        // baseline is worth judging by.
+        let baseline = self
+            .final_legs()
+            .iter()
+            .filter_map(|l| l.lat.zip(l.lon))
+            .next_back()
+            .map(|(flat, flon)| nm_apart((flat, flon), (lat, lon)))
+            .unwrap_or(0.0);
+        if baseline < 1.5 {
+            return false;
+        }
+        // Well clear of the thirty degrees the rules allow, so that an offset localiser
+        // or a loose reading is not mistaken for one that cannot be landed off.
+        let offset = ((self.track_deg() - runway_bearing + 540.0) % 360.0 - 180.0).abs();
+        offset > 45.0
+    }
+
+    /// Where the missed approach goes, as positions on the ground.
+    pub fn missed_track(&self) -> Vec<(f64, f64)> {
+        self.procedure()
+            .transitions
+            .iter()
+            .filter(|t| t.part == "missed")
+            .flat_map(|t| t.legs.iter())
+            .filter_map(|l| l.lat.zip(l.lon))
+            .collect()
+    }
+
     /// The legs of the final approach segment.
     pub fn final_legs(&self) -> Vec<&procedures::Leg> {
         self.procedure().transitions.iter().filter(|t| t.part == "final").flat_map(|t| t.legs.iter()).collect()
@@ -433,6 +477,32 @@ pub fn prepare_from(procedures: AirportProcedures, http: &Http, cache: &Cache, i
     })
 }
 
+impl Setup {
+    /// How far the final approach fix is from the threshold, which is how long the
+    /// segment the minimum is flown over is.
+    ///
+    /// The fix is the one the data marks as final, or failing that the last fix on the
+    /// final that carries an altitude. A figure outside what a final segment can be is
+    /// not believed: a segment is a few miles long, never half a mile and never twenty.
+    pub fn final_segment_nm(&self) -> Option<f64> {
+        let legs = self.final_legs();
+        let marked = legs
+            .iter()
+            .rev()
+            .find(|l| l.role == Some(crate::sources::msfs::procedures::FixRole::Final))
+            .and_then(|l| l.lat.zip(l.lon));
+        let fallback = || {
+            legs.iter()
+                .filter(|l| l.altitude_ft.is_some() && !l.fix.starts_with("RW"))
+                .filter_map(|l| l.lat.zip(l.lon))
+                .next_back()
+        };
+        let (lat, lon) = marked.or_else(fallback)?;
+        let nm = self.distance_nm(lat, lon);
+        (2.0..=15.0).contains(&nm).then_some(nm)
+    }
+}
+
 /// The minimum for a prepared approach.
 /// What the ground looks like around an approach, for working out where an estimate
 /// goes wrong. Everything here is a height above sea level in feet.
@@ -458,11 +528,12 @@ pub struct Survey {
 pub fn survey(setup: &Setup, kind: crate::minima::Approach) -> Survey {
     let path = setup.path();
     let (airport_lat, airport_lon) = (setup.procedures.lat, setup.procedures.lon);
+    let segment = setup.final_segment_nm();
     let mut s = Survey {
-        corridor_terrain_ft: crate::minima::highest_terrain(&setup.patch, &path, kind).unwrap_or(f64::NAN),
+        corridor_terrain_ft: crate::minima::highest_terrain(&setup.patch, &path, kind, segment).unwrap_or(f64::NAN),
         ..Default::default()
     };
-    s.corridor_obstacle_ft = crate::minima::limiting_obstacle(&setup.obstacles, &path, kind, setup.tdze_ft)
+    s.corridor_obstacle_ft = crate::minima::limiting_obstacle(&setup.obstacles, &path, kind, setup.tdze_ft, segment)
         .map(|l| l.top_ft)
         .unwrap_or(f64::NAN);
     let near = |lat: f64, lon: f64| {
@@ -522,15 +593,7 @@ pub fn survey(setup: &Setup, kind: crate::minima::Approach) -> Survey {
             _ => s.ring50_ft = top,
         }
     }
-    // The final approach fix: the last fix on the final that holds an altitude.
-    s.faf_nm = setup
-        .final_legs()
-        .iter()
-        .filter(|l| l.altitude_ft.is_some() && !l.fix.starts_with("RW"))
-        .filter_map(|l| l.lat.zip(l.lon))
-        .next_back()
-        .map(|(lat, lon)| setup.distance_nm(lat, lon))
-        .unwrap_or(f64::NAN);
+    s.faf_nm = segment.unwrap_or(f64::NAN);
     s
 }
 
@@ -548,14 +611,20 @@ pub fn circling_table(setup: &Setup) -> Vec<(char, f64, Option<String>)> {
 }
 
 pub fn estimate(setup: &Setup, kind: crate::minima::Approach) -> crate::minima::Estimate {
+    // An approach that cannot be landed off straight ahead has circling minima whatever
+    // it is flown on.
+    let kind = if setup.is_circling_only() && kind != crate::minima::Approach::Circling { crate::minima::Approach::Circling } else { kind };
     let path = setup.path();
+    // How long the segment the minimum is flown over is, which is how far out it is
+    // worth looking.
+    let segment = setup.final_segment_nm();
     // What the procedure codes at its missed approach point, which is a floor rather
     // than the answer: see `coded_minimum` for why.
     let coded = crate::minima::coded_minimum(&setup.final_legs(), setup.tdze_ft);
-    let mut terrain = crate::minima::limiting_terrain_limit(&setup.patch, &path, kind, setup.tdze_ft);
+    let mut terrain = crate::minima::limiting_terrain_limit(&setup.patch, &path, kind, setup.tdze_ft, segment);
     // The chart prints the highest ground near the approach whether or not it set the
     // number, so it is looked up even when nothing was limited by it.
-    if let Some(top) = crate::minima::highest_terrain(&setup.patch, &path, kind) {
+    if let Some(top) = crate::minima::highest_terrain(&setup.patch, &path, kind, segment) {
         match &mut terrain {
             Some(t) => t.top_ft = t.top_ft.max(top),
             None => terrain = Some(crate::minima::Limit { top_ft: top, required_ft: f64::NEG_INFINITY, what: "terrain".to_string() }),
@@ -570,13 +639,79 @@ pub fn estimate(setup: &Setup, kind: crate::minima::Approach) -> crate::minima::
         let limit = crate::minima::Limit { top_ft: highest, required_ft: ft, what: what.clone().unwrap_or_else(|| "terrain".into()) };
         return crate::minima::estimate_with(kind, setup.field_elev_ft, Some(limit), None);
     }
-    let obstacle = crate::minima::limiting_obstacle(&setup.obstacles, &path, kind, setup.tdze_ft);
+    let obstacle = crate::minima::limiting_obstacle(&setup.obstacles, &path, kind, setup.tdze_ft, segment);
     let worked_out = crate::minima::estimate_with(kind, setup.tdze_ft, terrain.clone(), obstacle);
-    match coded {
+    let mut answer = match coded {
         Some(ft) if ft > worked_out.altitude_ft => {
             let highest = terrain.map(|t| t.top_ft).unwrap_or(setup.tdze_ft);
             crate::minima::from_coded(kind, setup.tdze_ft, ft, highest)
         }
         _ => worked_out,
+    };
+    // Going around has to clear what lies beyond the runway. Usually that asks for a
+    // steeper climb rather than a higher minimum; where it asks for more than a chart
+    // would, the minimum goes up.
+    if let Some(missed) = missed_approach(setup, &answer) {
+        if let Some(raised) = missed.raises_to_ft.filter(|ft| *ft > answer.altitude_ft) {
+            answer.altitude_ft = raised;
+            answer.height_ft = raised - setup.tdze_ft;
+            answer.limited_by = crate::minima::LimitedBy::Obstacle;
+            answer.obstacle = Some(format!("{} on the missed approach", missed.what));
+            answer.obstacle_top_ft = Some(raised);
+            answer.reliable = false;
+        }
     }
+    answer
+}
+
+/// What the state's own chart publishes for this approach, where it publishes one.
+///
+/// Only the United States, for now: the FAA gives every approach chart away as a PDF
+/// whose minima band is text. Everywhere else the minimum is still worked out.
+pub fn published(
+    http: &crate::sources::http::Http,
+    cache: &crate::cache::Cache,
+    setup: &Setup,
+    kind: crate::minima::Approach,
+) -> Option<crate::sources::dtpp::Published> {
+    let procedure = setup.procedure();
+    let circling = kind == crate::minima::Approach::Circling || setup.is_circling_only();
+    let line = if circling {
+        crate::sources::dtpp::Line::Circling
+    } else {
+        crate::sources::dtpp::Line::StraightIn(procedure.approach_type?)
+    };
+    // A circling minimum is quoted above the aerodrome; a straight-in one above the
+    // touchdown zone. Which it is decides what the reading is checked against.
+    let against = if circling { setup.field_elev_ft } else { setup.tdze_ft };
+    crate::sources::dtpp::published(http, cache, &setup.procedures.icao, line, &procedure.runway, procedure.suffix, against)
+}
+
+/// The minimum a chart should print: what the state publishes where it publishes one, and
+/// what we work out where it does not.
+pub fn with_published(est: crate::minima::Estimate, published: Option<&crate::sources::dtpp::Published>) -> crate::minima::Estimate {
+    match published {
+        Some(p) => crate::minima::from_published(est.approach, p.altitude_ft, p.height_ft, &p.chart, est.highest_terrain_ft),
+        None => est,
+    }
+}
+
+/// The circling minima by aircraft category, published where they are published.
+///
+/// A row that prints one figure means every category shares it; a row that prints four
+/// means they differ, which on a circling line is the usual case.
+pub fn circling_from(published: Option<&crate::sources::dtpp::Published>, worked_out: Vec<(char, f64)>) -> Vec<(char, f64)> {
+    match published.filter(|p| !p.circling.is_empty()) {
+        Some(p) => ['A', 'B', 'C', 'D']
+            .iter()
+            .enumerate()
+            .filter_map(|(i, letter)| p.circling.get(i).or_else(|| p.circling.last()).map(|(ft, _)| (*letter, *ft)))
+            .collect(),
+        None => worked_out,
+    }
+}
+
+/// What the missed approach from a given minimum asks for.
+pub fn missed_approach(setup: &Setup, est: &crate::minima::Estimate) -> Option<crate::minima::MissedApproach> {
+    crate::minima::missed_approach(&setup.patch, &setup.obstacles, &setup.path(), &setup.missed_track(), est.altitude_ft)
 }

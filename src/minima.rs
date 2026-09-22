@@ -40,6 +40,21 @@ pub enum Approach {
 }
 
 impl Approach {
+    /// Which floor and which protected area a given sort of approach uses.
+    ///
+    /// An approach flown down a glidepath gets the precision treatment; one flown on a
+    /// localiser, an RNAV track or an LDA is held finely enough for the tighter of the
+    /// two non-precision areas; a beacon is not.
+    pub fn for_type(what: crate::sources::msfs::procedures::ApproachType) -> Approach {
+        use crate::sources::msfs::procedures::ApproachType as T;
+        match what {
+            T::Ils => Approach::PrecisionCat1,
+            T::Localiser | T::LocaliserBackCourse | T::Lda | T::Rnav | T::Gps => Approach::Localiser,
+            T::Vor => Approach::NonPrecision,
+            T::Ndb => Approach::Ndb,
+        }
+    }
+
     /// Height above touchdown, in feet, below which this kind of approach may not go.
     pub fn system_minimum_ft(self) -> f64 {
         match self {
@@ -102,6 +117,9 @@ pub enum LimitedBy {
     /// codes the altitude the approach descends to, and where it does, that is the
     /// published figure.
     Coded,
+    /// The published minimum itself, read off the state's own chart. Not an estimate
+    /// either, and better than one: it is the number the chart prints.
+    Published,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,7 +187,7 @@ fn clearance_surface_ft(touchdown_elev_ft: f64, along_nm: f64, across_nm: f64) -
 pub fn required_altitude(approach: Approach, touchdown_elev_ft: f64, top_ft: f64, along_nm: f64, across_nm: f64) -> Option<f64> {
     if !approach.has_glidepath() {
         let primary = primary_half_width_nm(approach);
-        let (_, _, edge) = corridor(approach);
+        let (_, _, edge) = corridor_for(approach);
         let taper = if across_nm.abs() <= primary {
             1.0
         } else {
@@ -212,6 +230,24 @@ pub fn from_coded(approach: Approach, touchdown_elev_ft: f64, coded_ft: f64, hig
         limited_by: LimitedBy::Coded,
         highest_terrain_ft,
         obstacle: None,
+        obstacle_top_ft: None,
+        reliable: true,
+    }
+}
+
+/// An estimate that reports what a state's own chart publishes.
+///
+/// Nothing is worked out here. The altitude and its height above the touchdown zone are
+/// read off the chart, and the terrain figure is carried over from the estimate only so
+/// that the page can still say what the approach passes over.
+pub fn from_published(approach: Approach, altitude_ft: f64, height_ft: f64, chart: &str, highest_terrain_ft: f64) -> Estimate {
+    Estimate {
+        approach,
+        altitude_ft,
+        height_ft,
+        limited_by: LimitedBy::Published,
+        highest_terrain_ft,
+        obstacle: Some(chart.to_string()),
         obstacle_top_ft: None,
         reliable: true,
     }
@@ -320,6 +356,91 @@ impl Path {
         }
         best
     }
+}
+
+/// What a missed approach costs: how steeply it has to climb, and whether even that is
+/// enough.
+#[derive(Debug, Clone)]
+pub struct MissedApproach {
+    /// The climb needed to clear what lies beyond, in feet per mile. Two hundred is the
+    /// standard; more than that is printed on a chart as a note.
+    pub climb_ft_per_nm: f64,
+    /// What the climb has to clear.
+    pub what: String,
+    /// Where the minimum has to be raised to, on the rare occasion no reasonable climb
+    /// will do.
+    pub raises_to_ft: Option<f64>,
+}
+
+/// The standard climb a missed approach is designed around, and the steepest a chart
+/// will ask for before the minimum is raised instead.
+const STANDARD_CLIMB: f64 = 200.0;
+const STEEPEST_CLIMB: f64 = 400.0;
+
+/// What the missed approach asks of an aircraft leaving the minimum.
+///
+/// Leaving a minimum is only half of it: an aircraft that goes around has to climb away,
+/// and it cannot climb through a hill. Where something stands in the way, a procedure
+/// designer has two answers — ask for a steeper climb, or raise the minimum — and
+/// reaches for the first far more often, which is why charts carry notes like "missed
+/// approach requires a climb of 280 ft per mile". Only when the climb needed would be
+/// unreasonable is the minimum itself raised.
+pub fn missed_approach(
+    patch: &crate::sources::copernicus::Patch,
+    obstacles: &[crate::sources::obstacles::Obstacle],
+    path: &Path,
+    missed: &[(f64, f64)],
+    minimum_ft: f64,
+) -> Option<MissedApproach> {
+    /// The clearance kept over what the climb passes.
+    const CLEARANCE_FT: f64 = 48.0;
+    /// How far to either side of the track the climb is protected, and how far out it is
+    /// worth looking.
+    const HALF_WIDTH_NM: f64 = 1.5;
+    const LENGTH_NM: f64 = 8.0;
+
+    let mut track = vec![path.threshold()];
+    track.extend(missed.iter().copied());
+    let route = Path::new(track)?;
+
+    let mut worst: Option<(f64, f64, String)> = None;
+    let mut consider = |lat: f64, lon: f64, top_ft: f64, what: &str| {
+        let Some((along_nm, across_nm)) = route.position(lat, lon) else { return };
+        if along_nm < 0.3 || along_nm > LENGTH_NM || across_nm > HALF_WIDTH_NM {
+            return;
+        }
+        // How steeply the aircraft would have to climb from the minimum to clear it.
+        let climb = (top_ft + CLEARANCE_FT - minimum_ft) / along_nm;
+        if worst.as_ref().map(|(c, _, _)| climb > *c).unwrap_or(true) {
+            worst = Some((climb, top_ft, what.to_string()));
+        }
+    };
+    for row in 0..patch.height {
+        for col in 0..patch.width {
+            let h = patch.at(row, col);
+            if !h.is_finite() {
+                continue;
+            }
+            let (lat, lon) = patch.position(row, col);
+            consider(lat, lon, h as f64 / 0.3048, "terrain");
+        }
+    }
+    for o in obstacles {
+        if let Some(top) = o.top_ft {
+            consider(o.lat, o.lon, top, &o.label());
+        }
+    }
+    let (climb, top_ft, what) = worst?;
+    if climb <= STANDARD_CLIMB {
+        return None;
+    }
+    // Where even the steepest climb a chart would ask for will not do, the minimum goes
+    // up instead, by enough to bring the climb back to that.
+    let raises_to_ft = (climb > STEEPEST_CLIMB).then(|| {
+        let along = (top_ft + CLEARANCE_FT - minimum_ft) / climb;
+        round_up(top_ft + CLEARANCE_FT - STEEPEST_CLIMB * along, 20.0)
+    });
+    Some(MissedApproach { climb_ft_per_nm: round_up(climb, 10.0), what, raises_to_ft })
 }
 
 /// The lowest altitude that clears everything in one direction from the airport.
@@ -493,9 +614,15 @@ pub fn circling_minimum(
 
 /// Terrain that matters to an approach: the sample that forces the highest altitude, by
 /// the rule for this kind of approach.
-pub fn limiting_terrain_limit(patch: &crate::sources::copernicus::Patch, path: &Path, approach: Approach, touchdown_elev_ft: f64) -> Option<Limit> {
+pub fn limiting_terrain_limit(
+    patch: &crate::sources::copernicus::Patch,
+    path: &Path,
+    approach: Approach,
+    touchdown_elev_ft: f64,
+    final_nm: Option<f64>,
+) -> Option<Limit> {
     let mut best: Option<Limit> = None;
-    for (along_nm, across_nm, top_ft) in terrain_along(patch, path, approach) {
+    for (along_nm, across_nm, top_ft) in terrain_along(patch, path, approach, final_nm) {
         let Some(required_ft) = required_altitude(approach, touchdown_elev_ft, top_ft, along_nm, across_nm) else { continue };
         if best.as_ref().map(|b| required_ft > b.required_ft).unwrap_or(true) {
             best = Some(Limit { top_ft, required_ft, what: "terrain".to_string() });
@@ -506,16 +633,22 @@ pub fn limiting_terrain_limit(patch: &crate::sources::copernicus::Patch, path: &
 
 /// The highest ground along the approach, whether or not it changes the minimum. The
 /// chart prints this, so it is worth having even when nothing was limited by it.
-pub fn highest_terrain(patch: &crate::sources::copernicus::Patch, path: &Path, approach: Approach) -> Option<f64> {
-    terrain_along(patch, path, approach)
+pub fn highest_terrain(patch: &crate::sources::copernicus::Patch, path: &Path, approach: Approach, final_nm: Option<f64>) -> Option<f64> {
+    terrain_along(patch, path, approach, final_nm)
         .into_iter()
         .map(|(_, _, ft)| ft)
         .fold(None, |acc: Option<f64>, ft| Some(acc.map_or(ft, |a| a.max(ft))))
 }
 
 /// The obstacle that forces the highest altitude, by the same rule.
-pub fn limiting_obstacle(obstacles: &[crate::sources::obstacles::Obstacle], path: &Path, approach: Approach, touchdown_elev_ft: f64) -> Option<Limit> {
-    let (start_nm, length_nm, half_width_nm) = corridor(approach);
+pub fn limiting_obstacle(
+    obstacles: &[crate::sources::obstacles::Obstacle],
+    path: &Path,
+    approach: Approach,
+    touchdown_elev_ft: f64,
+    final_nm: Option<f64>,
+) -> Option<Limit> {
+    let (start_nm, length_nm, half_width_nm) = corridor(approach, final_nm);
     let mut best: Option<Limit> = None;
     for o in obstacles {
         let Some(top_ft) = o.top_ft else { continue };
@@ -543,8 +676,22 @@ pub fn limiting_obstacle(obstacles: &[crate::sources::obstacles::Obstacle], path
 /// minimum at every airport with a tower down the approach.
 ///
 /// Without a glidepath the aircraft levels off and flies the last miles at one altitude,
-/// so everything in the segment does have to be cleared.
-fn corridor(approach: Approach) -> (f64, f64, f64) {
+/// so everything in that segment does have to be cleared. Only that segment, though: the
+/// minimum is flown from the final approach fix to the missed approach point, and what
+/// stands before the fix is cleared by the altitude the procedure crosses the fix at,
+/// which it states itself. Reading the whole ten miles put a tower at Burlington seven
+/// hundred feet into a minimum it has nothing to do with.
+fn corridor(approach: Approach, final_nm: Option<f64>) -> (f64, f64, f64) {
+    let (start, length, width) = corridor_for(approach);
+    let length = match final_nm {
+        Some(nm) if !approach.has_glidepath() => length.min(nm),
+        _ => length,
+    };
+    (start, length, width)
+}
+
+/// How far the assessment would reach on the sort of navigation alone.
+fn corridor_for(approach: Approach) -> (f64, f64, f64) {
     match approach {
         _ if approach.has_glidepath() => (0.0, 1.2, 1.0),
         // How wide the area is depends on how finely the course can be held. A
@@ -581,15 +728,20 @@ fn primary_half_width_nm(approach: Approach) -> f64 {
 /// out: far enough to be outside the airport, and still under the part of the glidepath
 /// where a hill would matter. Obstacles, which are surveyed points with their own
 /// heights, are assessed the whole way in.
-fn terrain_corridor(approach: Approach) -> (f64, f64, f64) {
-    let (_, length, width) = corridor(approach);
+fn terrain_corridor(approach: Approach, final_nm: Option<f64>) -> (f64, f64, f64) {
+    let (_, length, width) = corridor(approach, final_nm);
     (if approach.has_glidepath() { 0.25 } else { 0.5 }, length, width)
 }
 
 /// Heights along the approach: how far each is from the threshold, how far to the side,
 /// and how high it is.
-fn terrain_along(patch: &crate::sources::copernicus::Patch, path: &Path, approach: Approach) -> Vec<(f64, f64, f64)> {
-    let (start_nm, length_nm, half_width_nm) = terrain_corridor(approach);
+fn terrain_along(
+    patch: &crate::sources::copernicus::Patch,
+    path: &Path,
+    approach: Approach,
+    final_nm: Option<f64>,
+) -> Vec<(f64, f64, f64)> {
+    let (start_nm, length_nm, half_width_nm) = terrain_corridor(approach, final_nm);
     let mut out = Vec::new();
     for row in 0..patch.height {
         for col in 0..patch.width {

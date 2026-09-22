@@ -1,0 +1,336 @@
+[
+  {
+    "pdf_name": "00556IL18L.PDF",
+    "icao": "KAUS",
+    "runway": "18L",
+    "kind": "ils",
+    "expected_altitude_ft": 692,
+    "expected_height_ft": 200
+  },
+  {
+    "pdf_name": "00095IL35.PDF",
+    "icao": "KCON",
+    "runway": "35",
+    "kind": "ils",
+    "expected_altitude_ft": 542,
+    "expected_height_ft": 206
+  },
+  {
+    "pdf_name": "06922IL24.PDF",
+    "icao": "KSRR",
+    "runway": "24",
+    "kind": "ils",
+    "expected_altitude_ft": 6974,
+    "expected_height_ft": 203
+  },
+  {
+    "pdf_name": "00377IL20R.PDF",
+    "icao": "KSNA",
+    "runway": "20R",
+    "kind": "ils",
+    "expected_altitude_ft": 255,
+    "expected_height_ft": 201,
+    "note": "S-ILS 20R* row is asterisked (footnote) and merged across categories A-C into one figure; D unauthorized."
+  },
+  {
+    "pdf_name": "00399IL9R.PDF",
+    "icao": "KSBN",
+    "runway": "09R",
+    "kind": "ils",
+    "expected_altitude_ft": 1135,
+    "expected_height_ft": 345
+  },
+  {
+    "pdf_name": "00057IL28R.PDF",
+    "icao": "KBOI",
+    "runway": "28R",
+    "kind": "ils",
+    "expected_altitude_ft": 3121,
+    "expected_height_ft": 250
+  },
+  {
+    "pdf_name": "00267IL15.PDF",
+    "icao": "KMOB",
+    "runway": "15",
+    "kind": "ils",
+    "expected_altitude_ft": 415,
+    "expected_height_ft": 200
+  },
+  {
+    "pdf_name": "00666IL7.PDF",
+    "icao": "KART",
+    "runway": "07",
+    "kind": "ils",
+    "expected_altitude_ft": 519,
+    "expected_height_ft": 200
+  },
+  {
+    "pdf_name": "06757IL6.PDF",
+    "icao": "KRSW",
+    "runway": "06",
+    "kind": "ils",
+    "expected_altitude_ft": 227,
+    "expected_height_ft": 200
+  },
+  {
+    "pdf_name": "05239IZLZ5.PDF",
+    "icao": "KSOP",
+    "runway": "05",
+    "kind": "ils",
+    "expected_altitude_ft": 655,
+    "expected_height_ft": 200
+  },
+  {
+    "pdf_name": "00232IYLY18.PDF",
+    "icao": "KLNK",
+    "runway": "18",
+    "kind": "ils",
+    "expected_altitude_ft": 1395,
+    "expected_height_ft": 200,
+    "note": "S-ILS 18# row carries a trailing footnote glyph after the runway number; label match must not require an exact end-of-string after the runway digits."
+  },
+  {
+    "pdf_name": "00338L16.PDF",
+    "icao": "KOQU",
+    "runway": "16",
+    "kind": "loc",
+    "expected_altitude_ft": 440,
+    "expected_height_ft": 422
+  },
+  {
+    "pdf_name": "05032L31.PDF",
+    "icao": "KCRP",
+    "runway": "31",
+    "kind": "loc",
+    "expected_altitude_ft": 400,
+    "expected_height_ft": 357
+  },
+  {
+    "pdf_name": "05207L27.PDF",
+    "icao": "KOGS",
+    "runway": "27",
+    "kind": "loc",
+    "expected_altitude_ft": 740,
+    "expected_height_ft": 438
+  },
+  {
+    "pdf_name": "05291L14.PDF",
+    "icao": "KOLU",
+    "runway": "14",
+    "kind": "loc",
+    "expected_altitude_ft": 1920,
+    "expected_height_ft": 473
+  },
+  {
+    "pdf_name": "00898V5.PDF",
+    "icao": "KJST",
+    "runway": "05",
+    "kind": "vor",
+    "expected_altitude_ft": 2880,
+    "expected_height_ft": 596
+  },
+  {
+    "pdf_name": "00618V18.PDF",
+    "icao": "KFNT",
+    "runway": "18",
+    "kind": "vor",
+    "expected_altitude_ft": 1300,
+    "expected_height_ft": 523
+  },
+  {
+    "pdf_name": "00546V12.PDF",
+    "icao": "KPRC",
+    "runway": "12",
+    "kind": "vor",
+    "expected_altitude_ft": 5460,
+    "expected_height_ft": 433
+  },
+  {
+    "pdf_name": "00069V12.PDF",
+    "icao": "KBRL",
+    "runway": "12",
+    "kind": "vor",
+    "expected_altitude_ft": 1280,
+    "expected_height_ft": 587
+  },
+  {
+    "pdf_name": "05187V17R.PDF",
+    "icao": "KGFK",
+    "runway": "17R",
+    "kind": "vor",
+    "expected_altitude_ft": 1220,
+    "expected_height_ft": 377
+  },
+  {
+    "pdf_name": "00013V14.PDF",
+    "icao": "KAEX",
+    "runway": "14",
+    "kind": "vor",
+    "expected_altitude_ft": 500,
+    "expected_height_ft": 415
+  },
+  {
+    "pdf_name": "00362N35.PDF",
+    "icao": "KSLN",
+    "runway": "35",
+    "kind": "ndb",
+    "expected_altitude_ft": 1760,
+    "expected_height_ft": 489
+  },
+  {
+    "pdf_name": "00987N1R.PDF",
+    "icao": "KICT",
+    "runway": "01R",
+    "kind": "ndb",
+    "expected_altitude_ft": 1760,
+    "expected_height_ft": 439
+  },
+  {
+    "pdf_name": "00382N22.PDF",
+    "icao": "KSCH",
+    "runway": "22",
+    "kind": "ndb",
+    "expected_altitude_ft": 1160,
+    "expected_height_ft": 782
+  },
+  {
+    "pdf_name": "00614N28.PDF",
+    "icao": "KIAG",
+    "runway": "28",
+    "kind": "ndb",
+    "expected_altitude_ft": 1200,
+    "expected_height_ft": 612
+  },
+  {
+    "pdf_name": "06970R12R.PDF",
+    "icao": "KVGT",
+    "runway": "12R",
+    "kind": "lnav",
+    "expected_altitude_ft": 2820,
+    "expected_height_ft": 615
+  },
+  {
+    "pdf_name": "00041R5L.PDF",
+    "icao": "KBTL",
+    "runway": "05L",
+    "kind": "lnav",
+    "expected_altitude_ft": 1440,
+    "expected_height_ft": 488
+  },
+  {
+    "pdf_name": "05488R18L.PDF",
+    "icao": "KHSV",
+    "runway": "18L",
+    "kind": "lnav",
+    "expected_altitude_ft": 1040,
+    "expected_height_ft": 431
+  },
+  {
+    "pdf_name": "00895R1.PDF",
+    "icao": "KMQY",
+    "runway": "01",
+    "kind": "lnav",
+    "expected_altitude_ft": 1100,
+    "expected_height_ft": 581
+  },
+  {
+    "pdf_name": "00250R9.PDF",
+    "icao": "KCID",
+    "runway": "09",
+    "kind": "lnav",
+    "expected_altitude_ft": 1240,
+    "expected_height_ft": 383
+  },
+  {
+    "pdf_name": "05159R4.PDF",
+    "icao": "KHIB",
+    "runway": "04",
+    "kind": "lnav",
+    "expected_altitude_ft": 1780,
+    "expected_height_ft": 428
+  },
+  {
+    "pdf_name": "00855R1.PDF",
+    "icao": "KRMG",
+    "runway": "01",
+    "kind": "lnav",
+    "expected_altitude_ft": 1100,
+    "expected_height_ft": 464
+  },
+  {
+    "pdf_name": "00389R18L.PDF",
+    "icao": "KGYI",
+    "runway": "18L",
+    "kind": "lnav",
+    "expected_altitude_ft": 1200,
+    "expected_height_ft": 459
+  },
+  {
+    "pdf_name": "00906VA.PDF",
+    "icao": "KGRK",
+    "runway": "",
+    "kind": "circling",
+    "expected_altitude_ft": 1540,
+    "expected_height_ft": 525
+  },
+  {
+    "pdf_name": "05831VA.PDF",
+    "icao": "KNVD",
+    "runway": "",
+    "kind": "circling",
+    "expected_altitude_ft": 1360,
+    "expected_height_ft": 468
+  },
+  {
+    "pdf_name": "05994VA.PDF",
+    "icao": "KTSO",
+    "runway": "",
+    "kind": "circling",
+    "expected_altitude_ft": 1940,
+    "expected_height_ft": 777
+  },
+  {
+    "pdf_name": "00790VA.PDF",
+    "icao": "KIPL",
+    "runway": "",
+    "kind": "circling",
+    "expected_altitude_ft": 500,
+    "expected_height_ft": 554
+  },
+  {
+    "pdf_name": "00050L18.PDF",
+    "icao": "KBHM",
+    "runway": "18",
+    "kind": "loc",
+    "expected_altitude_ft": 1380,
+    "expected_height_ft": 736,
+    "note": "Hard case: two 'S-18' rows on this LOC chart -- primary at higher y (1380/736) and a lower IMTOY-fix DME-required alternate (1200/556) sharing the identical label. Correct answer is the topmost (primary) box."
+  },
+  {
+    "pdf_name": "05320V19R.PDF",
+    "icao": "KCCR",
+    "runway": "19R",
+    "kind": "vor",
+    "expected_altitude_ft": 640,
+    "expected_height_ft": 618,
+    "note": "Hard case: two 'S-19R' rows -- an asterisked, better-minima row at higher y (640/618, footnoted for a steeper missed-approach climb gradient) above a plain 'S-19R' row (1020/998) for aircraft that can't meet it. Correct primary answer is the topmost box, but note the topmost box is itself conditional (asterisked); it is not automatically the unconditional minimum."
+  },
+  {
+    "pdf_name": "00267IL15.PDF",
+    "icao": "KMOB",
+    "runway": "",
+    "kind": "circling",
+    "expected_altitude_ft": 700,
+    "expected_height_ft": 481,
+    "note": "CIRCLING row read from an ILS-or-LOC chart rather than a single-type non-precision chart."
+  },
+  {
+    "pdf_name": "00338L16.PDF",
+    "icao": "KOQU",
+    "runway": "",
+    "kind": "circling",
+    "expected_altitude_ft": 620,
+    "expected_height_ft": 602,
+    "note": "CIRCLING row read from a LOC-only chart."
+  }
+]
