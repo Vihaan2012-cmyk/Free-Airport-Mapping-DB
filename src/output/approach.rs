@@ -75,6 +75,10 @@ pub struct Chart<'a> {
     /// What the safe altitude ring is measured from, which is the published centre where
     /// there is a published one and the airport itself where there is not.
     pub msa_caption: String,
+    /// The height the glidepath crosses the threshold at, where it is published.
+    pub threshold_crossing_ft: Option<f64>,
+    /// The hold flown if the missed approach cannot be, where a chart names one.
+    pub alternate_hold: Option<&'a crate::sources::navdata::Hold>,
     /// The hold the missed approach ends in, where one is published for it.
     pub missed_hold: Option<&'a crate::sources::navdata::Hold>,
     /// What is flown to the localiser minimum, where the chart publishes one.
@@ -291,7 +295,7 @@ impl View {
         let back = (track_deg + 180.0).to_radians();
         let shift_nm = far / 2.0;
         let centre = (airport.0 + shift_nm * back.cos() / 60.0, airport.1 + shift_nm * back.sin() / 60.0 / cos);
-        let half_nm = (far / 2.0 * 1.06 + 0.8).clamp(PLAN_MIN_NM / 2.0, PLAN_MAX_NM / 2.0);
+        let half_nm = (far / 2.0 * 0.95 + 0.55).clamp(PLAN_MIN_NM / 2.0, PLAN_MAX_NM / 2.0);
 
         // The shorter side of the box has to hold that, whichever way the approach runs.
         let aspect = (w / h) as f64;
@@ -709,10 +713,11 @@ fn draw_holds(c: &mut Content, font: Name, v: &View, legs: &[&Leg]) {
 ///
 /// A chart says so plainly — "NOT TO SCALE" — and draws the racetrack with the course
 /// flown towards the fix and the course flown away from it, which is what a crew sets up.
-fn draw_hold_box(c: &mut Content, font: Name, bold: Name, x: f32, y: f32, w: f32, h: f32, hold: &crate::sources::navdata::Hold, beacon: Option<&Beacon>) {
+fn draw_hold_box(c: &mut Content, font: Name, bold: Name, x: f32, y: f32, w: f32, h: f32, hold: &crate::sources::navdata::Hold, beacon: Option<&Beacon>, title: &str) {
     fill_box(c, x, y, w, h, 1.0);
     box_outline(c, x, y, w, h, 0.8, INK);
-    text(c, font, 5.2, x + 5.0, y + h - 8.0, "NOT TO SCALE", 0.4);
+    text(c, font, 5.2, x + 5.0, y + h - 8.0, title, 0.4);
+    text_right(c, font, 5.0, x + w - 5.0, y + h - 8.0, "NOT TO SCALE", 0.45);
 
     // The racetrack, laid out along the course flown towards the fix. The fix itself is
     // at the end of the inbound leg, which is where the aircraft arrives.
@@ -760,9 +765,8 @@ fn draw_hold_box(c: &mut Content, font: Name, bold: Name, x: f32, y: f32, w: f32
 
     let name = beacon.map(|b| b.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| hold.fix.clone());
     text(c, bold, 7.0, x + 5.0, y + 12.0, &name, INK);
-    match beacon {
-        Some(b) => text(c, font, 6.0, x + 5.0, y + 4.0, &format!("{:.1} {}", b.frequency, b.ident), 0.25),
-        None => text(c, font, 6.0, x + 5.0, y + 4.0, &hold.fix, 0.25),
+    if let Some(b) = beacon {
+        text(c, font, 6.0, x + 5.0, y + 4.0, &format!("{:.1} {}", b.frequency, b.ident), 0.25);
     }
     // A maximum only where one is really published; the databases carry a sentinel just
     // below eighteen thousand to mean there is none.
@@ -770,7 +774,7 @@ fn draw_hold_box(c: &mut Content, font: Name, bold: Name, x: f32, y: f32, w: f32
         text_right(c, font, 5.2, x + w - 5.0, y + 4.0, &format!("MAX {max:.0}'"), 0.35);
     }
     if let Some(minutes) = hold.leg_time_min {
-        text_right(c, font, 5.2, x + w - 5.0, y + h - 8.0, &format!("{minutes:.0} MIN"), 0.35);
+        text_right(c, font, 5.2, x + w - 5.0, y + 11.0, &format!("{minutes:.0} MIN"), 0.35);
     }
 }
 
@@ -1413,13 +1417,22 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
     if let Some(hold) = ch.missed_hold {
         let (bw, bh) = (126.0, 62.0);
         let beacon = ch.navaids.iter().find(|b| b.ident == hold.fix);
-        draw_hold_box(c, font, bold, x + w - bw - 6.0, y + h - bh - 6.0, bw, bh, hold, beacon);
+        draw_hold_box(c, font, bold, x + w - bw - 6.0, y + h - bh - 6.0, bw, bh, hold, beacon, "MISSED APCH HOLD");
+    }
+    // The hold flown when the missed approach cannot be, which a chart gives its own
+    // corner and its own heading.
+    if let Some(hold) = ch.alternate_hold {
+        let (bw, bh) = (126.0, 62.0);
+        let beacon = ch.navaids.iter().find(|b| b.ident == hold.fix);
+        let (bx, by) = (x + w - bw - 6.0, y + 6.0);
+        draw_hold_box(c, font, bold, bx, by, bw, bh, hold, beacon, "ALTERNATE MISSED APCH");
     }
     // The airport close up, in the bottom corner, but only when the plan is too wide to
     // show it properly on its own.
     if v.span_nm() > 9.0 {
         let (iw, ih) = (140.0, 122.0);
-        draw_inset(c, font, bold, ch, x + w - iw - 6.0, y + 16.0, iw, ih);
+        let above = if ch.alternate_hold.is_some() { 74.0 } else { 16.0 };
+        draw_inset(c, font, bold, ch, x + w - iw - 6.0, y + above, iw, ih);
     }
     // Whether there is any sea in sight, so the key only mentions it when there is.
     let has_water = ch.field_elev_ft >= WATER_NEEDS_FIELD_FT
@@ -1527,7 +1540,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
             points.push((at_nm(nm), at_ft(a), leg));
         }
     }
-    let tch = at_ft(ch.tdze_ft + 50.0);
+    let tch = at_ft(ch.tdze_ft + ch.threshold_crossing_ft.unwrap_or(50.0));
     c.set_stroke_gray(INK);
     c.set_line_width(1.6);
     c.move_to(at_nm(0.0), tch);
@@ -1536,32 +1549,79 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     }
     c.stroke();
 
+    // Everything the profile marks, from the threshold outwards: the fixes that carry an
+    // altitude, and the marker beacons the approach crosses on its way in. A chart names
+    // each of them by how far it is from the localiser's own distance measuring
+    // equipment, because that is the number on the instrument.
+    let dme = ch.ils.and_then(|i| i.dme.map(|at| (i.ident.clone(), at)));
+    let dme_label = |lat: f64, lon: f64| {
+        dme.as_ref().map(|(ident, at)| {
+            let nm = ((lat - at.0) * 60.0).hypot((lon - at.1) * 60.0 * at.0.to_radians().cos().max(0.05));
+            format!("D{nm:.1} {ident}")
+        })
+    };
+    let mut marks: Vec<(f64, f32, f32, String, Option<String>)> = Vec::new();
     for (px, py, leg) in &points {
-        // The altitude in a box, and the fix under the ground line, as a chart sets them.
-        let s = format!("{:.0}", leg.altitude_ft.unwrap_or(0.0));
-        label(c, bold, 7.5, px - text_width(bold, 7.5, &s) / 2.0, py + 4.0, &s, INK);
+        if !leg.fix.starts_with("RW") {
+            let s = format!("{:.0}", leg.altitude_ft.unwrap_or(0.0));
+            label(c, bold, 7.5, px - text_width(bold, 7.5, &s) / 2.0, py + 4.0, &s, INK);
+        }
         if !leg.fix.is_empty() {
-            text_centred(c, font, 6.5, *px, ground_y - 9.0, &leg.fix, 0.25);
-            line(c, *px, ground_y - 3.0, *px, *py, 0.4, 0.5);
+            let nm = fix_distance_nm(leg, thr).unwrap_or(0.0);
+            let under = leg.lat.zip(leg.lon).and_then(|(lat, lon)| dme_label(lat, lon));
+            marks.push((nm, *px, *py, leg.fix.clone(), under));
         }
     }
-    // How far it is from each fix to the next, written between them the way a chart
-    // writes it.
-    let mut ordered: Vec<&(f32, f32, &Leg)> = points.iter().collect();
-    ordered.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for pair in ordered.windows(2) {
-        let (left, right) = (pair[0], pair[1]);
-        let (Some(a), Some(b)) = (fix_distance_nm(left.2, thr), fix_distance_nm(right.2, thr)) else { continue };
-        let gap = (a - b).abs();
-        if gap < 0.3 || right.0 - left.0 < 26.0 {
+    // The marker beacons, at the height the glidepath crosses them, which is what a chart
+    // prints beside each one.
+    let crossing_ft = ch.threshold_crossing_ft.unwrap_or(50.0);
+    if let Some(ils) = ch.ils {
+        let slope = ch.glidepath_deg.unwrap_or(3.0).to_radians().tan();
+        for (kind, lat, lon) in &ils.markers {
+            let nm = ((lat - thr.0) * 60.0).hypot((lon - thr.1) * 60.0 * thr.0.to_radians().cos().max(0.05));
+            if nm > total_nm {
+                continue;
+            }
+            let height = crossing_ft + nm * 6076.115 * slope;
+            let (px, py) = (at_nm(nm), at_ft(ch.tdze_ft + height));
+            // The hatched box a chart draws a marker as.
+            c.set_fill_gray(0.35);
+            c.rect(px - 3.0, ground_y - 1.0, 6.0, 9.0);
+            c.fill_nonzero();
+            marks.push((nm, px, py, kind.label().to_string(), Some(format!("GS {height:.0}'"))));
+        }
+    }
+    marks.sort_by(|a, b| b.0.total_cmp(&a.0));
+    // The names under the ground line, each with what it is measured by.
+    let mut last_x = f32::NEG_INFINITY;
+    for (_, px, py, name, under) in &marks {
+        if *px - last_x < 22.0 {
             continue;
         }
-        let middle = (left.0 + right.0) / 2.0;
-        label(c, font, 6.0, middle - 9.0, ground_y - 19.0, &format!("{gap:.1} NM"), 0.35);
+        last_x = *px;
+        text_centred(c, font, 6.5, *px, ground_y - 9.0, name, 0.25);
+        if let Some(under) = under {
+            text_centred(c, font, 5.2, *px, ground_y - 16.0, under, 0.4);
+        }
+        line(c, *px, ground_y - 3.0, *px, *py, 0.4, 0.5);
+    }
+    // How far it is from each to the next, along the bottom between tick marks.
+    let ticks: Vec<(f64, f32)> = marks.iter().map(|(nm, px, _, _, _)| (*nm, *px)).chain([(0.0, at_nm(0.0))]).collect();
+    let rule_y = y + 8.0;
+    for pair in ticks.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let gap = (a.0 - b.0).abs();
+        if gap < 0.05 || (b.1 - a.1).abs() < 18.0 {
+            continue;
+        }
+        line(c, a.1, rule_y - 3.0, a.1, rule_y + 3.0, 0.5, 0.5);
+        line(c, b.1, rule_y - 3.0, b.1, rule_y + 3.0, 0.5, 0.5);
+        text_centred(c, font, 6.0, (a.1 + b.1) / 2.0, rule_y - 2.0, &format!("{gap:.1}"), 0.3);
     }
 
     // Glidepath angle and threshold crossing height, in the corner a chart puts them.
-    label(c, font, 6.5, at_nm(0.0) - 44.0, tch + 9.0, "TCH 50", 0.3);
+    label(c, font, 6.5, at_nm(0.0) - 46.0, tch + 9.0, &format!("TCH {crossing_ft:.0}'"), 0.3);
+    text_right(c, font, 6.5, x + w - 6.0, ground_y + 6.0, &format!("TDZE {:.0}'", ch.tdze_ft), 0.3);
     if let Some(deg) = ch.glidepath_deg {
         text(c, bold, 8.0, x + 6.0, y + h - 12.0, &format!("GP {deg:.2}"), INK);
     }
@@ -1839,7 +1899,10 @@ fn draw_briefing_strip(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f
 
     // The missed approach, in the words a chart uses.
     text(c, bold, 7.0, inner_x + 5.0, missed_y + missed_h - 9.0, "MISSED APCH:", INK);
-    let missed = missed_text(&part_legs(ch.procedure, "missed"));
+    let missed = ch
+        .published
+        .and_then(|p| p.text.missed_approach.clone())
+        .unwrap_or_else(|| missed_text(&part_legs(ch.procedure, "missed")));
     let room = ((inner_w - 74.0) / 3.3) as usize;
     for (i, l) in wrap(&missed, room.max(20)).into_iter().take(2).enumerate() {
         text(c, font, 7.5, inner_x + 62.0, missed_y + missed_h - 9.0 - i as f32 * 9.0, &l, INK);
@@ -1854,7 +1917,10 @@ fn draw_briefing_strip(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f
     line(c, inner_x, trans_y, x + w - msa_w, trans_y, 0.6, 0.55);
 
     // The notes, numbered as a chart numbers them.
-    let notes = chart_notes(ch, est);
+    // The notes a state prints are decisions rather than measurements, so they cannot be
+    // worked out here; where the chart carries them they are used as they stand.
+    let published_notes: Vec<String> = ch.published.map(|p| p.text.notes.clone()).unwrap_or_default();
+    let notes = if published_notes.is_empty() { chart_notes(ch, est) } else { published_notes };
     let mut row = trans_y - 7.0;
     for (i, note) in notes.iter().take(2).enumerate() {
         text(c, font, 5.5, inner_x + 5.0, row, &format!("{}. {note}", i + 1), 0.3);

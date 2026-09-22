@@ -105,6 +105,42 @@ pub struct Hold {
     pub max_altitude_ft: Option<f64>,
 }
 
+/// What a runway record says about the runway itself.
+#[derive(Debug, Clone, Copy)]
+pub struct Runway {
+    /// The height the glidepath crosses the threshold at, which a chart prints and which
+    /// cannot be worked out from anything else.
+    pub threshold_crossing_ft: Option<f64>,
+    /// The published elevation of the landing threshold.
+    pub threshold_elevation_ft: Option<f64>,
+    pub magnetic_bearing_deg: Option<f64>,
+}
+
+/// The published record for one runway.
+pub fn runway(icao: &str, runway: &str) -> Option<Runway> {
+    database()?.runway(icao, runway)
+}
+
+/// The hold at a fix, preferring the one flown back towards a given place.
+///
+/// A fix can carry several published holds — one for an arrival, one for a missed
+/// approach, one for an airway — and they are told apart by which way they are flown. A
+/// missed approach holds on a course back towards the airport it has just left, because
+/// that is the way the aircraft arrives at the fix.
+pub fn hold_towards(fix: &str, from: (f64, f64)) -> Option<Hold> {
+    let db = database()?;
+    let holds = db.holds_at(fix);
+    let best = holds.into_iter().min_by(|a, b| {
+        let angle = |h: &Hold| {
+            let cos = h.lat.to_radians().cos().max(0.05);
+            let back = ((from.1 - h.lon) * 60.0 * cos).atan2((from.0 - h.lat) * 60.0).to_degrees();
+            ((h.inbound_deg - back + 540.0) % 360.0 - 180.0).abs()
+        };
+        angle(a).total_cmp(&angle(b))
+    })?;
+    Some(best)
+}
+
 /// The beacons within a distance of a point, nearest first.
 pub fn beacons_near(lat: f64, lon: f64, radius_nm: f64) -> Vec<Beacon> {
     if let Some(db) = database() {
@@ -291,7 +327,7 @@ impl Database {
             // beacon's begins with a V, a localiser's is an I.
             let filter = if only_beacons { " and (navaid_class is null or trim(navaid_class) like 'V%')" } else { "" };
             let sql = format!(
-                "select {ident}, {name}, {frequency}, {lat_col}, {lon_col} from \"{table}\" \
+                "select {ident}, {name}, {frequency}, {lat_col}, {lon_col} from \"{table}\" 
                  where {lat_col} between ?1 and ?2 and {lon_col} between ?3 and ?4{filter}"
             );
             let Ok(mut statement) = connection.prepare(&sql) else { return };
@@ -333,7 +369,7 @@ impl Database {
         let runway = format!("RW{}", runway.trim().trim_start_matches("RW").to_uppercase());
         let short = format!("RW{}", runway.trim_start_matches("RW").trim_start_matches('0'));
         let sql = format!(
-            "select llz_identifier, llz_frequency, llz_bearing, gs_angle, llz_latitude, llz_longitude, ils_mls_gls_category \
+            "select llz_identifier, llz_frequency, llz_bearing, gs_angle, llz_latitude, llz_longitude, ils_mls_gls_category 
              from \"{table}\" where airport_identifier = ?1 and (runway_identifier = ?2 or runway_identifier = ?3) limit 1"
         );
         let found = connection
@@ -358,12 +394,12 @@ impl Database {
     fn markers(&self, connection: &rusqlite::Connection, icao: &str, runway: &str, short: &str) -> Vec<(Marker, f64, f64)> {
         let Some(table) = self.table("localizer_marker") else { return Vec::new() };
         let sql = format!(
-            "select marker_type, marker_latitude, marker_longitude from \"{table}\" \
+            "select marker_type, marker_latitude, marker_longitude from \"{table}\" 
              where airport_identifier = ?1 and (runway_identifier = ?2 or runway_identifier = ?3)"
         );
         let Ok(mut statement) = connection.prepare(&sql) else { return Vec::new() };
         let rows = statement.query_map([icao.to_uppercase().as_str(), runway, short], |row| {
-            let kind = match row.get::<_, String>(0).unwrap_or_default().to_uppercase().as_str() {
+            let kind = match row.get::<_, String>(0).unwrap_or_default().trim().to_uppercase().as_str() {
                 "IM" => Marker::Inner,
                 "MM" => Marker::Middle,
                 _ => Marker::Outer,
@@ -381,12 +417,12 @@ impl Database {
         // centred on a beacon and split into sectors is what a chart shows, because a
         // single figure for the whole circle carries the highest ground all the way round.
         let sql = format!(
-            "select msa_center, msa_center_latitude, msa_center_longitude, radius_limit, \
-             sector_bearing_1, sector_altitude_1, sector_bearing_2, sector_altitude_2, \
-             sector_bearing_3, sector_altitude_3, sector_bearing_4, sector_altitude_4, \
-             sector_bearing_5, sector_altitude_5 from \"{table}\" where airport_identifier = ?1 \
-             order by (sector_bearing_5 is not null) + (sector_bearing_4 is not null) \
-             + (sector_bearing_3 is not null) + (sector_bearing_2 is not null) desc, \
+            "select msa_center, msa_center_latitude, msa_center_longitude, radius_limit, 
+             sector_bearing_1, sector_altitude_1, sector_bearing_2, sector_altitude_2, 
+             sector_bearing_3, sector_altitude_3, sector_bearing_4, sector_altitude_4, 
+             sector_bearing_5, sector_altitude_5 from \"{table}\" where airport_identifier = ?1 
+             order by (sector_bearing_5 is not null) + (sector_bearing_4 is not null) 
+             + (sector_bearing_3 is not null) + (sector_bearing_2 is not null) desc, 
              (msa_center like 'RW%') asc,              (msa_center_latitude - ?2) * (msa_center_latitude - ?2)              + (msa_center_longitude - ?3) * (msa_center_longitude - ?3) asc limit 1"
         );
         connection
@@ -417,11 +453,55 @@ impl Database {
             .filter(|m| !m.sectors.is_empty())
     }
 
+    fn runway(&self, icao: &str, runway: &str) -> Option<Runway> {
+        let connection = read_only(&self.path)?;
+        let table = self.table("runways")?;
+        let wanted = format!("RW{}", runway.trim().trim_start_matches("RW").to_uppercase());
+        let short = format!("RW{}", wanted.trim_start_matches("RW").trim_start_matches('0'));
+        let sql = format!(
+            "select threshold_crossing_height, landing_threshold_elevation, runway_magnetic_bearing \
+             from \"{table}\" where airport_identifier = ?1 and (runway_identifier = ?2 or runway_identifier = ?3) limit 1"
+        );
+        connection
+            .query_row(&sql, [icao.to_uppercase().as_str(), wanted.as_str(), short.as_str()], |row| {
+                Ok(Runway {
+                    threshold_crossing_ft: row.get::<_, f64>(0).ok().filter(|v| *v > 5.0 && *v < 200.0),
+                    threshold_elevation_ft: row.get::<_, f64>(1).ok(),
+                    magnetic_bearing_deg: row.get::<_, f64>(2).ok(),
+                })
+            })
+            .ok()
+    }
+
+    /// Every hold published at a fix.
+    fn holds_at(&self, fix: &str) -> Vec<Hold> {
+        let Some(connection) = read_only(&self.path) else { return Vec::new() };
+        let Some(table) = self.table("holdings") else { return Vec::new() };
+        let sql = format!(
+            "select waypoint_identifier, waypoint_latitude, waypoint_longitude, inbound_holding_course, \
+             turn_direction, leg_time, leg_length, maximum_altitude from \"{table}\" where waypoint_identifier = ?1"
+        );
+        let Ok(mut statement) = connection.prepare(&sql) else { return Vec::new() };
+        let rows = statement.query_map([fix.to_uppercase()], |row| {
+            Ok(Hold {
+                fix: row.get::<_, String>(0).unwrap_or_default(),
+                lat: row.get::<_, f64>(1)?,
+                lon: row.get::<_, f64>(2)?,
+                inbound_deg: row.get::<_, f64>(3).unwrap_or_default(),
+                right_turns: !row.get::<_, String>(4).unwrap_or_default().eq_ignore_ascii_case("L"),
+                leg_time_min: row.get::<_, f64>(5).ok().filter(|v| *v > 0.0),
+                leg_nm: row.get::<_, f64>(6).ok().filter(|v| *v > 0.0),
+                max_altitude_ft: row.get::<_, f64>(7).ok().filter(|v| *v > 0.0),
+            })
+        });
+        rows.map(|r| r.flatten().collect()).unwrap_or_default()
+    }
+
     fn hold_at(&self, fix: &str) -> Option<Hold> {
         let connection = read_only(&self.path)?;
         let table = self.table("holdings")?;
         let sql = format!(
-            "select waypoint_identifier, waypoint_latitude, waypoint_longitude, inbound_holding_course, \
+            "select waypoint_identifier, waypoint_latitude, waypoint_longitude, inbound_holding_course, 
              turn_direction, leg_time, leg_length, maximum_altitude from \"{table}\" where waypoint_identifier = ?1 limit 1"
         );
         connection
@@ -443,6 +523,7 @@ impl Database {
 
 /// The tables worth finding, by what their names end with.
 const WANTED: &[&str] = &[
+    "runways",
     "vhfnavaids",
     "enroute_ndbnavaids",
     "localizers_glideslopes",
