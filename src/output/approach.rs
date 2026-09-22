@@ -808,12 +808,50 @@ fn draw_holds(c: &mut Content, font: Name, v: &View, legs: &[&Leg]) {
     }
 }
 
+/// What a fix is measured from: the nearest beacon to the airport, how far the fix lies
+/// from it, and on which radial. A chart gives a waypoint that way — "D14.8 JFK" —
+/// because that is how it is found on the instruments.
+fn reference_for(ch: &Chart, hold: &crate::sources::navdata::Hold) -> Option<(String, f64, f64)> {
+    let beacon = ch
+        .navaids
+        .iter()
+        .filter(|b| b.kind == NavaidKind::Vor)
+        .min_by(|a, b| {
+            let range = |n: &Beacon| ((n.lat - ch.airport.lat) * 60.0).hypot((n.lon - ch.airport.lon) * 60.0 * ch.airport.lat.to_radians().cos().max(0.05));
+            range(a).total_cmp(&range(b))
+        })?;
+    let cos = beacon.lat.to_radians().cos().max(0.05);
+    let (dn, de) = ((hold.lat - beacon.lat) * 60.0, (hold.lon - beacon.lon) * 60.0 * cos);
+    let nm = dn.hypot(de);
+    if !(0.5..=60.0).contains(&nm) {
+        return None;
+    }
+    let true_bearing = (de.atan2(dn).to_degrees() + 360.0) % 360.0;
+    let radial = (true_bearing - ch.variation_deg.unwrap_or(0.0) + 360.0) % 360.0;
+    Some((beacon.ident.clone(), nm, radial))
+}
+
 /// The hold a missed approach ends in, drawn in its own box because the fix it is flown
 /// at is usually well off the edge of the map.
 ///
 /// A chart says so plainly — "NOT TO SCALE" — and draws the racetrack with the course
 /// flown towards the fix and the course flown away from it, which is what a crew sets up.
-fn draw_hold_box(c: &mut Content, font: Name, bold: Name, x: f32, y: f32, w: f32, h: f32, hold: &crate::sources::navdata::Hold, beacon: Option<&Beacon>, title: &str) {
+fn draw_hold_box(
+    c: &mut Content,
+    font: Name,
+    bold: Name,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hold: &crate::sources::navdata::Hold,
+    beacon: Option<&Beacon>,
+    title: &str,
+    reference: Option<(String, f64, f64)>,
+    // True where a track on the map runs into this hold, which only the missed approach
+    // does: the alternate is reached from somewhere else entirely.
+    connected: bool,
+) {
     fill_box(c, x, y, w, h, 1.0);
     box_outline(c, x, y, w, h, 0.8, INK);
     text(c, font, 5.2, x + 5.0, y + h - 8.0, title, 0.4);
@@ -855,8 +893,16 @@ fn draw_hold_box(c: &mut Content, font: Name, bold: Name, x: f32, y: f32, w: f32
             last = Some(p);
         }
     }
-    // The arrow that says which way round it is flown, on the inbound leg.
+    // The arrow that says which way round it is flown, on the inbound leg, and the way in
+    // from the edge of the box, so that the track which brought the aircraft here is not
+    // left hanging at the frame.
     arrow_head(c, near, far, INK);
+    if connected {
+        c.save_state();
+        c.set_dash_pattern([3.0, 2.0], 0.0);
+        line(c, x + 1.0, near.1, near.0 - 1.0, near.1, 1.2, 0.15);
+        c.restore_state();
+    }
 
     // The courses either side, and what the fix is.
     let outbound = (hold.inbound_deg + 180.0) % 360.0;
@@ -865,8 +911,23 @@ fn draw_hold_box(c: &mut Content, font: Name, bold: Name, x: f32, y: f32, w: f32
 
     let name = beacon.map(|b| b.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| hold.fix.clone());
     text(c, bold, 7.0, x + 5.0, y + 12.0, &name, INK);
-    if let Some(b) = beacon {
-        text(c, font, 6.0, x + 5.0, y + 4.0, &format!("{:.1} {}", b.frequency, b.ident), 0.25);
+    match (beacon, &reference) {
+        // A beacon holds at itself, so it is given by what it is tuned to.
+        (Some(b), _) => {
+            text(c, font, 6.0, x + 5.0, y + 4.0, &format!("{:.1} {}", b.frequency, b.ident), 0.25);
+            draw_morse(c, x + 5.0 + text_width(font, 6.0, &format!("{:.1} {} ", b.frequency, b.ident)), y + 5.0, &b.ident, 0.3);
+        }
+        // A waypoint is given by how far it lies from one, which is how it is found.
+        (None, Some((ident, nm, radial))) => {
+            text(c, font, 6.0, x + 5.0, y + 4.0, &format!("D{nm:.1} {ident}"), 0.25);
+            // The radial it lies on, written along the line that leads to it.
+            let entry = (x + 6.0, y + h * 0.30);
+            let target = (cx - 11.0, cy + 7.0);
+            line(c, entry.0, entry.1, target.0, target.1, 0.5, 0.5);
+            let middle = ((entry.0 + target.0) / 2.0, (entry.1 + target.1) / 2.0);
+            label(c, font, 4.8, middle.0 - 12.0, middle.1 + 2.0, &format!("{ident} R-{radial:03.0}"), 0.4);
+        }
+        _ => {}
     }
     // A maximum only where one is really published; the databases carry a sentinel just
     // below eighteen thousand to mean there is none.
@@ -889,8 +950,21 @@ fn draw_msa_circle(c: &mut Content, font: Name, bold: Name, cx: f32, cy: f32, r:
     c.stroke();
     if sectors.len() > 1 {
         for s in sectors {
+            // The bearing a sector begins at, drawn as an arrow out from the centre,
+            // because it is a bearing from the beacon rather than a line on the ground.
             let start = (s.from_deg as f32).to_radians();
-            line(c, cx, cy, cx + start.sin() * r, cy + start.cos() * r, 0.6, 0.4);
+            let (ex, ey) = (cx + start.sin() * r, cy + start.cos() * r);
+            line(c, cx, cy, ex, ey, 0.6, 0.4);
+            let back = (start + std::f32::consts::PI).to_radians().to_degrees();
+            let _ = back;
+            let (bx, by) = (ex - start.sin() * 4.0, ey - start.cos() * 4.0);
+            let (px, py) = (start.cos() * 1.8, -start.sin() * 1.8);
+            c.set_fill_gray(0.25);
+            c.move_to(ex, ey);
+            c.line_to(bx + px, by + py);
+            c.line_to(bx - px, by - py);
+            c.close_path();
+            c.fill_nonzero();
             let mut sweep = s.to_deg - s.from_deg;
             if sweep <= 0.0 {
                 sweep += 360.0;
@@ -904,7 +978,7 @@ fn draw_msa_circle(c: &mut Content, font: Name, bold: Name, cx: f32, cy: f32, r:
     } else if let Some(only) = sectors.first().map(|s| s.altitude_ft).or(msa_ft) {
         text_centred(c, bold, 9.0, cx, cy - 3.0, &format!("{only:.0}"), INK);
     }
-    text_centred(c, font, 5.0, cx, cy - r - 14.0, caption, 0.3);
+    text_centred(c, font, 5.0, cx, cy - r - 20.0, caption, 0.3);
 }
 
 /// The localiser's beam, drawn the way a chart draws it: a long narrow wedge running
@@ -963,6 +1037,31 @@ fn draw_markers(c: &mut Content, font: Name, v: &View, markers: &[(crate::source
         c.fill_nonzero();
         taken.label(c, font, 6.0, px + 7.0, py - 2.0, kind.label(), 0.15);
     }
+}
+
+/// A beacon's ident in morse, as a chart prints it under the letters.
+///
+/// It is not decoration: a crew identifies a beacon by listening to it, and the dots and
+/// dashes are what they are listening for.
+fn draw_morse(c: &mut Content, x: f32, y: f32, ident: &str, grey: f32) {
+    const CODE: [(char, &str); 36] = [
+        ('A', ".-"), ('B', "-..."), ('C', "-.-."), ('D', "-.."), ('E', "."), ('F', "..-."), ('G', "--."), ('H', "...."), ('I', ".."), ('J', ".---"),
+        ('K', "-.-"), ('L', ".-.."), ('M', "--"), ('N', "-."), ('O', "---"), ('P', ".--."), ('Q', "--.-"), ('R', ".-."), ('S', "..."), ('T', "-"),
+        ('U', "..-"), ('V', "...-"), ('W', ".--"), ('X', "-..-"), ('Y', "-.--"), ('Z', "--.."), ('0', "-----"), ('1', ".----"), ('2', "..---"), ('3', "...--"),
+        ('4', "....-"), ('5', "....."), ('6', "-...."), ('7', "--..."), ('8', "---.."), ('9', "----."),
+    ];
+    let mut at = x;
+    c.set_fill_gray(grey);
+    for letter in ident.to_uppercase().chars() {
+        let Some((_, marks)) = CODE.iter().find(|(l, _)| *l == letter) else { continue };
+        for mark in marks.chars() {
+            let width = if mark == '-' { 3.0 } else { 1.1 };
+            c.rect(at, y, width, 1.1);
+            at += width + 1.2;
+        }
+        at += 2.0;
+    }
+    c.fill_nonzero();
 }
 
 /// The beacons in the piece of country the chart covers.
@@ -1037,7 +1136,7 @@ fn draw_navaids(c: &mut Content, font: Name, bold: Name, v: &View, navaids: &[Be
         let size = if named { 7.0 } else { 6.0 };
         let line = format!("{printed}  {ident}");
         let bw = text_width(bold, size, &line).max(text_width(font, size - 1.0, &n.name)) + 10.0;
-        let bh = if n.name.is_empty() { 11.0 } else { 18.0 };
+        let bh = if n.name.is_empty() { 16.0 } else { 23.0 };
         if !taken.first_time(ident) {
             continue;
         }
@@ -1054,9 +1153,10 @@ fn draw_navaids(c: &mut Content, font: Name, bold: Name, v: &View, navaids: &[Be
         fill_box(c, bx, by, bw, bh, 1.0);
         box_outline(c, bx, by, bw, bh, 0.6, grey);
         if !n.name.is_empty() {
-            text(c, font, size - 1.0, bx + 4.0, by + bh - 7.0, &n.name, 0.35);
+            text(c, font, size - 1.0, bx + 4.0, by + bh - 8.0, &n.name, 0.35);
         }
-        text(c, bold, size, bx + 4.0, by + 3.0, &line, grey);
+        text(c, bold, size, bx + 4.0, by + 8.0, &line, grey);
+        draw_morse(c, bx + 4.0, by + 3.5, ident, grey);
     }
 }
 
@@ -1472,7 +1572,7 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
     if let Some(hold) = ch.missed_hold {
         let (bw, bh) = (126.0, 62.0);
         let beacon = ch.navaids.iter().find(|b| b.ident == hold.fix);
-        draw_hold_box(c, font, bold, x + w - bw - 6.0, y + h - bh - 6.0, bw, bh, hold, beacon, "MISSED APCH HOLD");
+        draw_hold_box(c, font, bold, x + w - bw - 6.0, y + h - bh - 6.0, bw, bh, hold, beacon, "MISSED APCH HOLD", reference_for(ch, hold), true);
     }
     // The hold flown when the missed approach cannot be, which a chart gives its own
     // corner and its own heading.
@@ -1480,7 +1580,7 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         let (bw, bh) = (126.0, 62.0);
         let beacon = ch.navaids.iter().find(|b| b.ident == hold.fix);
         let (bx, by) = (x + w - bw - 6.0, y + 6.0);
-        draw_hold_box(c, font, bold, bx, by, bw, bh, hold, beacon, "ALTERNATE MISSED APCH");
+        draw_hold_box(c, font, bold, bx, by, bw, bh, hold, beacon, "ALTERNATE MISSED APCH", reference_for(ch, hold), false);
     }
     // Whether there is any sea in sight, so the key only mentions it when there is.
     let has_water = ch.field_elev_ft >= WATER_NEEDS_FIELD_FT
@@ -1546,9 +1646,10 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     let legs = final_legs(ch.procedure);
     let alts: Vec<f64> = legs.iter().filter_map(|l| l.altitude_ft).collect();
     let top_ft = alts.iter().cloned().fold(ch.tdze_ft + 1200.0, f64::max) + 200.0;
+    // The top third of the box belongs to the names, so the descent is drawn under them.
     let base_ft = ch.tdze_ft - 200.0;
     let ground_y = y + 26.0;
-    let scale_y = (h - 46.0) / (top_ft - base_ft).max(100.0) as f32;
+    let scale_y = (h - 58.0) / (top_ft - base_ft).max(100.0) as f32;
     let at_ft = |ft: f64| ground_y + ((ft - ch.tdze_ft) as f32).max(-20.0) * scale_y;
 
     let thr = ch.threshold.unwrap_or((ch.airport.lat, ch.airport.lon));
@@ -1633,9 +1734,12 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
             let height = crossing_ft + nm * 6076.115 * slope;
             let (px, py) = (at_nm(nm), at_ft(ch.tdze_ft + height));
             // The hatched box a chart draws a marker as.
-            c.set_fill_gray(0.35);
-            c.rect(px - 3.0, ground_y - 1.0, 6.0, 9.0);
-            c.fill_nonzero();
+            let (bx, by, bw, bh) = (px - 3.5, ground_y - 1.0, 7.0, 10.0);
+            box_outline(c, bx, by, bw, bh, 0.5, 0.2);
+            for i in 0..5 {
+                let step = bh * (i as f32 + 0.5) / 5.0;
+                line(c, bx, by + step, bx + (bh - step).min(bw), by + step + (bh - step).min(bw).min(step), 0.4, 0.3);
+            }
             marks.push((nm, px, py, kind.label().to_string(), Some(format!("GS {height:.0}'"))));
         }
     }
@@ -1658,24 +1762,30 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         }
     }
     marks.sort_by(|a, b| b.0.total_cmp(&a.0));
-    // The names under the ground line, each with what it is measured by.
+    // The names along the top, where a chart heads its profile, each with what it is
+    // measured by and what the glidepath crosses it at, and a line dropped from it to the
+    // place on the descent it stands for.
+    let name_row = y + h - 11.0;
     let mut last_x = f32::NEG_INFINITY;
     for (_, px, py, name, under) in &marks {
-        if *px - last_x < 22.0 {
+        if *px - last_x < 26.0 {
             continue;
         }
         last_x = *px;
-        text_centred(c, font, 6.5, *px, ground_y - 9.0, name, 0.25);
+        let mut row = name_row;
+        text_centred(c, bold, 7.0, *px, row, name, INK);
+        row -= 6.5;
         if let Some(under) = under {
-            text_centred(c, font, 5.2, *px, ground_y - 16.0, under, 0.4);
+            text_centred(c, font, 5.2, *px, row, under, 0.4);
+            row -= 6.5;
         }
-        // What the glidepath crosses it at, which is the height a crew checks against.
         if let Some(leg) = final_legs(ch.procedure).iter().find(|l| l.fix == *name) {
             if let Some(alt) = leg.altitude_ft.filter(|_| ch.glidepath_deg.is_some() && !name.starts_with("RW")) {
-                text_centred(c, font, 5.2, *px, ground_y - 23.0, &format!("GS {alt:.0}'"), 0.25);
+                text_centred(c, font, 5.2, *px, row, &format!("GS {alt:.0}'"), 0.25);
+                row -= 6.5;
             }
         }
-        line(c, *px, ground_y - 3.0, *px, *py, 0.4, 0.5);
+        line(c, *px, row + 4.0, *px, *py, 0.4, 0.5);
     }
     // How far it is from each to the next, along the bottom between tick marks.
     let ticks: Vec<(f64, f32)> = marks.iter().map(|(nm, px, _, _, _)| (*nm, *px)).chain([(0.0, at_nm(0.0))]).collect();
@@ -1691,6 +1801,34 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         text_centred(c, font, 6.0, (a.1 + b.1) / 2.0, rule_y - 2.0, &format!("{gap:.1}"), 0.3);
     }
 
+    // The beam itself: a glidepath is not a line but a wedge, and a chart draws it as
+    // one, widening away from the runway.
+    if ch.glidepath_deg.is_some() {
+        let slope = ch.glidepath_deg.unwrap_or(3.0);
+        let tip = (at_nm(0.0), at_ft(ch.tdze_ft + crossing_ft));
+        for spread in [0.7f64, -0.7] {
+            let angle = (slope + spread).to_radians().tan();
+            let far_ft = ch.tdze_ft + crossing_ft + total_nm * 6076.115 * angle;
+            line(c, tip.0, tip.1, at_nm(total_nm), at_ft(far_ft), 0.4, 0.55);
+        }
+    }
+    // Where the approach is left for the runway, and where it may not be flown past: a
+    // chart marks them V and M on the altitude they are flown at.
+    if let Some((mda, _)) = ch.published_loc {
+        let mda_y = at_ft(mda);
+        let slope = ch.glidepath_deg.unwrap_or(3.0).to_radians().tan();
+        let at_mda_nm = ((mda - ch.tdze_ft - crossing_ft) / (6076.115 * slope)).max(0.0);
+        let (vx, mx) = (at_nm(at_mda_nm), at_nm(0.0));
+        // The distance runs right to left: nought miles is at the runway, on the right.
+        if mx - vx > 20.0 {
+            c.save_state();
+            c.set_dash_pattern([3.0, 2.0], 0.0);
+            line(c, mx, mda_y, vx, mda_y, 0.7, 0.2);
+            c.restore_state();
+            text_centred(c, bold, 7.0, vx, mda_y - 2.5, "V", INK);
+            text_centred(c, bold, 7.0, mx - 5.0, mda_y - 2.5, "M", INK);
+        }
+    }
     // The course flown, written along the descent with an arrow, the way a chart writes
     // it: on the path itself, between one fix and the next.
     let course = ch.ils.and_then(|i| i.course_mag_deg).or(ch.course_mag_deg).unwrap_or(track_deg);
@@ -1740,9 +1878,9 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     label(c, font, 6.5, at_nm(0.0) - 46.0, tch + 9.0, &format!("TCH {crossing_ft:.0}'"), 0.3);
     text_right(c, font, 6.5, x + w - 8.0, y + 4.0, &format!("TDZE {:.0}'", ch.tdze_ft), 0.3);
     if let Some(deg) = ch.glidepath_deg {
-        text(c, bold, 8.0, x + 6.0, y + h - 12.0, &format!("GP {deg:.2}"), INK);
+        text(c, bold, 7.0, x + 6.0, y + 14.0, &format!("GP {deg:.2}"), INK);
     }
-    text(c, font, 6.5, x + 6.0, y + h - 21.0, &format!("{total_nm:.1} NM"), 0.35);
+    text(c, font, 6.0, x + 6.0, y + 6.0, &format!("{total_nm:.1} NM"), 0.35);
 
     // From the final approach fix to the missed approach point, and how long that takes
     // at the speeds an aeroplane flies it: a crew times the last segment, so a chart
@@ -1825,7 +1963,7 @@ fn draw_briefing_strip(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f
     text_up(c, font, 6.0, x + 8.0, y + 8.0, "BRIEFING STRIP", 0.35);
 
     // The safe altitude, on the right, across the whole height.
-    draw_msa_circle(c, font, bold, x + w - msa_w / 2.0, y + h / 2.0 + 4.0, 30.0, ch.msa_sectors, ch.msa_ft, &ch.msa_caption);
+    draw_msa_circle(c, font, bold, x + w - msa_w / 2.0, y + h / 2.0 + 7.0, 29.0, ch.msa_sectors, ch.msa_ft, &ch.msa_caption);
 
     let (comms_h, data_h, missed_h, trans_h) = (21.0, 28.0, 25.0, 10.0);
     let comms_y = y + h - comms_h;
@@ -2300,7 +2438,7 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
     let min_y = MARGIN + 16.0;
     let speed_h = 36.0;
     let speed_y = min_y + min_h + 3.0;
-    let prof_h = 106.0;
+    let prof_h = 120.0;
     let prof_y = speed_y + speed_h + 3.0;
     let plan_y = prof_y + prof_h + 3.0;
     let plan_h = strip_y - 3.0 - plan_y;
