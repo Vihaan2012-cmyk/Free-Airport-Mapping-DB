@@ -489,6 +489,63 @@ fn draw_terrain(c: &mut Content, patch: &Patch, v: &View, field_ft: f64) {
     }
 }
 
+/// The height each tint stands for, written on the tint itself.
+///
+/// The colour says at a glance where the ground is high; it does not say how high, and
+/// on a chart the figure is what a crew actually wants. A published plan writes it along
+/// the contour, so each band gets its ceiling written once, in the widest piece of that
+/// band on the page — which is where there is room for it and where it is least likely
+/// to be read as belonging to the band next door.
+fn label_terrain(c: &mut Content, font: Name, patch: &Patch, v: &View, field_ft: f64, taken: &mut Taken) {
+    let floor = (field_ft + 250.0).max(TERRAIN_BANDS[0].0);
+    for (i, (top, _)) in TERRAIN_BANDS.iter().enumerate() {
+        if !top.is_finite() || *top <= floor {
+            continue;
+        }
+        let low = if i == 0 { floor } else { TERRAIN_BANDS[i - 1].0.max(floor) };
+        // The longest unbroken run of this band across any one row, which is the widest
+        // the band gets on the page.
+        let mut best: Option<(f32, f32, f32)> = None; // (length, x centre, y)
+        for row in 0..patch.height {
+            let mut from: Option<usize> = None;
+            for col in 0..=patch.width {
+                let inside = col < patch.width && {
+                    let h = patch.at(row, col) as f64 / 0.3048;
+                    let (lat, lon) = patch.position(row, col);
+                    h.is_finite() && h >= low && h < *top && v.inside(v.at(lat, lon), -6.0)
+                };
+                if inside {
+                    from.get_or_insert(col);
+                    continue;
+                }
+                if let Some(start) = from.take() {
+                    let (lat0, lon0) = patch.position(row, start);
+                    let (lat1, lon1) = patch.position(row, col.saturating_sub(1));
+                    let (x0, y0) = v.at(lat0, lon0);
+                    let (x1, _) = v.at(lat1, lon1);
+                    let len = (x1 - x0).abs();
+                    if best.map_or(true, |(b, _, _)| len > b) {
+                        best = Some((len, (x0 + x1) / 2.0, y0));
+                    }
+                }
+            }
+        }
+        let Some((len, cx, cy)) = best else { continue };
+        let label = format!("{top:.0}");
+        let w = text_width(font, 5.5, &label);
+        if len < w + 10.0 {
+            continue;
+        }
+        // Written on a scrap of the band's own colour so it reads against the tint.
+        let (bw, bh) = (w + 4.0, 7.5);
+        if !taken.free(cx - bw / 2.0, cy - 2.0, bw, bh) {
+            continue;
+        }
+        taken.reserve(cx - bw / 2.0, cy - 2.0, bw, bh);
+        text_centred(c, font, 5.5, cx, cy, &label, 0.25);
+    }
+}
+
 /// Everything lower than a height, filled in one colour.
 ///
 /// Drawn as a shape rather than as a field of squares. A square to each reading turns a
@@ -813,15 +870,126 @@ fn draw_holds(c: &mut Content, font: Name, v: &View, legs: &[&Leg]) {
 /// What a fix is measured from: the nearest beacon to the airport, how far the fix lies
 /// from it, and on which radial. A chart gives a waypoint that way — "D14.8 JFK" —
 /// because that is how it is found on the instruments.
-fn reference_for(ch: &Chart, hold: &crate::sources::navdata::Hold) -> Option<(String, f64, f64)> {
-    let beacon = ch
-        .navaids
+/// The beacon distances on this chart are measured from: the nearest VOR with a DME,
+/// which is the one a procedure at this airport is written against.
+fn dme_reference<'a>(ch: &'a Chart<'a>) -> Option<&'a Beacon> {
+    ch.navaids.iter().filter(|b| b.kind == NavaidKind::Vor).min_by(|a, b| {
+        let range = |n: &Beacon| ((n.lat - ch.airport.lat) * 60.0).hypot((n.lon - ch.airport.lon) * 60.0 * ch.airport.lat.to_radians().cos().max(0.05));
+        range(a).total_cmp(&range(b))
+    })
+}
+
+/// How far a place is from that beacon, in miles: its DME reading.
+fn dme_nm(beacon: &Beacon, lat: f64, lon: f64) -> f64 {
+    let cos = beacon.lat.to_radians().cos().max(0.05);
+    ((lat - beacon.lat) * 60.0).hypot((lon - beacon.lon) * 60.0 * cos)
+}
+
+/// The angle the final descent is actually flown at.
+///
+/// A glidepath states its own. A non-precision approach does not: its angle is whatever
+/// the published altitudes imply over the distance they are flown, and printing three
+/// degrees beside it — the figure for an ILS — puts a crew a third again steeper than
+/// the procedure asks for. Madeira's is a little over two.
+fn descent_angle_deg(ch: &Chart) -> f64 {
+    if let Some(a) = ch.glidepath_deg {
+        return a;
+    }
+    let thr = ch.threshold.unwrap_or((ch.airport.lat, ch.airport.lon));
+    let legs = final_legs(ch.procedure);
+    let faf = legs
         .iter()
-        .filter(|b| b.kind == NavaidKind::Vor)
-        .min_by(|a, b| {
-            let range = |n: &Beacon| ((n.lat - ch.airport.lat) * 60.0).hypot((n.lon - ch.airport.lon) * 60.0 * ch.airport.lat.to_radians().cos().max(0.05));
-            range(a).total_cmp(&range(b))
+        .find(|l| l.role == Some(crate::sources::msfs::procedures::FixRole::Final) && l.altitude_ft.is_some())
+        .or_else(|| {
+            legs.iter()
+                .filter(|l| l.altitude_ft.is_some() && fix_distance_nm(l, thr).is_some())
+                .max_by(|a, b| fix_distance_nm(a, thr).unwrap_or(0.0).total_cmp(&fix_distance_nm(b, thr).unwrap_or(0.0)))
+        });
+    let angle = faf.and_then(|l| {
+        let nm = fix_distance_nm(l, thr)?;
+        let drop = l.altitude_ft? - ch.tdze_ft - ch.threshold_crossing_ft.unwrap_or(50.0);
+        (nm > 1.0 && drop > 0.0).then(|| (drop / (nm * 6076.115)).atan().to_degrees())
+    });
+    // Outside this it is not a final descent but two fixes in the same transition, and
+    // the ordinary three degrees is the safer thing to print.
+    angle.filter(|a| (1.5..=4.5).contains(a)).unwrap_or(3.0)
+}
+
+/// The altitude the approach should be at, mile by mile, as a chart tabulates it.
+///
+/// A plate prints this beside the plan so the descent can be checked against the DME at
+/// a glance, and the numbers in it are not separately published: they are the profile,
+/// read off at whole miles. So they are taken from the profile — the gradient between
+/// the fix the final descent starts at and the point it ends at — and the table cannot
+/// then disagree with the picture above it.
+fn recommended_altitudes(ch: &Chart) -> Option<(String, Vec<(f64, f64)>)> {
+    let beacon = dme_reference(ch)?;
+    let legs = final_legs(ch.procedure);
+    // The fix the final descent begins at, and the DME it is read at.
+    let faf = legs
+        .iter()
+        .find(|l| l.role == Some(crate::sources::msfs::procedures::FixRole::Final) && l.altitude_ft.is_some() && l.lat.is_some())
+        .or_else(|| {
+            let thr = ch.threshold.unwrap_or((ch.airport.lat, ch.airport.lon));
+            legs.iter()
+                .filter(|l| l.altitude_ft.is_some() && l.lat.is_some() && fix_distance_nm(l, thr).is_some())
+                .max_by(|a, b| fix_distance_nm(a, thr).unwrap_or(0.0).total_cmp(&fix_distance_nm(b, thr).unwrap_or(0.0)))
         })?;
+    let start_ft = faf.altitude_ft?;
+    let measured = dme_nm(beacon, faf.lat?, faf.lon?);
+    // A fix at D7.0 is published at seven miles and read at seven miles; our own
+    // measurement of it lands a hundredth or two either side, and tabulating from that
+    // would print 2,997 ft where the chart prints 3,000.
+    let start_dme = if (measured - measured.round()).abs() < 0.12 { measured.round() } else { measured };
+    if !(3.0..=25.0).contains(&start_dme) {
+        return None;
+    }
+    // Down the angle the descent is flown at, which is what the table is: the profile
+    // above it, read off at whole miles.
+    let per_nm = descent_angle_deg(ch).to_radians().tan() * 6076.115;
+    let floor_ft = ch.tdze_ft + ch.threshold_crossing_ft.unwrap_or(50.0);
+    let mut rows = Vec::new();
+    let mut d = start_dme.floor();
+    while d >= 1.0 && rows.len() < 12 {
+        let alt = start_ft - (start_dme - d) * per_nm;
+        if alt < floor_ft {
+            break;
+        }
+        rows.push((d, alt));
+        d -= 1.0;
+    }
+    (rows.len() >= 3).then(|| (beacon.ident.clone(), rows))
+}
+
+/// Draw that table, and say how tall it came out so what sits above it can move up.
+fn draw_recommended_altitudes(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32) -> f32 {
+    let Some((ident, rows)) = recommended_altitudes(ch) else { return 0.0 };
+    let (w, row_h, head_h) = (86.0f32, 8.5f32, 20.0f32);
+    let h = head_h + rows.len() as f32 * row_h + 3.0;
+    fill_box(c, x, y, w, h, 1.0);
+    box_outline(c, x, y, w, h, 0.9, INK);
+    // On an approach with a glidepath the same table is the one flown when the glidepath
+    // fails, and a chart heads it that way, because that is the only time it is used.
+    let (head_a, head_b) = if ch.glidepath_deg.is_some() { ("LOC", "(GS out)") } else { ("RECOMMENDED", "ALTITUDES") };
+    text_centred(c, bold, 5.8, x + w / 2.0, y + h - 8.0, head_a, INK);
+    text_centred(c, bold, 5.8, x + w / 2.0, y + h - 14.5, head_b, INK);
+    let head = y + h - head_h;
+    line(c, x, head, x + w, head, 0.8, INK);
+    let mid = x + w * 0.46;
+    line(c, mid, y, mid, head, 0.6, 0.5);
+    text_centred(c, font, 5.2, x + w * 0.23, head - 7.0, &format!("{ident} DME"), 0.3);
+    text_centred(c, font, 5.2, x + (mid - x) + (x + w - mid) / 2.0, head - 7.0, "ALTITUDE", 0.3);
+    line(c, x, head - 9.5, x + w, head - 9.5, 0.5, 0.5);
+    for (i, (dme, alt)) in rows.iter().enumerate() {
+        let row = head - 9.5 - (i as f32 + 1.0) * row_h + 2.5;
+        text_centred(c, font, 6.0, x + w * 0.23, row, &format!("{dme:.1}"), INK);
+        text_centred(c, font, 6.0, mid + (x + w - mid) / 2.0, row, &format!("{alt:.0}'"), INK);
+    }
+    h
+}
+
+fn reference_for(ch: &Chart, hold: &crate::sources::navdata::Hold) -> Option<(String, f64, f64)> {
+    let beacon = dme_reference(ch)?;
     let cos = beacon.lat.to_radians().cos().max(0.05);
     let (dn, de) = ((hold.lat - beacon.lat) * 60.0, (hold.lon - beacon.lon) * 60.0 * cos);
     let nm = dn.hypot(de);
@@ -1232,6 +1400,8 @@ fn draw_furniture(
     runway_deg: Option<f64>,
     has_water: bool,
     highest_ft: f64,
+    // How far up the elevation key has to start, to clear whatever is under it.
+    key_lift: f32,
 ) {
     // Degrees and minutes along the edges, as a chart rules them.
     let step = (if v.span_nm() > 24.0 { 20.0 } else if v.span_nm() > 10.0 { 10.0 } else { 5.0 }) / 60.0;
@@ -1299,7 +1469,7 @@ fn draw_furniture(
         return;
     }
     let key_h = rows as f32 * swatch + 12.0;
-    let (kx, ky) = (v.x + 10.0, v.y + 30.0);
+    let (kx, ky) = (v.x + 10.0, v.y + 30.0 + key_lift);
     fill_box(c, kx - 4.0, ky - 4.0, 54.0, key_h, 1.0);
     text(c, font, 5.5, kx, ky + key_h - 12.0, "ELEVATION", 0.4);
     if has_water {
@@ -1607,7 +1777,12 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
                 h.is_finite() && (h as f64 / 0.3048) <= WATER_FT
             })
         });
-    draw_furniture(c, font, bold, &v, ch.variation_deg, Some(track_deg), has_water, est.highest_terrain_ft);
+    // What the ground is, in figures rather than in colour.
+    label_terrain(c, font, ch.patch, &v, ch.field_elev_ft, &mut taken);
+    // The descent at whole miles, which a plate prints beside the plan, and the key to
+    // the tints moved up to sit on top of it.
+    let table_h = draw_recommended_altitudes(c, font, bold, ch, v.x + 6.0, v.y + 26.0);
+    draw_furniture(c, font, bold, &v, ch.variation_deg, Some(track_deg), has_water, est.highest_terrain_ft, if table_h > 0.0 { table_h + 4.0 } else { 0.0 });
     box_outline(c, x, y, w, h, 1.2, INK);
     v
 }
@@ -1743,6 +1918,24 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     }
     // And from the final approach fix, the glidepath to the threshold.
     path.push((at_nm(0.0), tch));
+    // The beacon itself, where the approach passes over one. A chart stands a tapered
+    // column on the ground under the path at that point, because passing the station is
+    // the moment the instrument reverses and a crew looks for it on the picture.
+    if let Some(beacon) = dme_reference(ch) {
+        let nm = ((beacon.lat - thr.0) * 60.0).hypot((beacon.lon - thr.1) * 60.0 * thr.0.to_radians().cos().max(0.05));
+        if nm > 0.3 && nm < total_nm {
+            let bx = at_nm(nm);
+            let top = ground_y + 34.0;
+            c.set_fill_gray(0.45);
+            c.move_to(bx - 3.2, top);
+            c.line_to(bx + 3.2, top);
+            c.line_to(bx + 1.1, ground_y);
+            c.line_to(bx - 1.1, ground_y);
+            c.close_path();
+            c.fill_nonzero();
+        }
+    }
+
     c.set_stroke_gray(INK);
     c.set_line_width(1.6);
     if let Some(first) = path.first() {
@@ -1759,7 +1952,13 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     // altitude, and the marker beacons the approach crosses on its way in. A chart names
     // each of them by how far it is from the localiser's own distance measuring
     // equipment, because that is the number on the instrument.
-    let dme = ch.ils.and_then(|i| i.dme.map(|at| (i.ident.clone(), at)));
+    // A localiser's own DME where the approach has one, and otherwise the beacon the
+    // procedure is written against — which on a VOR approach is the whole point of the
+    // number, since D7.0 FUN is how the fix is identified in the aeroplane.
+    let dme = ch
+        .ils
+        .and_then(|i| i.dme.map(|at| (i.ident.clone(), at)))
+        .or_else(|| dme_reference(ch).map(|b| (b.ident.clone(), (b.lat, b.lon))));
     let dme_label = |lat: f64, lon: f64| {
         dme.as_ref().map(|(ident, at)| {
             let nm = ((lat - at.0) * 60.0).hypot((lon - at.1) * 60.0 * at.0.to_radians().cos().max(0.05));
@@ -1771,7 +1970,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     for (px, py, leg) in &points {
         if !leg.fix.starts_with("RW") {
             let s = format!("{:.0}'", leg.altitude_ft.unwrap_or(0.0));
-            label(c, bold, 8.0, px - text_width(bold, 8.0, &s) / 2.0, py + 4.5, &s, INK);
+            label(c, bold, 9.5, px - text_width(bold, 9.5, &s) / 2.0, py + 5.0, &s, INK);
         }
         if !leg.fix.is_empty() {
             let nm = fix_distance_nm(leg, thr).unwrap_or(0.0);
@@ -1832,13 +2031,13 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     let name_row = y + h - 11.0;
     let mut last_x = f32::NEG_INFINITY;
     for (_, px, _py, name, under) in &marks {
-        if *px - last_x < 26.0 {
+        if *px - last_x < 30.0 {
             continue;
         }
         last_x = *px;
         let mut row = name_row;
-        text_centred(c, bold, 7.0, *px, row, name, INK);
-        row -= 5.5;
+        text_centred(c, bold, 8.5, *px, row, name, INK);
+        row -= 6.5;
         // A marker sounds as well as shows, and the sound is how it is told from the
         // others: the inner one a run of dots, the outer one dashes.
         if let Some(sound) = match *name {
@@ -1853,19 +2052,19 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
             row -= 1.0;
         }
         if let Some(under) = under {
-            text_centred(c, font, 5.2, *px, row, under, 0.4);
-            row -= 6.5;
+            text_centred(c, font, 6.2, *px, row, under, 0.15);
+            row -= 7.0;
         }
         if let Some(leg) = final_legs(ch.procedure).iter().find(|l| l.fix == *name) {
             if let Some(alt) = leg.altitude_ft.filter(|_| ch.glidepath_deg.is_some() && !name.starts_with("RW")) {
-                text_centred(c, font, 5.2, *px, row, &format!("GS {alt:.0}'"), 0.25);
-                row -= 6.5;
+                text_centred(c, font, 6.0, *px, row, &format!("GS {alt:.0}'"), 0.2);
+                row -= 7.0;
             }
         }
         // A marker gives its distance and the height the glidepath crosses it at.
         if let Some((_, height)) = marker_heights.iter().find(|(mx, _)| (mx - px).abs() < 0.5) {
-            text_centred(c, font, 5.2, *px, row, height, 0.25);
-            row -= 6.5;
+            text_centred(c, font, 6.0, *px, row, height, 0.2);
+            row -= 7.0;
         }
         c.save_state();
         c.set_dash_pattern([2.0, 2.0], 0.0);
@@ -1881,9 +2080,9 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         if gap < 0.05 || (b.1 - a.1).abs() < 18.0 {
             continue;
         }
-        line(c, a.1, rule_y - 4.0, a.1, rule_y + 5.0, 0.5, 0.5);
-        line(c, b.1, rule_y - 4.0, b.1, rule_y + 5.0, 0.5, 0.5);
-        text_centred(c, font, 6.0, (a.1 + b.1) / 2.0, rule_y - 2.0, &format!("{gap:.1}"), 0.3);
+        line(c, a.1, rule_y - 4.0, a.1, rule_y + 5.0, 0.7, INK);
+        line(c, b.1, rule_y - 4.0, b.1, rule_y + 5.0, 0.7, INK);
+        text_centred(c, font, 6.8, (a.1 + b.1) / 2.0, rule_y - 2.0, &format!("{gap:.1}"), INK);
     }
 
     // The beam itself: a glidepath is not a line but a wedge, and a chart draws it as
@@ -1914,6 +2113,37 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
             text_centred(c, bold, 7.0, mx - 5.0, mda_y - 2.5, "M", INK);
         }
     }
+    // Where the approach may not be flown past. A chart marks it M on the altitude it is
+    // reached at, whatever kind of approach it is; only the ones carrying a published
+    // localiser minimum were getting it, because only those drew the V beside it.
+    if ch.published_loc.is_none() && ch.glidepath_deg.is_none() {
+        let map_nm = marks.iter().map(|(nm, _, _, _, _)| *nm).fold(f64::INFINITY, f64::min);
+        if map_nm.is_finite() {
+            let mx = at_nm(map_nm);
+            let my = at_ft(est.altitude_ft);
+            c.save_state();
+            c.set_dash_pattern([2.0, 2.0], 0.0);
+            line(c, mx, my + 8.0, mx, ground_y, 0.6, 0.35);
+            c.restore_state();
+            text_centred(c, bold, 9.0, mx, my + 2.0, "M", INK);
+        }
+    }
+
+    // And the angle it comes down at, written against the sloping part of the path. A
+    // plate puts the figure on the slope rather than only in the table below, because
+    // that is where it is looked for.
+    // The longest sloping run on the path, which is the one the eye takes for the
+    // descent and so the one the figure belongs against.
+    let longest = path
+        .windows(2)
+        .filter(|p| p[0].1 - p[1].1 > 6.0 && p[1].0 - p[0].0 > 24.0)
+        .max_by(|a, b| (a[1].0 - a[0].0).total_cmp(&(b[1].0 - b[0].0)));
+    if let Some(run) = longest {
+        let (a, b) = (run[0], run[1]);
+        let s = format!("{:.2}\u{b0}", descent_angle_deg(ch));
+        text_centred(c, font, 7.0, (a.0 + b.0) / 2.0 + 20.0, (a.1 + b.1) / 2.0 - 10.0, &s, 0.15);
+    }
+
     // The course flown, written along the descent with an arrow, the way a chart writes
     // it: on the path itself, between one fix and the next.
     let course = ch.ils.and_then(|i| i.course_mag_deg).or(ch.course_mag_deg).unwrap_or(track_deg);
@@ -2178,8 +2408,11 @@ fn draw_speed_band(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, 
     }
     let row_y = |n: f32| y + h - (n + 1.0) * rh + rh / 2.0 - 2.5;
     text(c, font, 5.8, x + 4.0, row_y(0.0), "Gnd speed-Kts", 0.3);
-    let slope = ch.glidepath_deg.unwrap_or(3.0);
-    text(c, font, 5.8, x + 4.0, row_y(1.0), &format!("GS {slope:.2}\u{b0}"), 0.3);
+    let slope = descent_angle_deg(ch);
+    // A glidepath is a glidepath; without one the figure is a descent angle, and a chart
+    // names it that way so nobody reads it as guidance the aircraft will receive.
+    let angle_label = if ch.glidepath_deg.is_some() { format!("GS {slope:.2}\u{b0}") } else { format!("Descent Angle {slope:.2}\u{b0}") };
+    text(c, font, 5.8, x + 4.0, row_y(1.0), &angle_label, 0.3);
     text(c, font, 5.8, x + 4.0, row_y(2.0), &format!("FAF to MAP {segment_nm:.1}"), 0.3);
     for (i, speed) in SPEEDS.iter().enumerate() {
         let cx = x + label_w + i as f32 * cw + cw / 2.0;
