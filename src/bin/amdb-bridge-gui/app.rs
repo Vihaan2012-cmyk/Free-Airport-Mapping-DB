@@ -3,7 +3,7 @@
 //! closing the window does not stop the maps a flight is using.
 
 use crate::instance::{self, Instance};
-use amdbgen::bridge::desktop::{self, A350State, MapState, XPlaneState};
+use amdbgen::bridge::desktop::{self, A350State, XPlaneState};
 use amdbgen::bridge::service::{self, Running};
 use amdbgen::bridge::settings::{dir_size, Settings};
 use native_windows_gui as nwg;
@@ -79,25 +79,6 @@ fn install_sink(shared: &Arc<Shared>, fresh: bool) {
 // --------------------------------------------------------------------------------------
 // Command-line steps for the installer. No window; results go to bridge.log.
 
-fn install_map_everywhere() -> i32 {
-    let sims = desktop::detect_sims();
-    if sims.is_empty() {
-        amdbgen::term::warn("No Microsoft Flight Simulator found; the A220 map can be installed later from AMDB Bridge");
-        return 0;
-    }
-    let mut failed = false;
-    for sim in sims {
-        match desktop::install_a220_map(&sim.community) {
-            Ok(notes) => notes.iter().for_each(|n| amdbgen::term::success(&format!("{}: {n}", sim.name))),
-            Err(e) => {
-                failed = true;
-                amdbgen::term::error(&format!("{}: {e:#}", sim.name));
-            }
-        }
-    }
-    i32::from(failed)
-}
-
 fn uninstall(relaunched: bool) -> i32 {
     instance::ask_to_quit(Duration::from_secs(10));
     let problems = desktop::uninstall_cleanup();
@@ -148,14 +129,11 @@ pub fn main() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
     let shared = Arc::new(Shared::default());
-    let headless = has("--install-a220") || has("--uninstall") || has("--quit") || has("--run-at-login") || has("--setup-navigraph");
+    let headless = has("--uninstall") || has("--quit") || has("--run-at-login") || has("--setup-navigraph");
     install_sink(&shared, !headless);
 
     if has("--quit") {
         return quit_running();
-    }
-    if has("--install-a220") {
-        return install_map_everywhere();
     }
     let relaunched = has("--relaunched");
     if has("--uninstall") {
@@ -213,8 +191,6 @@ pub fn main() -> i32 {
 /// well-stocked Community folder.
 struct Inventory {
     rows: Vec<[String; 3]>,
-    can_install: bool,
-    can_remove: bool,
 }
 
 /// Build the list. `redirect` is the A350/A380X option, `serving_redirect` whether the
@@ -224,12 +200,6 @@ fn take_inventory(redirect: bool, serving_redirect: bool, xplane_on: bool) -> In
     let sims = desktop::detect_sims();
     let ready = redirect && desktop::navigraph_ready();
     for sim in &sims {
-        let map = match desktop::a220_map_state(&sim.community) {
-            MapState::NotInstalled => "Not installed".to_string(),
-            MapState::Installed(v) => format!("Installed (v{v})"),
-            MapState::Outdated { installed, available } => format!("Update available (v{installed} → v{available})"),
-        };
-        rows.push([sim.name.clone(), "Synaptic A220 moving map".into(), map]);
         let navigraph = |when_serving: &str| -> String {
             if serving_redirect {
                 when_serving.to_string()
@@ -261,11 +231,7 @@ fn take_inventory(redirect: bool, serving_redirect: bool, xplane_on: bool) -> In
     if rows.is_empty() {
         rows.push(["-".into(), "No simulator found on this computer".into(), String::new()]);
     }
-    Inventory {
-        can_install: !sims.is_empty() && desktop::bundled_a220_map().is_some(),
-        can_remove: sims.iter().any(|s| desktop::a220_map_state(&s.community) != MapState::NotInstalled),
-        rows,
-    }
+    Inventory { rows }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -308,8 +274,6 @@ struct Ui {
 
     sims_header: nwg::Label,
     sims: nwg::ListView,
-    install: nwg::Button,
-    remove: nwg::Button,
     refresh: nwg::Button,
 
     options_header: nwg::Label,
@@ -429,8 +393,6 @@ impl App {
             ui.sims.insert_column(nwg::InsertListViewColumn { index: Some(i as i32), fmt: None, width: Some(width), text: Some(name.to_string()) });
         }
         ui.sims.set_headers_enabled(true);
-        nwg::Button::builder().parent(w).text("Install or update A220 map").position((20, 292)).size((220, 30)).build(&mut ui.install)?;
-        nwg::Button::builder().parent(w).text("Remove A220 map").position((248, 292)).size((160, 30)).build(&mut ui.remove)?;
         nwg::Button::builder().parent(w).text("Refresh").position((520, 292)).size((100, 30)).build(&mut ui.refresh)?;
 
         // Options
@@ -557,10 +519,6 @@ impl App {
             E::OnButtonClick => {
                 if handle == ui.start.handle {
                     self.toggle_serving();
-                } else if handle == ui.install.handle {
-                    self.install_map();
-                } else if handle == ui.remove.handle {
-                    self.remove_map();
                 } else if handle == ui.refresh.handle {
                     self.refresh_inventory();
                 } else if handle == ui.folder_change.handle {
@@ -881,7 +839,7 @@ impl App {
     }
 
     // ----------------------------------------------------------------------------------
-    // Simulators and the A220 map
+    // Simulators
 
     fn refresh_inventory(&self) {
         let (redirect, serving_redirect, xplane_on) = {
@@ -912,8 +870,6 @@ impl App {
             }
         }
         lv.set_redraw(true);
-        self.ui.install.set_enabled(inv.can_install);
-        self.ui.remove.set_enabled(inv.can_remove);
         self.ui.refresh.set_enabled(true);
     }
 
@@ -942,49 +898,6 @@ impl App {
             Err(e) => amdbgen::term::error(&format!("Could not save the log: {e:#}")),
         }
         self.drain_lines_only();
-    }
-
-    fn install_map(&self) {
-        let sims = desktop::detect_sims();
-        let mut ok = 0;
-        for sim in &sims {
-            match desktop::install_a220_map(&sim.community) {
-                Ok(notes) => {
-                    ok += 1;
-                    notes.iter().for_each(|n| amdbgen::term::success(&format!("{}: {n}", sim.name)));
-                }
-                Err(e) => amdbgen::term::error(&format!("{}: {e:#}", sim.name)),
-            }
-        }
-        self.drain_lines_only();
-        self.refresh_inventory();
-        if ok > 0 && desktop::sim_running() {
-            nwg::modal_info_message(&self.ui.window, "AMDB Bridge", "The A220 map is installed. Restart Microsoft Flight Simulator to load it.");
-        }
-    }
-
-    fn remove_map(&self) {
-        let choice = nwg::modal_message(
-            &self.ui.window,
-            &nwg::MessageParams {
-                title: "AMDB Bridge",
-                content: "Remove the A220 moving map from every simulator on this computer?\n\nAny other A220 map it set aside is put back.",
-                buttons: nwg::MessageButtons::YesNo,
-                icons: nwg::MessageIcons::Question,
-            },
-        );
-        if choice != nwg::MessageChoice::Yes {
-            return;
-        }
-        for sim in desktop::detect_sims() {
-            match desktop::remove_a220_map(&sim.community) {
-                Ok(true) => amdbgen::term::success(&format!("{}: A220 moving map removed", sim.name)),
-                Ok(false) => {}
-                Err(e) => amdbgen::term::error(&format!("{}: {e:#}", sim.name)),
-            }
-        }
-        self.drain_lines_only();
-        self.refresh_inventory();
     }
 
     // ----------------------------------------------------------------------------------
@@ -1065,7 +978,7 @@ impl App {
                 &self.ui.window,
                 &nwg::MessageParams {
                     title: "Serve the A350 and A380X",
-                    content: "The iniBuilds A350 and FlyByWire A380X ask Navigraph's map server for airports directly. To answer them, AMDB Bridge points that address at this computer, installs a local certificate, and patches the A350's EFB so it does not ask you to sign in.\n\nWindows asks for administrator permission once. While this option is on, those aircraft get their airport maps from AMDB Bridge, so keep it running when you fly them. Untick it, or uninstall AMDB Bridge, to undo all of it.\n\nThe A220 map and X-Plane do not need this.",
+                    content: "The iniBuilds A350 and FlyByWire A380X ask Navigraph's map server for airports directly. To answer them, AMDB Bridge points that address at this computer, installs a local certificate, and patches the A350's EFB so it does not ask you to sign in.\n\nWindows asks for administrator permission once. While this option is on, those aircraft get their airport maps from AMDB Bridge, so keep it running when you fly them. Untick it, or uninstall AMDB Bridge, to undo all of it.\n\nX-Plane does not need this.",
                     buttons: nwg::MessageButtons::OkCancel,
                     icons: nwg::MessageIcons::Info,
                 },

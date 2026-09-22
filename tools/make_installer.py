@@ -1,6 +1,6 @@
 """Build the Windows installer: dist/AMDB-Bridge-Setup-<version>.exe.
 
-Compiles the release binaries, refreshes the A220 map package's layout.json, and runs
+Compiles the release binaries and runs
 Inno Setup's compiler on installer/amdb-bridge.iss.
 
     python tools/make_installer.py
@@ -46,13 +46,6 @@ def main():
         return 1
     v = version()
 
-    manifest = os.path.join(ROOT, "packages", "msfs-a220-amm", "manifest.json")
-    pkg = open(manifest, encoding="utf-8").read()
-    if f'"package_version": "{v}"' not in pkg:
-        print(f"note: the A220 map package is not version {v}; the app will not offer it as an update")
-
-    # layout.json lists every file with its size, so it has to be rebuilt after any change.
-    run([sys.executable, os.path.join("tools", "build_a220_amm.py"), "--dry-run"], stdout=subprocess.DEVNULL)
     run(["cargo", "build", "--release", "--locked", "--bin", "amdb-bridge-gui", "--bin", "amdb-bridge", "--bin", "amdbgen"])
     run([compiler, f"/DAppVersion={v}", "/Q", os.path.join("installer", "amdb-bridge.iss")])
 

@@ -6,3 +6,7 @@
 *.amdb-bridge.bak
 .amdb-bridge-patches.json
 /dist
+
+# Downloaded indexes and caches: rebuilt on demand, never committed.
+/amdbgen/
+/lists/build-*.csv
