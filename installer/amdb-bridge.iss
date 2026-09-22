@@ -47,6 +47,7 @@ CloseApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+Name: "a220map"; Description: "Install the airport moving map for the Synaptic A220 into Microsoft Flight Simulator 2020 and 2024"; GroupDescription: "Simulators:"
 Name: "a350"; Description: "Set up the iniBuilds A350 and FlyByWire A380X airport maps (Windows asks for administrator permission)"; GroupDescription: "Simulators:"
 Name: "startup"; Description: "Open AMDB Bridge in the notification area when Windows starts"; GroupDescription: "Starting up:"; Flags: unchecked
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -55,6 +56,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#Root}\target\release\amdb-bridge-gui.exe"; DestDir: "{app}"; DestName: "{#AppExe}"; Flags: ignoreversion
 Source: "{#Root}\target\release\amdb-bridge.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\target\release\amdbgen.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#Root}\packages\msfs-a220-amm\*"; DestDir: "{app}\msfs\zzz-amdb-a220-amm"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#Root}\tools\xplane\amdb_oans.lua"; DestDir: "{app}\xplane"; Flags: ignoreversion
 Source: "{#Root}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -65,12 +67,14 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
+Filename: "{app}\{#AppExe}"; Parameters: "--install-a220"; StatusMsg: "Installing the A220 moving map..."; Tasks: a220map; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Parameters: "--setup-navigraph on"; StatusMsg: "Setting up the A350 and A380X..."; Tasks: a350; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Parameters: "--run-at-login on"; Tasks: startup; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Description: "Open AMDB Bridge now"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
-; Removes the start-up entries, the A350 patch, the hosts-file redirect and certificate.
+; Takes the A220 map back out of every simulator (restoring any map it set aside), and
+; removes the start-up entries, the A350 patch, the hosts-file redirect and certificate.
 Filename: "{app}\{#AppExe}"; Parameters: "--uninstall"; RunOnceId: "AMDBBridgeCleanup"; Flags: runhidden waituntilterminated
 
 [Code]

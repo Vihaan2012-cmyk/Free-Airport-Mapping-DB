@@ -76,14 +76,24 @@ impl Setup {
     pub fn track_deg(&self) -> f64 {
         let p = self.procedure();
         let thr = self.threshold.map(|(lat, lon, _)| (lat, lon));
-        let last_fix = p
+        let final_fixes: Vec<(f64, f64)> = p
             .transitions
             .iter()
             .filter(|t| t.part == "final")
             .flat_map(|t| t.legs.iter())
             .filter_map(|l| l.lat.zip(l.lon))
-            .next_back();
-        if let (Some((flat, flon)), Some((tlat, tlon))) = (last_fix, thr) {
+            .collect();
+        // The final segment's own bearing, from the fix it begins at to the point it
+        // ends at. That is the track the approach is flown on, which is not always a
+        // track towards the runway: a circling approach ends over the field pointing
+        // somewhere else entirely, and measuring from its last fix to the threshold
+        // would give a direction the aeroplane never flies.
+        if let (Some(first), Some(last)) = (final_fixes.first(), final_fixes.last()) {
+            if first != last {
+                return bearing(first.0, first.1, last.0, last.1);
+            }
+        }
+        if let (Some((flat, flon)), Some((tlat, tlon))) = (final_fixes.last().copied(), thr) {
             return bearing(flat, flon, tlat, tlon);
         }
         self.threshold

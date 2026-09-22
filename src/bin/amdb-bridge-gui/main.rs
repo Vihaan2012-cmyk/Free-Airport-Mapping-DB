@@ -1,6 +1,7 @@
-//! AMDB Bridge desktop app: start and stop the bridge and
+//! AMDB Bridge desktop app: start and stop the bridge, install the A220 moving map, and
 //! set the options, without a terminal. Also the steps the installer runs:
 //!
+//! * `--install-a220`        install the A220 map into every simulator found
 //! * `--run-at-login on|off` add or remove the Windows start-up entry
 //! * `--quit`                ask a running copy to exit, and wait for it
 //! * `--uninstall`           undo everything outside the program folder
