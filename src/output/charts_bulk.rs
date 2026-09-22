@@ -105,6 +105,7 @@ fn one(
     let setup = crate::approach::prepare_from(procedures, http, cache, idx, runway, crate::approach::Options { quiet: true, wide_terrain: !opts.no_msa, ..Default::default() })?;
     let procedure = setup.procedure();
     let est = crate::approach::estimate(&setup, opts.kind);
+    let circling: Vec<(char, f64)> = crate::approach::circling_table(&setup).into_iter().map(|(letter, ft, _)| (letter, ft)).collect();
     let out = opts.out_dir.join(format!("{}-RW{}.pdf", setup.procedures.icao, procedure.runway));
     let chart = crate::output::approach::Chart {
         airport: &setup.procedures,
@@ -124,8 +125,12 @@ fn one(
         course_mag_deg: setup.course_mag_deg(),
         variation_deg: setup.variation_deg(),
         kind: opts.kind,
+        circling: &circling,
         airport_dir: setup.airport_dir.as_deref(),
         runway_ends: setup.runway_ends,
+        runway_size: setup.runway_detail.as_ref().and_then(|t| t.landing_m.zip(t.width_m)),
+        runway_lighting: setup.runway_detail.as_ref().map(|t| t.lighting.as_slice()).unwrap_or(&[]),
+        airac: crate::sources::msfs::airac_dates(),
     };
     crate::output::approach::write(&chart, &est, &out)?;
     Ok(out)

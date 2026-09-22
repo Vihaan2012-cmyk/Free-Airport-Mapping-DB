@@ -26,8 +26,13 @@
 //! +0x08 that fix's region                       +0x28 second altitude, metres
 //! +0x0C the navaid it is measured from          +0x2C -1 where there is no constraint
 //! +0x10 that navaid's region                    +0x30 always 357.9; not a height
-//! +0x14 radial from that navaid, degrees
+//! +0x14 radial from that navaid, degrees          +0x44 what part the fix plays
 //! ```
+//!
+//! That last one is a set of flags, and it settles what a chart would otherwise have to
+//! be guessed at: 1 marks an initial approach fix, 2 the intermediate fix, 4 the final
+//! approach fix and 8 the missed approach point. Every final approach in the data
+//! carries a 2, a 4 and an 8.
 //!
 //! The navaid, radial and distance are how a chart writes a fix: "12 DME FUN" is a fix
 //! twelve miles out on a radial from the Funchal beacon, and an arc leg is flown at that
@@ -117,9 +122,48 @@ impl Default for Leg {
             theta_deg: None,
             rho_nm: None,
             turn: None,
+            role: None,
             placed_on_radial: false,
             lat: None,
             lon: None,
+        }
+    }
+}
+
+/// What part a fix plays in the approach, as the data marks it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixRole {
+    /// Where a way in to the approach begins.
+    Initial,
+    /// Where the final segment begins.
+    Intermediate,
+    /// Where the descent to the minimum begins.
+    Final,
+    /// Where the approach ends and the missed approach starts.
+    MissedApproachPoint,
+}
+
+impl FixRole {
+    fn from(flags: u32) -> Option<FixRole> {
+        // Checked in order of how much a chart cares: a fix marked both an initial and
+        // an intermediate is drawn as the more significant of the two.
+        match flags {
+            f if f & 8 != 0 => Some(FixRole::MissedApproachPoint),
+            f if f & 4 != 0 => Some(FixRole::Final),
+            f if f & 2 != 0 => Some(FixRole::Intermediate),
+            f if f & 1 != 0 => Some(FixRole::Initial),
+            _ => None,
+        }
+    }
+
+    /// What a chart prints beside the fix.
+    pub fn label(self) -> &'static str {
+        match self {
+            FixRole::Initial => "IAF",
+            FixRole::Intermediate => "IF",
+            FixRole::Final => "FAF",
+            FixRole::MissedApproachPoint => "MAP",
         }
     }
 }
@@ -164,6 +208,9 @@ pub struct Leg {
     /// Which way the turn goes, on the legs that turn.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn: Option<Turn>,
+    /// What part this fix plays, where the data says.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<FixRole>,
     /// True when the position was worked out from a radial and a distance rather than
     /// read from the waypoint table.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -314,6 +361,7 @@ fn legs(d: &[u8], rec: &Record, fixes: &Fixes) -> Vec<Leg> {
                 2 => Some(Turn::Right),
                 _ => None,
             },
+            role: FixRole::from(bgl::u32le(d, b + 0x44)),
             placed_on_radial: false,
             lat,
             lon,

@@ -51,6 +51,8 @@ pub struct Setup {
     pub tdze_surveyed: bool,
     /// Both ends of the landing runway, threshold first.
     pub runway_ends: Option<((f64, f64), (f64, f64))>,
+    /// What the landing runway offers: its size and its lights.
+    pub runway_detail: Option<Threshold>,
 }
 
 impl Setup {
@@ -105,14 +107,21 @@ impl Setup {
     /// Not stated anywhere we can read, but the procedure gives its courses in magnetic
     /// and the ground gives the same courses in true, so the difference is the answer.
     pub fn variation_deg(&self) -> Option<f64> {
-        if let Some(measured) = self.procedures.magnetic_variation_deg {
-            return Some(measured);
-        }
-        // Failing that, the runway: our own build gives its bearing on the ground, and
-        // its number is that bearing in magnetic, to the nearest ten degrees.
-        let (_, _, bearing) = self.threshold?;
-        let number: f64 = self.procedure().runway.trim_end_matches(|c: char| c.is_alphabetic()).parse().ok()?;
-        Some(((bearing? - number * 10.0 + 540.0) % 360.0) - 180.0)
+        // The runway is the sanity check: our own build gives its bearing on the ground,
+        // and its number is that bearing in magnetic, to the nearest ten degrees.
+        let from_runway = || -> Option<f64> {
+            let (_, _, bearing) = self.threshold?;
+            let number: f64 = self.procedure().runway.trim_end_matches(|c: char| c.is_alphabetic()).parse().ok()?;
+            Some(((bearing? - number * 10.0 + 540.0) % 360.0) - 180.0)
+        };
+        let rough = from_runway();
+        // Magnetic north is nowhere near thirty degrees off true outside the far north,
+        // and a measurement that disagrees with the runway by more than the rounding of
+        // a runway number has measured something else.
+        let measured = self.procedures.magnetic_variation_deg.filter(|m| {
+            m.abs() <= 30.0 && rough.map(|r| ((m - r + 540.0) % 360.0 - 180.0).abs() <= 20.0).unwrap_or(true)
+        });
+        measured.or(rough)
     }
 
     /// The legs of the final approach segment.
@@ -208,6 +217,11 @@ pub struct Threshold {
     pub lat: f64,
     pub lon: f64,
     pub bearing_deg: Option<f64>,
+    /// Landing distance available and runway width, metres.
+    pub landing_m: Option<f64>,
+    pub width_m: Option<f64>,
+    /// What this end has to guide an approach by, in the words a chart uses.
+    pub lighting: Vec<&'static str>,
 }
 
 /// Every landing threshold our own build of an airport knows.
@@ -219,12 +233,31 @@ pub fn thresholds(dir: &Path) -> Vec<Threshold> {
         let props = &f["properties"];
         let (Some(name), Some(co)) = (props["idthr"].as_str(), f["geometry"]["coordinates"].as_array()) else { continue };
         let (Some(lon), Some(lat)) = (co.first().and_then(|v| v.as_f64()), co.get(1).and_then(|v| v.as_f64())) else { continue };
+        let mut lighting = Vec::new();
+        match props["vasis"].as_i64() {
+            Some(1) => lighting.push("PAPI"),
+            Some(2) => lighting.push("VASI"),
+            Some(3) => lighting.push("APAPI"),
+            _ => {}
+        }
+        if props["tohlight"].as_i64().unwrap_or(0) != 0 {
+            lighting.push("ALS");
+        }
+        if props["tdzlight"].as_bool().unwrap_or(false) {
+            lighting.push("TDZ");
+        }
+        if props["reil"].as_i64().unwrap_or(0) != 0 {
+            lighting.push("REIL");
+        }
         out.push(Threshold {
             name: name.trim().to_uppercase(),
             runway: props["idrwy"].as_str().unwrap_or("").trim().to_uppercase(),
             lat,
             lon,
             bearing_deg: props["brngtrue"].as_f64(),
+            landing_m: props["lda"].as_f64(),
+            width_m: props["width"].as_f64(),
+            lighting,
         });
     }
     out
@@ -326,6 +359,7 @@ pub fn prepare_from(procedures: AirportProcedures, http: &Http, cache: &Cache, i
     let threshold = airport_dir.as_deref().and_then(|d| threshold_of(d, &runway));
 
     let runway_ends = chosen_runway.map(|(_, ends)| ends);
+    let runway_detail = airport_dir.as_deref().and_then(|d| thresholds(d).into_iter().find(|t| t.name == runway.to_uppercase()));
 
     let patch = copernicus::patch(http, cache, procedures.lat, procedures.lon, 14.0, 120.0)?;
     // A minimum is measured from the touchdown zone, not from the airport's own
@@ -359,7 +393,7 @@ pub fn prepare_from(procedures: AirportProcedures, http: &Http, cache: &Cache, i
     let mut obstacles = obstacles::around(http, cache, &icao, procedures.lat, procedures.lon, opts.obstacle_radius_km, &mirrors).unwrap_or_default();
     // The safe altitude ring is the one place a smoothed reading will not do: it is
     // summits that set it, and a coarse copy of the ground rounds summits off.
-    let wide = opts.wide_terrain.then(|| copernicus::patch(http, cache, procedures.lat, procedures.lon, 46.3, 150.0).ok()).flatten();
+    let wide = opts.wide_terrain.then(|| copernicus::patch(http, cache, procedures.lat, procedures.lon, 46.3, 120.0).ok()).flatten();
     if let Some(w) = &wide {
         obstacles::resolve_tops(&mut obstacles, w);
     }
@@ -390,11 +424,12 @@ pub fn prepare_from(procedures: AirportProcedures, http: &Http, cache: &Cache, i
         tdze_ft,
         field_elev_ft,
         airport_name,
-        airport_dir,
         msa_ft,
         msa_sectors,
         tdze_surveyed: surveyed.is_some(),
         runway_ends,
+        runway_detail,
+        airport_dir,
     })
 }
 
@@ -514,12 +549,9 @@ pub fn circling_table(setup: &Setup) -> Vec<(char, f64, Option<String>)> {
 
 pub fn estimate(setup: &Setup, kind: crate::minima::Approach) -> crate::minima::Estimate {
     let path = setup.path();
-    // Where the procedure codes its own minimum, that is the answer, and the terrain is
-    // only looked at so the chart can say what is under the approach.
-    if let Some(coded) = crate::minima::coded_minimum(&setup.final_legs(), setup.tdze_ft) {
-        let highest = crate::minima::highest_terrain(&setup.patch, &path, kind).unwrap_or(setup.tdze_ft);
-        return crate::minima::from_coded(kind, setup.tdze_ft, coded, highest);
-    }
+    // What the procedure codes at its missed approach point, which is a floor rather
+    // than the answer: see `coded_minimum` for why.
+    let coded = crate::minima::coded_minimum(&setup.final_legs(), setup.tdze_ft);
     let mut terrain = crate::minima::limiting_terrain_limit(&setup.patch, &path, kind, setup.tdze_ft);
     // The chart prints the highest ground near the approach whether or not it set the
     // number, so it is looked up even when nothing was limited by it.
@@ -539,5 +571,12 @@ pub fn estimate(setup: &Setup, kind: crate::minima::Approach) -> crate::minima::
         return crate::minima::estimate_with(kind, setup.field_elev_ft, Some(limit), None);
     }
     let obstacle = crate::minima::limiting_obstacle(&setup.obstacles, &path, kind, setup.tdze_ft);
-    crate::minima::estimate_with(kind, setup.tdze_ft, terrain, obstacle)
+    let worked_out = crate::minima::estimate_with(kind, setup.tdze_ft, terrain.clone(), obstacle);
+    match coded {
+        Some(ft) if ft > worked_out.altitude_ft => {
+            let highest = terrain.map(|t| t.top_ft).unwrap_or(setup.tdze_ft);
+            crate::minima::from_coded(kind, setup.tdze_ft, ft, highest)
+        }
+        _ => worked_out,
+    }
 }
