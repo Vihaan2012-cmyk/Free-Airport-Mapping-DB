@@ -1082,6 +1082,7 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
         tdze_surveyed: setup.tdze_surveyed,
         field_elev_ft: setup.field_elev_ft,
         msa_ft: setup.msa_ft,
+        msa_sectors: &setup.msa_sectors,
         track_deg: setup.track_deg(),
         course_mag_deg: setup.course_mag_deg(),
         variation_deg: setup.variation_deg(),

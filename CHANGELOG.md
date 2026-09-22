@@ -45,6 +45,17 @@
   published minima, split by kind and by whether the chart sits on its system minimum or
   was pushed higher, and separately how close the estimated touchdown zone elevations
   are.
+- **A chart's furniture**: terrain tinted by elevation with a key, the minimum safe
+  altitude by quadrant rather than one figure for the whole circle, a compass rose
+  carrying the measured magnetic variation, degrees and minutes along the edges, and an
+  inset of the airport at its own scale where the approach is too long to show both.
+- **`amdbgen approach-charts`** draws a list of airports in one run, reading the
+  navigation data, the obstacle file, the runway file and the beacons once between all of
+  them. About a second a chart the first time an area is drawn and a tenth of that
+  afterwards, against six seconds a chart one at a time.
+- **Terrain is read at the size needed.** The elevation files carry reduced copies of
+  themselves; reading the smallest one still fine enough for the job, rather than the
+  largest for everything, is what makes the safe-altitude ring affordable.
 - Fixed: the second altitude on a leg was read from the wrong place in the navigation
   data, which put a constant 1,171 ft on charts as though it were a constraint.
 

@@ -44,6 +44,8 @@ pub struct Setup {
     pub airport_name: Option<String>,
     pub airport_dir: Option<PathBuf>,
     pub msa_ft: Option<f64>,
+    /// The same, by quadrant, which is how a chart prints it.
+    pub msa_sectors: Vec<crate::minima::Sector>,
     /// True when the touchdown zone elevation is a published survey rather than a
     /// reading off the terrain model.
     pub tdze_surveyed: bool,
@@ -355,7 +357,9 @@ pub fn prepare_from(procedures: AirportProcedures, http: &Http, cache: &Cache, i
 
     let mirrors = crate::pipeline::default_mirrors();
     let mut obstacles = obstacles::around(http, cache, &icao, procedures.lat, procedures.lon, opts.obstacle_radius_km, &mirrors).unwrap_or_default();
-    let wide = opts.wide_terrain.then(|| copernicus::patch(http, cache, procedures.lat, procedures.lon, 46.3, 600.0).ok()).flatten();
+    // The safe altitude ring is the one place a smoothed reading will not do: it is
+    // summits that set it, and a coarse copy of the ground rounds summits off.
+    let wide = opts.wide_terrain.then(|| copernicus::patch(http, cache, procedures.lat, procedures.lon, 46.3, 150.0).ok()).flatten();
     if let Some(w) = &wide {
         obstacles::resolve_tops(&mut obstacles, w);
     }
@@ -366,11 +370,15 @@ pub fn prepare_from(procedures: AirportProcedures, http: &Http, cache: &Cache, i
     }
     // The minimum safe altitude a chart prints in its corner: the highest thing within
     // 25 NM, plus a thousand feet, rounded up to the next hundred.
-    let msa_ft = wide.as_ref().map(|w| {
-        let ground = w.range().1 as f64 / 0.3048;
-        let top = obstacles.iter().filter_map(|o| o.top_ft).fold(ground, f64::max);
-        ((top + 1000.0) / 100.0).ceil() * 100.0
-    });
+    // The variation is measured from the fixes; without it the sectors are drawn on true
+    // bearings, which is close enough to put a label in the right quadrant.
+    let variation = procedures.magnetic_variation_deg.unwrap_or(0.0);
+    let msa_sectors = wide
+        .as_ref()
+        .map(|w| crate::minima::safe_altitude_sectors(w, &obstacles, (procedures.lat, procedures.lon), 25.0, variation, field_elev_ft))
+        .unwrap_or_default();
+    let msa_ft = msa_sectors.iter().map(|s| s.altitude_ft).fold(f64::NEG_INFINITY, f64::max);
+    let msa_ft = msa_ft.is_finite().then_some(msa_ft);
 
     Ok(Setup {
         procedures,
@@ -384,6 +392,7 @@ pub fn prepare_from(procedures: AirportProcedures, http: &Http, cache: &Cache, i
         airport_name,
         airport_dir,
         msa_ft,
+        msa_sectors,
         tdze_surveyed: surveyed.is_some(),
         runway_ends,
     })

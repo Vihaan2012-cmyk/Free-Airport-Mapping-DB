@@ -366,11 +366,15 @@ struct Source {
 }
 
 impl Source {
-    /// The smallest copy whose pixels are still finer than the spacing asked for.
+    /// The smallest copy whose pixels are about the spacing asked for.
+    ///
+    /// A little coarser is fine and a great deal cheaper: the copies step by a factor of
+    /// two, so insisting on strictly finer than asked for lands on one four times the
+    /// size whenever the spacing falls just below a level.
     fn level_for(&self, step_deg: f64) -> &Layout {
         self.levels
             .iter()
-            .filter(|l| l.scale.0 <= step_deg * 1.01 && !l.tile_offsets.is_empty() && l.tile_w > 0)
+            .filter(|l| l.scale.0 <= step_deg * 1.3 && !l.tile_offsets.is_empty() && l.tile_w > 0)
             .next_back()
             .unwrap_or(&self.levels[0])
     }
@@ -416,7 +420,9 @@ pub fn patch(http: &Http, cache: &Cache, lat: f64, lon: f64, radius_km: f64, ste
     let height = (((north - south) / step_lat).round() as usize).max(2);
 
     let mut heights = vec![f32::NAN; width * height];
-    let mut sources: HashMap<(i32, i32), Option<(String, Source)>> = HashMap::new();
+    // The file, and which of its copies answers this spacing: both settled once per
+    // one-degree square rather than once per sample.
+    let mut sources: HashMap<(i32, i32), Option<(String, Source, usize)>> = HashMap::new();
     let mut tiles: HashMap<(i32, i32, usize, usize), Vec<f32>> = HashMap::new();
 
     for row in 0..height {
@@ -427,17 +433,20 @@ pub fn patch(http: &Http, cache: &Cache, lat: f64, lon: f64, radius_km: f64, ste
             let entry = sources.entry(key).or_insert_with(|| {
                 let name = tile_name(key.0, key.1);
                 match open(http, cache, key.0, key.1) {
-                    Ok(s) => Some((name, s)),
+                    Ok(s) => {
+                        // The smallest copy of the ground still about the spacing asked
+                        // for: a chart wants a quarter of a mile, not thirty metres.
+                        let level = s.levels.iter().position(|c| std::ptr::eq(c, s.level_for(step_lat))).unwrap_or(0);
+                        Some((name, s, level))
+                    }
                     Err(e) => {
                         log::warn!("Copernicus DEM {name}: {e:#}");
                         None
                     }
                 }
             });
-            let Some((name, src)) = entry else { continue };
-            // The smallest copy of the ground that is still finer than the spacing asked
-            // for: a chart wants a quarter of a mile, not thirty metres.
-            let level = src.levels.iter().position(|c| std::ptr::eq(c, src.level_for(step_lat))).unwrap_or(0);
+            let Some((name, src, level)) = entry else { continue };
+            let level = *level;
             let l = &src.levels[level];
             // Pixel in the file, then which tile holds it.
             let px = ((plon - l.origin.0) / l.scale.0).floor();

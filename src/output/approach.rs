@@ -46,6 +46,8 @@ pub struct Chart<'a> {
     pub field_elev_ft: f64,
     /// Minimum safe altitude within 25 NM, where a wide enough terrain patch was read.
     pub msa_ft: Option<f64>,
+    /// The same by quadrant, which is how a chart prints it.
+    pub msa_sectors: &'a [crate::minima::Sector],
     /// The final approach track, in degrees true, which is what the drawing uses.
     pub track_deg: f64,
     /// The course to print, which is magnetic where the data carries one.
@@ -351,8 +353,31 @@ fn hold_points(fix: (f64, f64), inbound_deg: f64, turn: Option<Turn>, leg_nm: f6
     pts.into_iter().map(|(east, north)| local.to_ll(east, north)).collect()
 }
 
-/// Heights shaded in bands, as a terrain picture rather than contours: quick to read and
-/// honest about what a 30 m model can say.
+/// The bands terrain is tinted in, and the colour of each: the height it starts at, then
+/// red, green and blue.
+///
+/// A chart tints high ground rather than shading it grey, because the point is to see at
+/// a glance where the ground is high, not to read a height off it. These are the bands an
+/// aeronautical chart uses, in the tints it uses, kept pale enough that the procedure
+/// drawn over them stays the thing the eye goes to.
+const TERRAIN_BANDS: [(f64, (f32, f32, f32)); 5] = [
+    (656.0, (0.93, 0.93, 0.88)),
+    (1312.0, (0.95, 0.89, 0.75)),
+    (1969.0, (0.91, 0.80, 0.60)),
+    (2625.0, (0.85, 0.68, 0.46)),
+    (f64::MAX, (0.76, 0.55, 0.36)),
+];
+
+/// The tint for a height, or nothing where the ground is below the lowest band.
+fn terrain_tint(height_ft: f64) -> Option<(f32, f32, f32)> {
+    if height_ft < TERRAIN_BANDS[0].0 {
+        return None;
+    }
+    TERRAIN_BANDS.iter().find(|(top, _)| height_ft < *top).map(|(_, tint)| *tint)
+}
+
+/// Heights tinted in bands, as a terrain picture rather than contours: quick to read and
+/// honest about what the model can say.
 fn draw_terrain(c: &mut Content, patch: &Patch, v: &View, field_ft: f64) {
     let cw = (patch.step_lon / v.deg_w) as f32 * v.w + 0.4;
     let ch = (patch.step_lat / v.deg_h) as f32 * v.h + 0.4;
@@ -362,20 +387,17 @@ fn draw_terrain(c: &mut Content, patch: &Patch, v: &View, field_ft: f64) {
             if !ht.is_finite() {
                 continue;
             }
-            let above = ht as f64 / 0.3048 - field_ft;
-            let g = match above {
-                a if a < 500.0 => continue,
-                a if a < 1000.0 => 0.93,
-                a if a < 2000.0 => 0.86,
-                a if a < 4000.0 => 0.77,
-                _ => 0.66,
-            };
+            let height = ht as f64 / 0.3048;
+            // Ground no higher than the airport is not worth tinting whatever its height
+            // above the sea: an airport on a plateau would otherwise sit in a wash of
+            // colour.
+            let Some((r, g, b)) = terrain_tint(height).filter(|_| height > field_ft + 250.0) else { continue };
             let (lat, lon) = patch.position(row, col);
             let (px, py) = v.at(lat, lon);
             if !v.inside((px, py), 0.0) {
                 continue;
             }
-            c.set_fill_gray(g);
+            c.set_fill_rgb(r, g, b);
             c.rect(px, py - ch, cw, ch);
             c.fill_nonzero();
         }
@@ -472,9 +494,20 @@ fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, role: 
         row -= 7.0;
     }
     // How the fix is defined, which is how a chart names it: "7 DME FUN".
+    //
+    // Only where the fix's own name confirms it. The distance in the data is measured
+    // from the beacon, and at some airports the published chart measures from somewhere
+    // else along the same installation, which puts the two a mile or two apart. A fix
+    // called FUN7 settles it; one called JOBBS does not, and is left unlabelled rather
+    // than labelled with a figure that disagrees with the chart it is meant to match.
     if let (Some(rho), false) = (leg.rho_nm, leg.navaid.is_empty()) {
-        taken.label(c, font, 6.0, px + 6.0, row, &format!("{rho:.1} DME {}", leg.navaid), 0.4);
-        row -= 7.0;
+        if let Some(digits) = leg.fix.strip_prefix(leg.navaid.as_str()) {
+            let named: Option<f64> = digits.parse::<f64>().ok().map(|v| if digits.len() > 2 { v / 10.0 } else { v });
+            if named.map(|n| (n - rho).abs() < 0.3).unwrap_or(false) {
+                taken.label(c, font, 6.0, px + 6.0, row, &format!("{rho:.1} DME {}", leg.navaid), 0.4);
+                row -= 7.0;
+            }
+        }
     }
     if let Some(part) = role {
         taken.label(c, bold, 6.0, px + 6.0, row, part, 0.15);
@@ -639,9 +672,44 @@ fn draw_obstacles(c: &mut Content, font: Name, bold: Name, v: &View, obstacles: 
     }
 }
 
+/// A latitude or longitude the way a chart rules it: whole degrees and minutes.
+fn degrees_minutes(value: f64, is_latitude: bool) -> String {
+    let hand = match (is_latitude, value >= 0.0) {
+        (true, true) => 'N',
+        (true, false) => 'S',
+        (false, true) => 'E',
+        (false, false) => 'W',
+    };
+    let value = value.abs();
+    let degrees = value.floor();
+    let minutes = ((value - degrees) * 60.0).round();
+    let (degrees, minutes) = if minutes >= 60.0 { (degrees + 1.0, 0.0) } else { (degrees, minutes) };
+    format!("{hand}{degrees:.0} {minutes:02.0}")
+}
+
 /// North arrow, scale bar and the minimum safe altitude ring: the furniture that tells
 /// you how to read the map.
-fn draw_furniture(c: &mut Content, font: Name, bold: Name, v: &View, msa_ft: Option<f64>, variation_deg: Option<f64>, runway_deg: Option<f64>) {
+#[allow(clippy::too_many_arguments)]
+fn draw_furniture(c: &mut Content, font: Name, bold: Name, v: &View, msa_ft: Option<f64>, sectors: &[crate::minima::Sector], variation_deg: Option<f64>, runway_deg: Option<f64>) {
+    // Degrees and minutes along the edges, as a chart rules them.
+    let step = (if v.span_nm() > 24.0 { 20.0 } else if v.span_nm() > 10.0 { 10.0 } else { 5.0 }) / 60.0;
+    let mut lat = (v.north / step).floor() * step;
+    while lat > v.north - v.deg_h {
+        let (_, py) = v.at(lat, v.west);
+        line(c, v.x, py, v.x + 6.0, py, 0.7, 0.45);
+        line(c, v.x + v.w - 6.0, py, v.x + v.w, py, 0.7, 0.45);
+        text(c, font, 5.0, v.x + 8.0, py + 1.5, &degrees_minutes(lat, true), 0.45);
+        lat -= step;
+    }
+    let mut lon = (v.west / step).ceil() * step;
+    while lon < v.west + v.deg_w {
+        let (px, _) = v.at(v.north, lon);
+        line(c, px, v.y, px, v.y + 6.0, 0.7, 0.45);
+        line(c, px, v.y + v.h - 6.0, px, v.y + v.h, 0.7, 0.45);
+        text_centred(c, font, 5.0, px, v.y + v.h - 12.0, &degrees_minutes(lon, false), 0.45);
+        lon += step;
+    }
+
     // The compass rose, top left inside the box: true north, the ticks of the card, the
     // runway lying across it, and how far magnetic north is from true.
     let r = 21.0;
@@ -676,11 +744,27 @@ fn draw_furniture(c: &mut Content, font: Name, bold: Name, v: &View, msa_ft: Opt
         text_centred(c, font, 6.0, nx, ny - r - 19.0, &format!("VAR {:.1}{hand}", var.abs()), 0.35);
     }
 
+    // What the tints mean, above the scale bar.
+    let swatch = 8.0;
+    let key_h = TERRAIN_BANDS.len() as f32 * swatch + 12.0;
+    let (kx, ky) = (v.x + 10.0, v.y + 30.0);
+    fill_box(c, kx - 4.0, ky - 4.0, 54.0, key_h, 1.0);
+    text(c, font, 5.5, kx, ky + key_h - 12.0, "ELEVATION", 0.4);
+    for (i, (top, (r, g, b))) in TERRAIN_BANDS.iter().enumerate() {
+        let row = ky + (TERRAIN_BANDS.len() - 1 - i) as f32 * swatch;
+        c.set_fill_rgb(*r, *g, *b);
+        c.rect(kx, row, 13.0, swatch - 1.5);
+        c.fill_nonzero();
+        box_outline(c, kx, row, 13.0, swatch - 1.5, 0.3, 0.6);
+        let label = if *top == f64::MAX { format!("{:.0}+", TERRAIN_BANDS[TERRAIN_BANDS.len() - 2].0) } else { format!("{top:.0}") };
+        text(c, font, 5.5, kx + 16.0, row + 1.0, &label, 0.35);
+    }
+
     // Scale bar, bottom left.
     let px_nm = v.px_per_nm();
     let step_nm = if v.span_nm() > 16.0 { 5.0 } else { 2.0 };
     let bar = step_nm as f32 * px_nm;
-    let (bx, by) = (v.x + 12.0, v.y + 14.0);
+    let (bx, by) = (v.x + 12.0, v.y + 16.0);
     fill_box(c, bx - 4.0, by - 4.0, bar + 30.0, 16.0, 1.0);
     line(c, bx, by, bx + bar, by, 1.2, INK);
     for i in 0..=1 {
@@ -689,18 +773,99 @@ fn draw_furniture(c: &mut Content, font: Name, bold: Name, v: &View, msa_ft: Opt
     }
     text(c, font, 6.5, bx + bar + 3.0, by - 2.0, &format!("{step_nm:.0} NM"), INK);
 
-    // Minimum safe altitude ring, the way a chart shows it in the corner.
-    if let Some(msa) = msa_ft {
-        let (cx, cy) = (v.x + v.w - 32.0, v.y + v.h - 32.0);
-        fill_box(c, cx - 26.0, cy - 26.0, 52.0, 52.0, 1.0);
+    // The safe altitude ring, divided into the quadrants a chart divides it into.
+    let (cx, cy) = (v.x + v.w - 42.0, v.y + v.h - 44.0);
+    let r = 30.0;
+    if !sectors.is_empty() {
+        fill_box(c, cx - r - 6.0, cy - r - 14.0, 2.0 * r + 12.0, 2.0 * r + 24.0, 1.0);
         c.set_stroke_gray(INK);
         c.set_line_width(0.9);
-        circle(c, cx, cy, 20.0);
+        circle(c, cx, cy, r);
         c.stroke();
-        text_centred(c, bold, 10.0, cx, cy - 2.0, &format!("{msa:.0}"), INK);
-        text_centred(c, font, 5.5, cx, cy - 11.0, "MSA 25 NM", 0.3);
-        text_centred(c, font, 5.5, cx, cy + 8.0, "ARP", 0.3);
+        for s in sectors {
+            // The line that starts this sector, and its figure in the middle of it.
+            let start = (s.from_deg as f32).to_radians();
+            line(c, cx, cy, cx + start.sin() * r, cy + start.cos() * r, 0.6, 0.4);
+            let mut sweep = s.to_deg - s.from_deg;
+            if sweep <= 0.0 {
+                sweep += 360.0;
+            }
+            let middle = ((s.from_deg + sweep / 2.0) as f32).to_radians();
+            let (lx, ly) = (cx + middle.sin() * r * 0.55, cy + middle.cos() * r * 0.55);
+            text_centred(c, bold, 7.5, lx, ly - 2.5, &format!("{:.0}", s.altitude_ft), INK);
+            // The bearing the sector starts at, just outside the ring.
+            let (bx, by) = (cx + start.sin() * (r + 6.0), cy + start.cos() * (r + 6.0));
+            text_centred(c, font, 5.0, bx, by - 2.0, &format!("{:03.0}", s.from_deg), 0.45);
+        }
+        text_centred(c, font, 5.5, cx, cy - r - 10.0, "MSA 25 NM FROM ARP", 0.3);
+    } else if let Some(msa) = msa_ft {
+        fill_box(c, cx - r - 6.0, cy - r - 14.0, 2.0 * r + 12.0, 2.0 * r + 24.0, 1.0);
+        c.set_stroke_gray(INK);
+        c.set_line_width(0.9);
+        circle(c, cx, cy, r * 0.7);
+        c.stroke();
+        text_centred(c, bold, 10.0, cx, cy - 3.0, &format!("{msa:.0}"), INK);
+        text_centred(c, font, 5.5, cx, cy - r - 10.0, "MSA 25 NM FROM ARP", 0.3);
     }
+}
+
+/// How wide the inset is, in miles.
+const INSET_NM: f64 = 2.5;
+
+/// The airport again, close up.
+///
+/// The plan view has to hold an approach that runs twenty miles out, at which scale the
+/// airport is a few millimetres of grey. A chart answers that with an inset: the same
+/// airport at a scale where the runways are runways, in the corner where there is
+/// nothing else to show.
+fn draw_inset(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32) {
+    let centre = ch.threshold.unwrap_or((ch.airport.lat, ch.airport.lon));
+    let cos = centre.0.to_radians().cos().max(0.05);
+    let aspect = (w / h) as f64;
+    let half = INSET_NM / 2.0;
+    let (half_w, half_h) = if aspect >= 1.0 { (half * aspect, half) } else { (half, half / aspect) };
+    let v = View {
+        west: centre.1 - half_w / 60.0 / cos,
+        north: centre.0 + half_h / 60.0,
+        deg_w: half_w * 2.0 / 60.0 / cos,
+        deg_h: half_h * 2.0 / 60.0,
+        x,
+        y,
+        w,
+        h,
+    };
+    fill_box(c, x, y, w, h, 1.0);
+    c.save_state();
+    c.rect(x, y, w, h);
+    c.clip_nonzero();
+    c.end_path();
+    draw_terrain(c, ch.patch, &v, ch.field_elev_ft);
+    if let Some(dir) = ch.airport_dir {
+        draw_airport(c, dir, &v);
+    }
+    // The landing runway, and the threshold the approach ends at.
+    if let Some((near, far)) = ch.runway_ends {
+        let (nx, ny) = v.at(near.0, near.1);
+        let (fx, fy) = v.at(far.0, far.1);
+        line(c, nx, ny, fx, fy, 5.0, 1.0);
+        line(c, nx, ny, fx, fy, 2.6, INK);
+        // Which end is being landed on.
+        c.set_fill_gray(INK);
+        circle(c, nx, ny, 2.2);
+        c.fill_nonzero();
+    }
+    // The last of the final, so the inset joins on to the picture above it.
+    let finals = final_legs(ch.procedure);
+    let mut track: Vec<&Leg> = finals.iter().rev().take(2).rev().copied().collect();
+    track.retain(|l| l.lat.is_some());
+    if !track.is_empty() {
+        draw_track(c, &v, &track, None, 1.6, false, INK);
+    }
+    c.restore_state();
+    box_outline(c, x, y, w, h, 1.0, INK);
+    fill_box(c, x + 1.0, y + h - 11.0, w - 2.0, 10.0, 1.0);
+    text(c, bold, 6.0, x + 4.0, y + h - 8.5, &format!("{}  {:.0} NM ACROSS", ch.airport.icao, INSET_NM), INK);
+    let _ = font;
 }
 
 /// The plan view: terrain, the airport, the procedure and what stands up under it.
@@ -800,7 +965,7 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         let a = track_pts[0];
         let b = track_pts[track_pts.len() - 1];
         let course = ch.course_mag_deg.unwrap_or(track_deg);
-        label(c, bold, 8.5, (a.0 + b.0) / 2.0 + 7.0, (a.1 + b.1) / 2.0 - 14.0, &format!("{course:03.0}"), INK);
+        taken.label(c, bold, 8.5, (a.0 + b.0) / 2.0 + 7.0, (a.1 + b.1) / 2.0 - 14.0, &format!("{course:03.0}"), INK);
     }
 
     // The missed approach, dashed with an arrow, as charts draw it.
@@ -818,7 +983,13 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
 
     draw_obstacles(c, font, bold, &v, ch.obstacles, ch.tdze_ft + 150.0, est.obstacle_top_ft.filter(|_| est.limited_by == LimitedBy::Obstacle));
     c.restore_state();
-    draw_furniture(c, font, bold, &v, ch.msa_ft, ch.variation_deg, Some(track_deg));
+    // The airport close up, in the bottom corner, but only when the plan is too wide to
+    // show it properly on its own.
+    if v.span_nm() > 9.0 {
+        let (iw, ih) = (118.0, 104.0);
+        draw_inset(c, font, bold, ch, x + w - iw - 6.0, y + 16.0, iw, ih);
+    }
+    draw_furniture(c, font, bold, &v, ch.msa_ft, ch.msa_sectors, ch.variation_deg, Some(track_deg));
     box_outline(c, x, y, w, h, 1.2, INK);
     v
 }
@@ -1029,7 +1200,7 @@ fn chart_notes(ch: &Chart, est: &Estimate) -> Vec<String> {
     navaids.sort_unstable();
     navaids.dedup();
     if !navaids.is_empty() {
-        out.push(format!("Fixes on this approach are measured from {} DME.", navaids.join(" and ")));
+        out.push(format!("DME {} required.", navaids.join(" and ")));
     }
     if est.highest_terrain_ft > ch.tdze_ft + 500.0 {
         out.push(format!("Terrain under the approach reaches {:.0} ft.", est.highest_terrain_ft));
@@ -1178,10 +1349,10 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
 
     // A caption under the plan, saying what the picture is made of.
     let built = if ch.airport_dir.is_some() { "airport from our own build" } else { "airport not built yet" };
-    let caption = format!("{:.0} NM across - terrain shaded above {:.0} ft - {built}", v.span_nm(), ch.field_elev_ft + 500.0);
+    let caption = format!("{:.0} NM across - terrain tinted by elevation - {built}", v.span_nm());
     let cap_w = text_width(f, 6.5, &caption) + 10.0;
-    fill_box(&mut c, W - MARGIN - 1.0 - cap_w, plan_y + 1.0, cap_w, 11.0, 1.0);
-    text(&mut c, f, 6.5, W - MARGIN - cap_w + 4.0, plan_y + 4.0, &caption, 0.4);
+    fill_box(&mut c, MARGIN + 92.0, plan_y + 1.0, cap_w, 11.0, 1.0);
+    text(&mut c, f, 6.5, MARGIN + 96.0, plan_y + 4.0, &caption, 0.4);
 
     draw_profile(&mut c, f, b, ch, MARGIN, prof_y, W - 2.0 * MARGIN, prof_h, est, track);
 
