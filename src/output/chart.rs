@@ -62,18 +62,12 @@ fn prop_f64(p: &Map<String, Value>, k: &str) -> Option<f64> {
 
 /// WinAnsi-safe bytes for the built-in fonts.
 fn ascii(s: &str) -> Vec<u8> {
-    s.chars()
-        .map(|c| match c as u32 {
-            0x20..=0x7e => c as u8,
-            0xa0..=0xff => c as u32 as u8, // Latin-1 subset of WinAnsi (degree sign, accents)
-            _ => b'?',
-        })
-        .collect()
+    crate::output::winansi(s)
 }
 
 /// Approximate advance width of Helvetica text.
 fn text_w(size: f32, s: &str) -> f32 {
-    0.53 * size * s.len() as f32
+    0.53 * size * s.chars().count() as f32
 }
 
 /// Page mapping of the local metre frame.

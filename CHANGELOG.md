@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.5.1 (2026-09-22)
+
+- **The A220 airport moving map is back, carrying only our own files.** The map itself
+  was always ours; what was not was the display-unit bootstrap the old package shipped
+  to make the aircraft load it. The package now contains its script and stylesheet and
+  nothing else, the map drives itself off the `update` event the aircraft already fires,
+  and the two lines that load it are added to the aircraft's own instrument page where
+  it sits. A backup is kept beside that file, removing the map takes the lines out
+  again, and `amdb-bridge unpatch` restores it. No file of anyone else's is replaced or
+  redistributed.
+
+- **The GM5 A220 map patcher is gone.** It matched that add-on by holding six lines of
+  its source verbatim, so those lines travelled inside our binary. Nothing replaces it.
+
+- **Accented letters print.** Charts used the built-in fonts as though they were ASCII,
+  so Funchal's DR. NÉLIO MENDONÇA came out as question marks. WinAnsi already carries
+  the accented letters, and the Central European ones it has no glyph for are written as
+  the plain letter underneath rather than as a question mark.
+
+- **The final approach track is measured along the final segment**, not from its last
+  fix to the threshold. On a circling approach those are different directions: at
+  Madeira the old rule gave 265° for an approach flown on 206°, which pushed the plan
+  view the wrong way and opened it to 43 NM of mostly empty sea. The same chart is now
+  24 NM across.
+
+- The minima table's approach label is set in capitals, as a plate sets it.
+
 ## 0.5.0 (2026-09-22)
 
 - **The A220 airport moving map package is withdrawn.** It replaced the Synaptic A220's

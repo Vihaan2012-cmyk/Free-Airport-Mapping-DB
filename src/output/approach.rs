@@ -120,19 +120,7 @@ pub struct Chart<'a> {
 /// a visibility as a half or a quarter. WinAnsi has those where ASCII does not, so the
 /// few a chart uses are spelled out here rather than turned into question marks.
 fn ascii(s: &str) -> Vec<u8> {
-    s.chars()
-        .map(|c| match c {
-            c if c.is_ascii() && !c.is_control() => c as u8,
-            '\u{b0}' => 0xB0,
-            '\u{bd}' => 0xBD,
-            '\u{bc}' => 0xBC,
-            '\u{be}' => 0xBE,
-            '\u{2013}' | '\u{2014}' => b'-',
-            '\u{2018}' | '\u{2019}' => b'\'',
-            '\u{201c}' | '\u{201d}' => b'"',
-            _ => b'?',
-        })
-        .collect()
+    crate::output::winansi(s)
 }
 
 /// Helvetica's own character widths, thousandths of the point size, for space to tilde.
@@ -150,7 +138,7 @@ const HELVETICA_BOLD: [u16; 95] = [
 
 fn text_width(font: Name, size: f32, s: &str) -> f32 {
     let table = if font.0 == b"B" { &HELVETICA_BOLD } else { &HELVETICA };
-    let mils: u32 = s.chars().map(|c| if (' '..='~').contains(&c) { table[c as usize - 32] as u32 } else { 500 }).sum();
+    let mils: u32 = s.chars().map(crate::output::width_char).map(|c| table[c as usize - 32] as u32).sum();
     mils as f32 * size / 1000.0
 }
 
@@ -2348,7 +2336,7 @@ fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32
         line(c, x + main_w, y, x + main_w, sub_y + sub_h, 0.6, 0.55);
     }
     let label = if est.approach.has_glidepath() { "DA(H)" } else { "MDA(H)" };
-    text_centred(c, bold, 8.0, x + main_w / 2.0, sub_y + sub_h - 9.0, est.approach.label(), INK);
+    text_centred(c, bold, 8.0, x + main_w / 2.0, sub_y + sub_h - 9.0, &est.approach.label().to_uppercase(), INK);
     text_centred(c, font, 7.5, x + main_w / 2.0, sub_y + sub_h - 19.0, &format!("{label} {:.0}'({:.0}')", est.altitude_ft, est.height_ft), INK);
     if let Some((alt, hat)) = ch.published_loc {
         text_centred(c, bold, 8.0, x + main_w + (straight_w - main_w) / 2.0, sub_y + sub_h - 9.0, "LOC (GS out)", INK);

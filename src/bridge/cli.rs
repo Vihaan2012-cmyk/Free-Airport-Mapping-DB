@@ -488,18 +488,13 @@ fn serve(a: ServeArgs) -> Result<()> {
                 }
                 Err(e) => crate::term::warn(&format!("could not patch the A350 EFB in {}: {e:#}", d.display())),
             }
-            match patcher::patch_a220(&d, false) {
+            match patcher::patch_a220_page(&d, false) {
                 Ok(files) => {
                     for f in files {
-                        crate::term::success(&format!("GM5 A220 moving map patched to work with the bridge (backup kept, `unpatch` restores): {}", f.path.display()));
+                        crate::term::success(&format!("A220 instrument page now loads the AMDB moving map (backup kept, `unpatch` restores): {}", f.path.display()));
                     }
                 }
-                Err(e) => crate::term::warn(&format!("could not patch the A220 moving map in {}: {e:#}", d.display())),
-            }
-            for (pkg, _, _) in patcher::scan_a220(&d) {
-                if let Some(w) = patcher::a220_load_order_warning(&d, &pkg) {
-                    crate::term::warn(&w);
-                }
+                Err(e) => crate::term::warn(&format!("could not add the A220 moving map in {}: {e:#}", d.display())),
             }
         }
     }
@@ -627,11 +622,8 @@ pub fn run() -> Result<()> {
                 for (pkg, f, patched) in patcher::scan_a350(&d) {
                     println!("  {}  EFB token handler {}: {}", pkg, if patched { "PATCHED (OANS works without a Navigraph subscription)" } else { "not patched (run `serve` or `patch`)" }, f.file_name().unwrap_or_default().to_string_lossy());
                 }
-                for (pkg, f, patched) in patcher::scan_a220(&d) {
-                    println!("  {}  A220 moving map {}: {}", pkg, if patched { "PATCHED (token fallback + bridge airport search)" } else { "not patched (run `serve` or `patch`)" }, f.file_name().unwrap_or_default().to_string_lossy());
-                    if let Some(w) = patcher::a220_load_order_warning(&d, &pkg) {
-                        println!("  WARNING {w}");
-                    }
+                for (pkg, f, patched) in patcher::scan_a220_page(&d) {
+                    println!("  {}  A220 instrument page {}: {}", pkg, if patched { "PATCHED (loads the AMDB moving map)" } else if patcher::a220_map_installed(&d) { "not patched (run `serve` or `patch`)" } else { "not patched (the map package is not installed here)" }, f.file_name().unwrap_or_default().to_string_lossy());
                 }
                 for f in patcher::load_record(&d).files {
                     println!("  PATCHED {}", f.path.display());
@@ -682,7 +674,7 @@ pub fn run() -> Result<()> {
             for d in communities(&community) {
                 total += patcher::patch(&d, port, dry_run)?.len();
                 total += patcher::patch_a350(&d, dry_run)?.len();
-                total += patcher::patch_a220(&d, dry_run)?.len();
+                total += patcher::patch_a220_page(&d, dry_run)?.len();
             }
             println!("{}{} file(s) patched", if dry_run { "[dry-run] " } else { "" }, total);
             Ok(())

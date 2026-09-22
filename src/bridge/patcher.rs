@@ -148,37 +148,31 @@ pub fn patch_a350(community: &Path, dry_run: bool) -> Result<Vec<PatchedFile>> {
 }
 
 // ---------------------------------------------------------------------------------
-// GM5 A220 Airport Moving Map (Gunman5). Its script fetches the Navigraph AMDB URL
-// directly, so the hosts redirect reaches it, but it refuses to fetch without the
-// A220's stored Navigraph token and, under MSFS 2020, its sim-side nearest-airport
-// search never returns anything. Two small rewrites fix both; the bridge's
-// /v1/nearest endpoint stands in for the sim search.
+// Synaptic A220 display units. Our moving map ships as its own two files and replaces
+// nothing; what makes the aircraft load them is two lines added to the instrument page
+// it already has. The page is the aircraft's, so it is edited where it sits, a backup is
+// kept beside it, and `unpatch` puts it back.
 // ---------------------------------------------------------------------------------
 
-const A220_MARK: &str = "/*amdb-bridge-a220*/";
-const A220_TOKEN_FN: &str = "    function currentStoredAccessToken() {\n        const token = normalizeToken(readStoredValue(DU_ACCESS_KEY));\n        if (!token) return null;\n        const info = inspectToken(token);\n        return info.expired ? null : token;\n    }";
-const A220_SEARCH_FN: &str = "    async function runNearestSearchWithRetry(state, radiusMeters, maxItems, stage) {";
+const A220_PAGE_MARK: &str = "<!--amdb-bridge-a220-->";
+/// The aircraft's own bundle, which the two lines are added after so the map loads last.
+const A220_PAGE_ANCHOR: &str = "/Pages/VCockpit/Instruments/a22x/DisplayUnits/instrument.index.js\"></script>";
 
-/// Rewrite the A220 map script. None when it is not that script or already patched.
-pub fn patch_a220_text(text: &str) -> Option<String> {
-    if text.contains(A220_MARK) || text.contains("bridgeNearestSearch(") || !text.contains("GM5_A220_AMM") {
+/// Add the map's script and stylesheet to the A220's instrument page. None when the page
+/// is not that page, or already carries them.
+pub fn patch_a220_page_text(text: &str) -> Option<String> {
+    if text.contains(A220_PAGE_MARK) || text.contains("amdb-a220-amm.js") {
         return None;
     }
-    let text = text.replace("\r\n", "\n");
-    let token_fn = format!(
-        "    function currentStoredAccessToken() {{\n        {A220_MARK} /* no Navigraph login needed: the local bridge ignores bearer tokens */\n        const token = normalizeToken(readStoredValue(DU_ACCESS_KEY));\n        if (!token) return '{A350_TOKEN}';\n        const info = inspectToken(token);\n        return info.expired ? '{A350_TOKEN}' : token;\n    }}"
+    let at = text.find(A220_PAGE_ANCHOR)? + A220_PAGE_ANCHOR.len();
+    let added = format!(
+        "\n{A220_PAGE_MARK}\n<script type=\"text/html\" import-async=\"false\" import-script=\"/Pages/VCockpit/Instruments/a22x/DisplayUnits/amdb-a220-amm.js\"></script>\n<link rel=\"stylesheet\" href=\"/Pages/VCockpit/Instruments/a22x/DisplayUnits/amdb-a220-amm.css\" />"
     );
-    let search_fn = format!(
-        "{A220_MARK}\n    function bridgeFacilityKey(ident) {{\n        return 'A      ' + String(ident).toUpperCase() + ' ';\n    }}\n\n    async function bridgeNearestSearch(state, radiusMeters, maxItems, stage) {{\n        const url = `${{AMDB_BASE}}/nearest?lat=${{encodeURIComponent(state.lat)}}&lon=${{encodeURIComponent(state.lon)}}&radius_km=${{Math.max(5, Math.round(radiusMeters / 1000))}}&limit=${{maxItems || 16}}`;\n        const response = await withTimeout(fetch(url, {{ method: 'GET', headers: {{ 'Accept': 'application/json' }} }}), SEARCH_TIMEOUT_MS, `bridge nearest ${{stage || ''}} timeout`);\n        if (!response.ok) throw new Error(`bridge nearest HTTP ${{response.status}}`);\n        const rows = await response.json();\n        const added = [];\n        if (nearest && Array.isArray(rows)) {{\n            for (let i = 0; i < rows.length; i++) {{\n                const row = rows[i] || {{}};\n                const ident = String(row.idarpt || '').trim().toUpperCase();\n                if (!/^[A-Z]{{4}}$/.test(ident)) continue;\n                const coords = row.coordinates || {{}};\n                const lat = Number(coords.lat), lon = Number(coords.lon);\n                if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;\n                const key = bridgeFacilityKey(ident);\n                nearest.facilities.set(key, {{ icao: key, ident: ident, name: row.name || ident, lat: lat, lon: lon, runways: [], source: 'amdb-bridge' }});\n                added.push(key);\n            }}\n        }}\n        log('Bridge nearest airports', added.length, stage || '');\n        return {{ sessionId: nearest ? nearest.sessionId : null, searchId: 'bridge', added: added, removed: [] }};\n    }}\n\n    async function runNearestSearchWithRetry(state, radiusMeters, maxItems, stage) {{\n        let native = null;\n        let nativeError = null;\n        try {{\n            native = await runNearestSearchWithRetryNative(state, radiusMeters, maxItems, stage);\n        }} catch (e) {{\n            nativeError = e;\n        }}\n        const nativeCount = native && Array.isArray(native.added) ? native.added.length : 0;\n        const known = nearest && nearest.currentRaw ? nearest.currentRaw.size : 0;\n        if (nativeCount > 0 || (known > 0 && !nativeError)) return native;\n        try {{\n            return await bridgeNearestSearch(state, radiusMeters, maxItems, stage);\n        }} catch (e) {{\n            if (nativeError) throw nativeError;\n            throw e;\n        }}\n    }}\n\n    async function runNearestSearchWithRetryNative(state, radiusMeters, maxItems, stage) {{"
-    );
-    if !text.contains(A220_TOKEN_FN) || !text.contains(A220_SEARCH_FN) {
-        return None;
-    }
-    Some(text.replacen(A220_TOKEN_FN, &token_fn, 1).replacen(A220_SEARCH_FN, &search_fn, 1))
+    Some(format!("{}{}{}", &text[..at], added, &text[at..]))
 }
 
-/// A220 moving-map scripts in a Community folder: (package, file, already patched).
-pub fn scan_a220(community: &Path) -> Vec<(String, PathBuf, bool)> {
+/// A220 instrument pages in a Community folder: (package, file, already patched).
+pub fn scan_a220_page(community: &Path) -> Vec<(String, PathBuf, bool)> {
     let mut out = Vec::new();
     let Ok(rd) = fs::read_dir(community) else { return out };
     for pkg in rd.flatten() {
@@ -186,55 +180,40 @@ pub fn scan_a220(community: &Path) -> Vec<(String, PathBuf, bool)> {
         if !pdir.is_dir() {
             continue;
         }
-        let mut js = Vec::new();
-        walk_js(&pdir.join("html_ui"), &mut js);
-        for f in js {
-            let name = f.file_name().map(|s| s.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-            if name != "gm5-a220-amm.js" {
-                continue;
-            }
-            let Ok(text) = fs::read_to_string(&f) else { continue };
-            if text.contains("GM5_A220_AMM") {
-                // Also counts copies ported by tools/port_a220_amm.py as patched.
-                let patched = text.contains(A220_MARK) || text.contains("bridgeNearestSearch(");
-                out.push((pkg.file_name().to_string_lossy().to_string(), f, patched));
-            }
+        let name = pkg.file_name().to_string_lossy().to_string();
+        // Our own package carries no instrument page, so only the aircraft's is found.
+        let page = pdir.join("html_ui/Pages/VCockpit/Instruments/a22x/DisplayUnits/instrument.html");
+        let Ok(text) = fs::read_to_string(&page) else { continue };
+        if text.contains(A220_PAGE_ANCHOR) || text.contains(A220_PAGE_MARK) {
+            let patched = text.contains(A220_PAGE_MARK) || text.contains("amdb-a220-amm.js");
+            out.push((name, page, patched));
         }
     }
     out
 }
 
-/// On MSFS 2020 the Community packages apply alphabetically, so the map package must
-/// sort after the aircraft it overrides. Returns a warning when it does not.
-pub fn a220_load_order_warning(community: &Path, package: &str) -> Option<String> {
-    let aircraft = "synaptic-aircraft-a220";
-    if !community.join(aircraft).is_dir() || package.to_ascii_lowercase() > aircraft.to_string() {
-        return None;
+/// Add the map to the A220's instrument page in a Community folder, where the map package
+/// is installed alongside it (backups kept, recorded for `unpatch`).
+pub fn patch_a220_page(community: &Path, dry_run: bool) -> Result<Vec<PatchedFile>> {
+    // Nothing to load if the map itself is not installed, and a page pointed at a script
+    // that is not there would only log an error every frame.
+    if !a220_map_installed(community) {
+        return Ok(Vec::new());
     }
-    let is_2024 = community.to_string_lossy().contains("Limitless") || community.to_string_lossy().contains("2024");
-    if is_2024 {
-        return None; // MSFS 2024 honours package_order_hint instead
-    }
-    Some(format!("{package} sorts before {aircraft}, so MSFS 2020 will ignore its instrument override: rename the folder to zzz-{package}"))
-}
-
-/// Apply the A220 map patch in a Community folder (backups kept, recorded for
-/// `unpatch`). Returns the files changed.
-pub fn patch_a220(community: &Path, dry_run: bool) -> Result<Vec<PatchedFile>> {
     let mut record = load_record(community);
     let mut done = Vec::new();
-    for (pkg, path, patched) in scan_a220(community) {
+    for (pkg, path, patched) in scan_a220_page(community) {
         if patched {
             continue;
         }
         let text = fs::read_to_string(&path)?;
-        let Some(new_text) = patch_a220_text(&text) else {
-            log::warn!("{pkg}: {} is a version of the A220 map this bridge does not know how to patch", path.display());
+        let Some(new_text) = patch_a220_page_text(&text) else {
+            log::warn!("{pkg}: {} is a version of the A220 instrument page this bridge does not know", path.display());
             continue;
         };
-        log::info!("{}{}: token fallback and bridge airport search added to {}", if dry_run { "[dry-run] " } else { "" }, pkg, path.display());
+        log::info!("{}{}: moving map added to {}", if dry_run { "[dry-run] " } else { "" }, pkg, path.display());
         if dry_run {
-            done.push(PatchedFile { path: path.clone(), backup: PathBuf::new(), replacements: 2 });
+            done.push(PatchedFile { path: path.clone(), backup: PathBuf::new(), replacements: 1 });
             continue;
         }
         let backup = PathBuf::from(format!("{}{}", path.display(), BACKUP_SUFFIX));
@@ -242,7 +221,7 @@ pub fn patch_a220(community: &Path, dry_run: bool) -> Result<Vec<PatchedFile>> {
             fs::copy(&path, &backup).with_context(|| format!("backup {}", path.display()))?;
         }
         fs::write(&path, new_text)?;
-        let pf = PatchedFile { path: path.clone(), backup, replacements: 2 };
+        let pf = PatchedFile { path: path.clone(), backup, replacements: 1 };
         record.files.retain(|f| f.path != pf.path);
         record.files.push(pf.clone());
         done.push(pf);
@@ -251,6 +230,16 @@ pub fn patch_a220(community: &Path, dry_run: bool) -> Result<Vec<PatchedFile>> {
         save_record(community, &record)?;
     }
     Ok(done)
+}
+
+/// Whether our map package is present in this Community folder.
+pub fn a220_map_installed(community: &Path) -> bool {
+    let Ok(rd) = fs::read_dir(community) else { return false };
+    rd.flatten().any(|e| {
+        e.path()
+            .join("html_ui/Pages/VCockpit/Instruments/a22x/DisplayUnits/amdb-a220-amm.js")
+            .is_file()
+    })
 }
 
 /// Candidate Community folders for MSFS 2020 and 2024 (Store and Steam) on this machine.
@@ -432,6 +421,34 @@ pub fn unpatch(community: &Path) -> Result<usize> {
     Ok(n)
 }
 
+/// Put one patched file back and forget it. Returns false when it was not patched.
+pub fn restore_one(community: &Path, path: &Path) -> Result<bool> {
+    let mut record = load_record(community);
+    let Some(f) = record.files.iter().find(|f| f.path == path).cloned() else { return Ok(false) };
+    if f.backup.is_file() {
+        fs::copy(&f.backup, &f.path).with_context(|| format!("restore {}", f.path.display()))?;
+        let _ = fs::remove_file(&f.backup);
+    }
+    record.files.retain(|o| o.path != f.path);
+    if record.files.is_empty() {
+        let _ = fs::remove_file(record_path(community));
+    } else {
+        save_record(community, &record)?;
+    }
+    Ok(true)
+}
+
+/// Take the moving map out of the A220's instrument page, wherever it was added.
+pub fn unpatch_a220_page(community: &Path) -> Result<usize> {
+    let mut n = 0;
+    for (_, path, patched) in scan_a220_page(community) {
+        if patched && restore_one(community, &path)? {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
 /// Every simulator exe.xml that exists on this machine.
 pub fn exe_xml_files() -> Vec<PathBuf> {
     let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
@@ -521,16 +538,16 @@ mod tests {
     }
 
     #[test]
-    fn a220_map_gets_token_fallback_and_bridge_search() {
-        let src = format!("const SHARED = window.GM5_A220_AMM_SHARED;\n{}\n    const x = 1;\n{}\n        let lastError = null;\n    }}\n", A220_TOKEN_FN, A220_SEARCH_FN);
-        let out = patch_a220_text(&src).unwrap();
-        assert!(out.contains("if (!token) return 'amdb-bridge-local';"));
-        assert!(out.contains("async function bridgeNearestSearch("));
-        assert!(out.contains("async function runNearestSearchWithRetryNative("));
-        assert_eq!(out.matches("async function runNearestSearchWithRetry(").count(), 1);
-        assert!(patch_a220_text(&out).is_none(), "idempotent");
-        assert!(patch_a220_text("not the map").is_none());
-        assert!(a220_load_order_warning(Path::new("C:/nowhere"), "gm5-a220-amm").is_none());
+    fn a220_page_loads_the_map_and_keeps_the_aircraft_intact() {
+        let page = "<script type=\"text/html\" id=\"DisplayUnits\">\n</script>\n<script type=\"text/html\" import-async=\"false\" import-script=\"/Pages/VCockpit/Instruments/a22x/DisplayUnits/instrument.index.js\"></script>\n<link rel=\"stylesheet\" href=\"/Pages/VCockpit/Instruments/a22x/DisplayUnits/instrument.css\" />\n";
+        let out = patch_a220_page_text(page).unwrap();
+        assert!(out.contains("amdb-a220-amm.js"));
+        assert!(out.contains("amdb-a220-amm.css"));
+        // The aircraft's own two lines survive, in order, ahead of ours.
+        assert!(out.find("instrument.index.js").unwrap() < out.find("amdb-a220-amm.js").unwrap());
+        assert!(out.contains("instrument.css"));
+        assert!(patch_a220_page_text(&out).is_none(), "idempotent");
+        assert!(patch_a220_page_text("some other instrument page").is_none());
     }
 
     #[test]
