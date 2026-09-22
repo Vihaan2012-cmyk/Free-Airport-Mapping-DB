@@ -3,3 +3,4 @@
 pub mod aptdat;
 pub mod gateway;
 pub mod local;
+pub mod navdata;

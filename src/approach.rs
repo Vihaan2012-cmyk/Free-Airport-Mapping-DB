@@ -711,6 +711,26 @@ pub fn circling_from(published: Option<&crate::sources::dtpp::Published>, worked
     }
 }
 
+/// The minimum flown down the localiser alone, where the same chart publishes one.
+///
+/// An ILS chart carries two straight-in lines: the one flown down the glidepath, and a
+/// higher one for when the glidepath is out. An aircraft that loses it on the way in
+/// needs the second, so the chart prints both.
+pub fn published_localiser(
+    http: &crate::sources::http::Http,
+    cache: &crate::cache::Cache,
+    setup: &Setup,
+    kind: crate::minima::Approach,
+) -> Option<(f64, f64)> {
+    if kind != crate::minima::Approach::PrecisionCat1 || setup.is_circling_only() {
+        return None;
+    }
+    let procedure = setup.procedure();
+    let line = crate::sources::dtpp::Line::StraightIn(crate::sources::msfs::procedures::ApproachType::Localiser);
+    let read = crate::sources::dtpp::published(http, cache, &setup.procedures.icao, line, &procedure.runway, procedure.suffix, setup.tdze_ft)?;
+    Some((read.altitude_ft, read.height_ft))
+}
+
 /// What the missed approach from a given minimum asks for.
 pub fn missed_approach(setup: &Setup, est: &crate::minima::Estimate) -> Option<crate::minima::MissedApproach> {
     crate::minima::missed_approach(&setup.patch, &setup.obstacles, &setup.path(), &setup.missed_track(), est.altitude_ft)
