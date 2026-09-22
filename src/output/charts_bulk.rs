@@ -119,11 +119,24 @@ fn one(
     let out = opts.out_dir.join(format!("{}-RW{}.pdf", setup.procedures.icao, procedure.runway));
     // The beacons near the airport, and the localiser serving the runway, which the plan
     // draws and the fixes are measured from.
-    let navaids = crate::sources::xplane::navdata::within(setup.procedures.lat, setup.procedures.lon, 40.0);
-    let ils = crate::sources::xplane::navdata::ils(&setup.procedures.icao, &procedure.runway);
+    let navaids = crate::sources::navdata::beacons_near(setup.procedures.lat, setup.procedures.lon, 40.0);
+    let ils = crate::sources::navdata::ils(&setup.procedures.icao, &procedure.runway);
+    // The published safe altitudes where a navigation database carries them, and ours
+    // worked out from the terrain where it does not.
+    let published_msa = crate::sources::navdata::msa(&setup.procedures.icao, (setup.procedures.lat, setup.procedures.lon));
+    let msa_sectors: Vec<crate::minima::Sector> = match &published_msa {
+        Some(m) => m.sectors.iter().map(|s| crate::minima::Sector { from_deg: s.from_deg, to_deg: s.to_deg, altitude_ft: s.altitude_ft }).collect(),
+        None => setup.msa_sectors.clone(),
+    };
+    let msa_highest = published_msa.as_ref().map(|m| m.sectors.iter().map(|s| s.altitude_ft).fold(0.0, f64::max));
+    let msa_caption = match &published_msa {
+        Some(m) => format!("MSA {} {:.0} NM", m.centre_name, m.radius_nm),
+        None => "MSA 25 NM FROM ARP".to_string(),
+    };
     let chart = crate::output::approach::Chart {
         navaids: &navaids,
         ils: ils.as_ref(),
+        msa_caption,
         glidepath_deg: kind.has_glidepath().then(|| ils.as_ref().and_then(|i| i.glidepath_deg).unwrap_or(3.0)),
         published_loc: crate::approach::published_localiser(http, cache, &setup, kind),
         published: published.as_ref(),
@@ -138,8 +151,8 @@ fn one(
         tdze_ft: setup.tdze_ft,
         tdze_surveyed: setup.tdze_surveyed,
         field_elev_ft: setup.field_elev_ft,
-        msa_ft: setup.msa_ft,
-        msa_sectors: &setup.msa_sectors,
+        msa_ft: msa_highest.or(setup.msa_ft),
+        msa_sectors: &msa_sectors,
         track_deg: setup.track_deg(),
         course_mag_deg: setup.course_mag_deg(),
         variation_deg: setup.variation_deg(),

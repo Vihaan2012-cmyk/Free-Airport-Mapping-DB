@@ -11,7 +11,7 @@
 use crate::minima::{Approach, Estimate, LimitedBy};
 use crate::sources::copernicus::Patch;
 use crate::sources::msfs::procedures::{AirportProcedures, FixRole, Kind, Leg, Procedure, Transition, Turn};
-use crate::sources::xplane::navdata::{Beacon, Ils, Kind as NavaidKind};
+use crate::sources::navdata::{Beacon, Ils, Kind as NavaidKind};
 use crate::sources::obstacles::Obstacle;
 use anyhow::{Context, Result};
 use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str};
@@ -72,6 +72,9 @@ pub struct Chart<'a> {
     /// published minimum in some of the world's data and a lower crossing altitude in
     /// the rest, so the chart reports it rather than relying on it.
     pub coded_ft: Option<f64>,
+    /// What the safe altitude ring is measured from, which is the published centre where
+    /// there is a published one and the airport itself where there is not.
+    pub msa_caption: String,
     /// The glidepath angle, where the approach is flown down one.
     pub glidepath_deg: Option<f64>,
     /// The minimum with the glidepath out of use — the localiser line of the same chart,
@@ -687,6 +690,64 @@ fn draw_holds(c: &mut Content, font: Name, v: &View, legs: &[&Leg]) {
     }
 }
 
+/// The localiser's beam, drawn the way a chart draws it: a long narrow wedge running
+/// back from the threshold along the course, widening as it goes.
+///
+/// It is what tells a reader at a glance which way the approach is flown and how far the
+/// guidance reaches. The width is the real one — a localiser is held to about two and a
+/// half degrees either side of the centreline — so the wedge is honest about how much
+/// room there is out at ten miles.
+fn draw_feather(c: &mut Content, v: &View, threshold: (f64, f64), track_deg: f64, length_nm: f64) {
+    const HALF_ANGLE_DEG: f64 = 2.5;
+    let back = (track_deg + 180.0).to_radians();
+    let cos = threshold.0.to_radians().cos().max(0.05);
+    let along = |nm: f64, across_nm: f64| {
+        let (sin, cosb) = (back.sin(), back.cos());
+        // Out along the reciprocal of the track, then to the side of it.
+        let north = nm * cosb - across_nm * sin;
+        let east = nm * sin + across_nm * cosb;
+        (threshold.0 + north / 60.0, threshold.1 + east / 60.0 / cos)
+    };
+    let half = length_nm * HALF_ANGLE_DEG.to_radians().tan();
+    let tip = v.at(threshold.0, threshold.1);
+    let (left, right) = (along(length_nm, -half), along(length_nm, half));
+    let (lx, ly) = v.at(left.0, left.1);
+    let (rx, ry) = v.at(right.0, right.1);
+    c.save_state();
+    c.set_fill_gray(0.88);
+    c.move_to(tip.0, tip.1);
+    c.line_to(lx, ly);
+    c.line_to(rx, ry);
+    c.close_path();
+    c.fill_nonzero();
+    c.restore_state();
+    line(c, tip.0, tip.1, lx, ly, 0.5, 0.55);
+    line(c, tip.0, tip.1, rx, ry, 0.5, 0.55);
+}
+
+/// The marker beacons on the approach: the oval a chart draws across the course, with the
+/// two letters that say which it is.
+fn draw_markers(c: &mut Content, font: Name, v: &View, markers: &[(crate::sources::navdata::Marker, f64, f64)], track_deg: f64, taken: &mut Taken) {
+    for (kind, lat, lon) in markers {
+        let (px, py) = v.at(*lat, *lon);
+        if !v.inside((px, py), 6.0) {
+            continue;
+        }
+        // An ellipse lying across the course, which is how it is drawn and which says
+        // where the beam crosses.
+        let a = (track_deg as f32 + 90.0).to_radians();
+        let (dx, dy) = (a.sin() * 5.0, a.cos() * 5.0);
+        c.set_fill_gray(0.15);
+        c.move_to(px + dx, py + dy);
+        c.line_to(px + dy * 0.45, py - dx * 0.45);
+        c.line_to(px - dx, py - dy);
+        c.line_to(px - dy * 0.45, py + dx * 0.45);
+        c.close_path();
+        c.fill_nonzero();
+        taken.label(c, font, 6.0, px + 7.0, py - 2.0, kind.label(), 0.15);
+    }
+}
+
 /// The beacons in the piece of country the chart covers.
 ///
 /// No approach chart is without them: they are how a reader knows where they are, and
@@ -712,7 +773,7 @@ fn draw_navaids(c: &mut Content, font: Name, bold: Name, v: &View, navaids: &[Be
         }
         let grey = if named { INK } else { 0.35 };
         match n.kind {
-            NavaidKind::Vor | NavaidKind::Dme => {
+            NavaidKind::Vor => {
                 // A hexagon, point up, as every chart in the world draws a VOR.
                 let r = 5.0f32;
                 for i in 0..6 {
@@ -748,15 +809,13 @@ fn draw_navaids(c: &mut Content, font: Name, bold: Name, v: &View, navaids: &[Be
                 circle(c, px, py, 1.3);
                 c.fill_nonzero();
             }
-            // A localiser belongs to its runway and is drawn with the approach itself.
-            _ => continue,
         }
         // The name over the frequency and the ident, in the little box a chart puts them
         // in. A beacon without its frequency is only half of one, and without its name a
         // reader has to know the country by heart.
         let printed = match n.kind {
             NavaidKind::Ndb => format!("{:.0}", n.frequency),
-            _ => format!("{:.2}", n.frequency),
+            NavaidKind::Vor => format!("{:.2}", n.frequency),
         };
         let size = if named { 7.0 } else { 6.0 };
         let line = format!("{printed}  {ident}");
@@ -856,6 +915,7 @@ fn draw_furniture(
     runway_deg: Option<f64>,
     has_water: bool,
     highest_ft: f64,
+    caption: &str,
 ) {
     // Degrees and minutes along the edges, as a chart rules them.
     let step = (if v.span_nm() > 24.0 { 20.0 } else if v.span_nm() > 10.0 { 10.0 } else { 5.0 }) / 60.0;
@@ -960,7 +1020,7 @@ fn draw_furniture(
     let (cx, cy) = (v.x + v.w - 42.0, v.y + v.h - 44.0);
     let r = 30.0;
     if !sectors.is_empty() {
-        fill_box(c, cx - r - 6.0, cy - r - 14.0, 2.0 * r + 12.0, 2.0 * r + 24.0, 1.0);
+        fill_box(c, cx - r - 12.0, cy - r - 20.0, 2.0 * r + 24.0, 2.0 * r + 30.0, 1.0);
         c.set_stroke_gray(INK);
         c.set_line_width(0.9);
         circle(c, cx, cy, r);
@@ -980,15 +1040,15 @@ fn draw_furniture(
             let (bx, by) = (cx + start.sin() * (r + 6.0), cy + start.cos() * (r + 6.0));
             text_centred(c, font, 5.0, bx, by - 2.0, &format!("{:03.0}", s.from_deg), 0.45);
         }
-        text_centred(c, font, 5.5, cx, cy - r - 10.0, "MSA 25 NM FROM ARP", 0.3);
+        text_centred(c, font, 5.5, cx, cy - r - 16.0, caption, 0.3);
     } else if let Some(msa) = msa_ft {
-        fill_box(c, cx - r - 6.0, cy - r - 14.0, 2.0 * r + 12.0, 2.0 * r + 24.0, 1.0);
+        fill_box(c, cx - r - 12.0, cy - r - 20.0, 2.0 * r + 24.0, 2.0 * r + 30.0, 1.0);
         c.set_stroke_gray(INK);
         c.set_line_width(0.9);
         circle(c, cx, cy, r * 0.7);
         c.stroke();
         text_centred(c, bold, 10.0, cx, cy - 3.0, &format!("{msa:.0}"), INK);
-        text_centred(c, font, 5.5, cx, cy - r - 10.0, "MSA 25 NM FROM ARP", 0.3);
+        text_centred(c, font, 5.5, cx, cy - r - 16.0, caption, 0.3);
     }
 }
 
@@ -1160,6 +1220,17 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         holds.extend(legs.iter().copied());
     }
 
+    // The localiser's beam, under the track it guides.
+    if let (Some(thr), true) = (ch.threshold, ch.ils.is_some()) {
+        let reach = finals
+            .iter()
+            .filter_map(|l| l.lat.zip(l.lon))
+            .map(|(lat, lon)| ((lat - thr.0) * 60.0).hypot((lon - thr.1) * 60.0 * thr.0.to_radians().cos().max(0.05)))
+            .fold(0.0f64, f64::max);
+        if reach > 1.0 {
+            draw_feather(c, &v, thr, track_deg, reach);
+        }
+    }
     // The final, heavy, ending at the threshold.
     let end = if ch.threshold.is_some() { Some(centre) } else { None };
     let mut track_pts = draw_track(c, &v, &finals, None, 2.0, false, INK);
@@ -1206,6 +1277,9 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         }
         holds.extend(missed.iter().copied());
     }
+    if let Some(ils) = ch.ils {
+        draw_markers(c, font, &v, &ils.markers, track_deg, &mut taken);
+    }
     draw_holds(c, font, &v, &holds);
 
     draw_obstacles(c, font, bold, &v, ch.obstacles, ch.tdze_ft + 150.0, est.obstacle_top_ft.filter(|_| est.limited_by == LimitedBy::Obstacle));
@@ -1224,7 +1298,7 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
                 h.is_finite() && (h as f64 / 0.3048) <= WATER_FT
             })
         });
-    draw_furniture(c, font, bold, &v, ch.msa_ft, ch.msa_sectors, ch.variation_deg, Some(track_deg), has_water, est.highest_terrain_ft);
+    draw_furniture(c, font, bold, &v, ch.msa_ft, ch.msa_sectors, ch.variation_deg, Some(track_deg), has_water, est.highest_terrain_ft, &ch.msa_caption);
     box_outline(c, x, y, w, h, 1.2, INK);
     v
 }
@@ -1442,8 +1516,8 @@ fn draw_minima(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f
     let col = 150.0;
     line(c, x + col, y, x + col, y + h - 14.0, 0.8, RULE);
     text(c, font, 7.0, x + 8.0, y + h - 26.0, est.approach.label(), 0.3);
-    text(c, bold, 22.0, x + 8.0, y + h - 50.0, &format!("{:.0}'", est.altitude_ft), INK);
-    text(c, font, 9.0, x + 8.0, y + h - 60.0, &format!("({:.0}' above touchdown)", est.height_ft), 0.25);
+    text(c, bold, 22.0, x + 8.0, y + h - 52.0, &format!("{:.0}'", est.altitude_ft), INK);
+    text(c, font, 9.0, x + 8.0, y + h - 63.0, &format!("({:.0}' above touchdown)", est.height_ft), 0.25);
 
     // How it was reached, in the words a chart would not use but a reader wants.
     let why = match est.limited_by {
@@ -1484,15 +1558,16 @@ fn draw_minima(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f
     // localiser alone. A chart prints it beside the other, and an aircraft that loses its
     // glidepath on the way in needs it.
     if let Some((alt, hat)) = ch.published_loc {
-        text(c, font, 6.0, x + 8.0, y + h - 72.0, "LOC (GS OUT)", 0.4);
-        text(c, bold, 10.0, x + 62.0, y + h - 72.0, &format!("{alt:.0}'"), INK);
-        text(c, font, 7.0, x + 92.0, y + h - 72.0, &format!("({hat:.0}')"), 0.3);
+        let row = y + 28.0;
+        text(c, font, 6.0, x + 8.0, row, "LOC (GS OUT)", 0.4);
+        text(c, bold, 10.0, x + 62.0, row, &format!("{alt:.0}'"), INK);
+        text(c, font, 7.0, x + 92.0, row, &format!("({hat:.0}')"), 0.3);
     }
     // Circling, by aircraft category: the faster the aeroplane, the wider it goes and
     // the more it has to clear.
     if !ch.circling.is_empty() {
-        let cy = y + 7.0;
-        text(c, font, 6.0, x + 8.0, cy + 8.0, "CIRCLING", 0.4);
+        let cy = y + 6.0;
+        text(c, font, 6.0, x + 8.0, cy + 9.0, "CIRCLING", 0.4);
         for (i, (letter, ft)) in ch.circling.iter().enumerate() {
             let cx = x + 8.0 + i as f32 * 34.0;
             text(c, font, 5.5, cx, cy, &letter.to_string(), 0.45);
@@ -1707,7 +1782,7 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
     draw_frequencies(&mut c, f, b, ch, MARGIN, freq_y, W - 2.0 * MARGIN, freq_h);
     let below_strip = if ch.airport.briefing_frequencies().is_empty() { strip_y } else { freq_y };
 
-    let min_h = 86.0;
+    let min_h = 104.0;
     let min_y = MARGIN + 26.0;
     let prof_h = 140.0;
     let prof_y = min_y + min_h + 30.0;

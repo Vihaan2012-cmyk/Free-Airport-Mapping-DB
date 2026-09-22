@@ -40,6 +40,8 @@ prost = "0.14"
 log = { version = "0.4", features = ["std"] }
 console = "0.16"
 chrono = "0.4"
+# Read-only access to the navigation databases the aircraft already ship.
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
 native-windows-gui = { version = "1.0.13", default-features = false, features = ["high-dpi", "tray-notification", "message-window", "list-view", "file-dialog", "notice", "animation-timer", "menu", "frame", "image-list", "textbox", "embed-resource"] }
