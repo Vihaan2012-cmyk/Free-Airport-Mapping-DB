@@ -8,10 +8,11 @@
   within 25 NM, and the decision altitude), a plan view with terrain shading, the
   airport drawn from our own build, the procedure's fixes at their real positions,
   obstacles, the missed approach, a descent profile, and a minima band. `--approach 27L`
-  picks a particular approach (`27L-2` for the second to the same runway), `--star
-  BIG1A` draws an arrival feeding it, `--kind ils|rnav|loc|circling` sets which system
-  minimum applies, and `--list` prints every approach and arrival an airport has, with
-  the names to pass back in. It is not for real-world navigation and says so on the
+  picks a particular approach, by the name a chart gives it (`ILS 27L`, `RNAV Z 16`) or
+  by runway (`27L-2` for the second to the same runway), `--star BIG1A` draws an arrival
+  feeding it, `--kind ils|rnav|loc|circling` overrides what sort of approach it is where
+  the data does not say, and `--list` prints every approach and arrival an airport has,
+  with the names to pass back in. It is not for real-world navigation and says so on the
   page.
 - **Obstacles**, a new data source: the FAA's Digital Obstacle File (surveyed, United
   States) and OpenStreetMap masts, towers, chimneys and wind turbines worldwide where
@@ -28,6 +29,28 @@
   cleared by the required margin. The ground is assessed along the procedure's actual
   path through its fixes rather than a straight box out from the runway, which matters
   in a valley. The chart says which of the three things set the number.
+- **The published minimum itself**, in the United States. The FAA gives every approach
+  chart away as a PDF, and the minima band on it is text rather than a picture, so for an
+  American approach there is nothing to estimate: the chart prints the number the real
+  chart prints, reads the circling minima for all four aircraft categories off the same
+  band, and says which chart it read and which line. Reading that band means finding it
+  by its row labels wherever it sits on the page, telling the altitude from the height
+  above touchdown from the ceiling-and-visibility figure printed beside them, telling
+  four category columns from one, and preferring the plain minimum over the lower one a
+  chart offers with a condition attached. `amdbgen published-check` reads 41 charts whose
+  minima were taken off the printed page by hand and reports any it gets wrong; all 41
+  are right. The reading is thrown away rather than trusted where the altitude and its
+  height above touchdown disagree with the surveyed elevation of the runway.
+- **What sort of approach it is**, from the navigation data rather than from a flag. The
+  approach record says whether it is an ILS, a localiser, an LDA, RNAV, a VOR or an NDB,
+  which is what sets the floor and the width of the area assessed, and is what the chart
+  is titled: "ILS RWY 18L", "RNAV (GPS) Z RWY 16". An approach named for a letter rather
+  than a runway, and one whose final course is well off the runway, is flown to a
+  circling minimum and the chart says so.
+- **The missed approach** is weighed too: what an aircraft going around from the minimum
+  would have to climb over. Usually that asks for a steeper climb than the standard 200 ft
+  a mile, which the chart notes; only where no reasonable climb would do is the minimum
+  itself raised.
 - **The procedure's own minimum**, where it codes one, instead of an estimate. An
   approach without a glidepath ends at a missed approach point, and the altitude on that
   leg is the altitude it descends to; Madeira's VOR/DME to runway 05 codes 940 ft, which
@@ -56,8 +79,15 @@
 - **Terrain is read at the size needed.** The elevation files carry reduced copies of
   themselves; reading the smallest one still fine enough for the job, rather than the
   largest for everything, is what makes the safe-altitude ring affordable.
+- **A segment distance table and a timing table** under the profile: how far each leg
+  runs, and the time from the final approach fix to the missed approach point at the
+  speeds an aeroplane flies it.
 - Fixed: the second altitude on a leg was read from the wrong place in the navigation
   data, which put a constant 1,171 ft on charts as though it were a constraint.
+- Fixed: an approach without a glidepath was assessed for the whole ten miles it may be
+  flown over, rather than from the final approach fix inward. What stands before that fix
+  is cleared by the altitude the procedure crosses it at, and counting it put a tower at
+  Burlington seven hundred feet into a minimum it has nothing to do with.
 
 ## 0.4.2 (2026-09-19)
 

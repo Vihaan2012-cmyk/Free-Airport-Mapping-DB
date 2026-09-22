@@ -90,6 +90,7 @@ fn describe(l: LimitedBy) -> &'static str {
         LimitedBy::Terrain => "terrain",
         LimitedBy::Obstacle => "obstacle",
         LimitedBy::Coded => "coded",
+        LimitedBy::Published => "published",
     }
 }
 
@@ -136,7 +137,20 @@ pub fn run(truth: &Path, out: Option<&Path>, jobs: usize) -> Result<()> {
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 // A circling minimum names no runway, so any approach at the airport
                 // gives the geometry it is worked out from.
-                let wanted = (!case.runway.trim().is_empty()).then(|| case.runway.clone());
+                let wanted = (!case.runway.trim().is_empty()).then(|| {
+                    // Ask for the approach of the same sort as the chart being measured
+                    // against, where the kind names one.
+                    // Type and runway, leaving the suffix out so an "ILS Y" answers for
+                    // an ILS.
+                    match case.kind.trim().to_ascii_lowercase().as_str() {
+                        "loc" => format!("LOC {}", case.runway),
+                        "vor" => format!("VOR {}", case.runway),
+                        "ndb" => format!("NDB {}", case.runway),
+                        "lnav" => format!("RNAV {}", case.runway),
+                        "" | "ils" => format!("ILS {}", case.runway),
+                        _ => case.runway.clone(),
+                    }
+                });
                 let setup = match crate::approach::prepare(&http, &cache, &idx, &case.icao, wanted.as_deref(), opts) {
                     Ok(s) => s,
                     Err(e) => {
@@ -289,4 +303,80 @@ mod tests {
     fn share_counts_both_directions() {
         assert_eq!(share(&[-4.0, 4.0, 40.0, -40.0], 5.0), 50.0);
     }
+}
+
+/// What a fixture says one chart's minima band reads.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Fixture {
+    pub pdf_name: String,
+    pub icao: String,
+    #[serde(default)]
+    pub runway: String,
+    pub kind: String,
+    pub expected_altitude_ft: f64,
+    pub expected_height_ft: f64,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// Check the chart reader against minima read off the printed page by hand.
+///
+/// The reader is the one place in this crate that takes a published number at its word,
+/// so a misreading would go onto a chart looking exactly like a good one. These fixtures
+/// were each checked against the rendered page, and cover the layouts that make the band
+/// hard to read: category columns split four ways, a conditional second box, a footnote
+/// mark glued to the runway number, and a chart with no straight-in line at all.
+pub fn published_check(path: &Path) -> Result<()> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let fixtures: Vec<Fixture> = serde_json::from_str(&text).context("read the fixtures")?;
+    let http = crate::sources::http::Http::new(300, 0);
+    let cache = crate::cache::Cache::for_index(false);
+    crate::term::step(None, &format!("Reading {} charts", fixtures.len()));
+    let (mut right, mut wrong, mut missing) = (0, 0, 0);
+    for f in &fixtures {
+        let line = match f.kind.trim().to_ascii_lowercase().as_str() {
+            "circling" => crate::sources::dtpp::Line::Circling,
+            other => crate::sources::dtpp::Line::StraightIn(match other {
+                "loc" => crate::sources::msfs::procedures::ApproachType::Localiser,
+                "vor" => crate::sources::msfs::procedures::ApproachType::Vor,
+                "ndb" => crate::sources::msfs::procedures::ApproachType::Ndb,
+                "lnav" => crate::sources::msfs::procedures::ApproachType::Rnav,
+                "lda" => crate::sources::msfs::procedures::ApproachType::Lda,
+                _ => crate::sources::msfs::procedures::ApproachType::Ils,
+            }),
+        };
+        // The name the chart is published under decides how finely its rows are told
+        // apart, so it is looked up rather than guessed.
+        let name = crate::sources::dtpp::charts_at(&http, &cache, &f.icao)
+            .into_iter()
+            .find(|c| c.pdf.eq_ignore_ascii_case(&f.pdf_name))
+            .map(|c| c.name)
+            .unwrap_or_default();
+        let bytes = match crate::sources::dtpp::fetch_chart(&http, &cache, &f.pdf_name) {
+            Ok(b) => b,
+            Err(err) => {
+                crate::term::info(&format!("{} {}: {err:#}", f.icao, f.pdf_name));
+                missing += 1;
+                continue;
+            }
+        };
+        match crate::sources::dtpp::read_chart(&bytes, &name, line, &f.runway) {
+            Some(got) if got.altitude_ft == f.expected_altitude_ft && got.height_ft == f.expected_height_ft => {
+                right += 1;
+            }
+            Some(got) => {
+                wrong += 1;
+                crate::term::info(&format!(
+                    "{} {} {}: read {:.0}/{:.0} from \"{}\", the chart says {:.0}/{:.0}",
+                    f.icao, f.kind, f.runway, got.altitude_ft, got.height_ft, got.label, f.expected_altitude_ft, f.expected_height_ft
+                ));
+            }
+            None => {
+                missing += 1;
+                crate::term::info(&format!("{} {} {}: no line found on \"{name}\"", f.icao, f.kind, f.runway));
+            }
+        }
+    }
+    crate::term::step(None, &format!("{right} right, {wrong} misread, {missing} not found, of {}", fixtures.len()));
+    Ok(())
 }

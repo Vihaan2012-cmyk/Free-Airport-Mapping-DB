@@ -65,6 +65,16 @@ pub struct Chart<'a> {
     pub runway_lighting: &'a [&'static str],
     /// The dates the navigation data is in force between.
     pub airac: Option<(String, String)>,
+    /// What the missed approach asks for, where it asks for more than the standard climb.
+    pub missed_climb: Option<(f64, String)>,
+    /// The altitude the procedure codes at its missed approach point, which is the
+    /// published minimum in some of the world's data and a lower crossing altitude in
+    /// the rest, so the chart reports it rather than relying on it.
+    pub coded_ft: Option<f64>,
+    /// The minimum as the state's own chart publishes it, where it could be read.
+    pub published: Option<&'a crate::sources::dtpp::Published>,
+    /// True where the approach is not flown to a straight-in landing.
+    pub circling_only: bool,
 }
 
 fn ascii(s: &str) -> Vec<u8> {
@@ -1199,8 +1209,21 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
 fn draw_minima(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate) {
     box_outline(c, x, y, w, h, 1.2, INK);
     fill_box(c, x, y + h - 14.0, w, 14.0, 0.14);
-    text(c, bold, 8.0, x + 6.0, y + h - 10.5, &format!("STRAIGHT-IN LANDING RWY {}", ch.procedure.runway), 1.0);
-    let stamp = if est.limited_by == LimitedBy::Coded { "FROM THE PROCEDURE'S OWN CODED MINIMUM" } else { "AMDB V1 ESTIMATE - NOT A PUBLISHED MINIMUM" };
+    // An approach named for a letter has no runway to name in the heading.
+    let lettered = ch.procedure.runway.len() == 1 && ch.procedure.runway.chars().all(|c| c.is_ascii_alphabetic());
+    let heading = if ch.circling_only && lettered {
+        "CIRCLING TO LAND".to_string()
+    } else if ch.circling_only {
+        format!("CIRCLING TO LAND RWY {}", ch.procedure.runway)
+    } else {
+        format!("STRAIGHT-IN LANDING RWY {}", ch.procedure.runway)
+    };
+    text(c, bold, 8.0, x + 6.0, y + h - 10.5, &heading, 1.0);
+    let stamp = match est.limited_by {
+        LimitedBy::Published => "AS PUBLISHED BY THE FAA",
+        LimitedBy::Coded => "FROM THE PROCEDURE'S OWN CODED MINIMUM",
+        _ => "AMDB V1 ESTIMATE - NOT A PUBLISHED MINIMUM",
+    };
     text_right(c, font, 7.0, x + w - 6.0, y + h - 10.5, stamp, 1.0);
 
     // The number itself, in the box on the left.
@@ -1208,10 +1231,16 @@ fn draw_minima(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f
     line(c, x + col, y, x + col, y + h - 14.0, 0.8, RULE);
     text(c, font, 7.0, x + 8.0, y + h - 26.0, est.approach.label(), 0.3);
     text(c, bold, 22.0, x + 8.0, y + h - 50.0, &format!("{:.0}'", est.altitude_ft), INK);
-    text(c, font, 9.0, x + 8.0, y + h - 63.0, &format!("({:.0}' above touchdown)", est.height_ft), 0.25);
+    text(c, font, 9.0, x + 8.0, y + h - 60.0, &format!("({:.0}' above touchdown)", est.height_ft), 0.25);
 
     // How it was reached, in the words a chart would not use but a reader wants.
     let why = match est.limited_by {
+        LimitedBy::Published => format!(
+            "Read from the FAA's own chart, \"{}\", where this line is printed as {}. Nothing here is estimated. Terrain under the approach reaches {:.0} ft.",
+            ch.published.map(|p| p.chart.as_str()).unwrap_or("the published approach chart"),
+            ch.published.map(|p| p.label.as_str()).unwrap_or("the straight-in minimum"),
+            est.highest_terrain_ft
+        ),
         LimitedBy::Coded => format!(
             "This is the procedure's own minimum, read from the navigation data rather than worked out here: the approach descends to {:.0} ft at its missed approach point. Terrain under the approach reaches {:.0} ft.",
             est.altitude_ft, est.highest_terrain_ft
@@ -1242,8 +1271,8 @@ fn draw_minima(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f
     // Circling, by aircraft category: the faster the aeroplane, the wider it goes and
     // the more it has to clear.
     if !ch.circling.is_empty() {
-        let cy = y + 8.0;
-        text(c, font, 6.0, x + 8.0, cy + 9.0, "CIRCLING", 0.4);
+        let cy = y + 7.0;
+        text(c, font, 6.0, x + 8.0, cy + 8.0, "CIRCLING", 0.4);
         for (i, (letter, ft)) in ch.circling.iter().enumerate() {
             let cx = x + 8.0 + i as f32 * 34.0;
             text(c, font, 5.5, cx, cy, &letter.to_string(), 0.45);
@@ -1257,6 +1286,12 @@ fn draw_minima(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f
     } else {
         " (the airport's own elevation: no built runway to measure at)"
     };
+    if let Some(coded) = ch.coded_ft.filter(|ft| (ft - est.altitude_ft).abs() > 5.0) {
+        row -= 3.0;
+        let line = format!("The procedure itself codes {coded:.0} ft at its missed approach point.");
+        text(c, font, 7.0, x + col + 8.0, row, &line, 0.2);
+        row -= 9.0;
+    }
     let tail = format!(
         "Touchdown zone {:.0} ft{}. Obstacles: {}.",
         ch.tdze_ft,
@@ -1373,10 +1408,19 @@ fn shorten(name: &str) -> String {
     out.trim().to_string()
 }
 
-/// What the procedure is called on the page. An approach that serves no one runway is
-/// lettered rather than numbered, and is not called a runway approach.
+/// What the procedure is called on the page: the name a chart would print, where the
+/// data says what sort of approach it is, and a plain description where it does not. An
+/// approach that serves no one runway is lettered rather than numbered.
 pub fn title_of(p: &Procedure) -> String {
     let lettered = p.runway.len() == 1 && p.runway.chars().all(|c| c.is_ascii_alphabetic());
+    if let Some(what) = p.approach_type {
+        let suffix = p.suffix.map(|c| format!(" {c}")).unwrap_or_default();
+        return if lettered {
+            format!("{}{suffix} {}", what.label(), p.runway)
+        } else {
+            format!("{}{suffix} RWY {}", what.label(), p.runway)
+        };
+    }
     let what = if lettered { format!("APPROACH {}", p.runway) } else { format!("APPROACH RWY {}", p.runway) };
     match p.variant {
         Some(n) if n > 1 => format!("{what} ({n})"),
@@ -1424,8 +1468,13 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
     text(&mut c, b, 13.0, name_x, head_y + head_h - 17.0, heading.trim_end(), 1.0);
     text(&mut c, f, 7.5, name_x, head_y + head_h - 29.0, &format!("{:.4}, {:.4}", ch.airport.lat, ch.airport.lon), 0.8);
     let star_note = ch.star.map(|s| format!(" - VIA {}", s.name)).unwrap_or_default();
-    let source = if est.limited_by == LimitedBy::Coded { "coded minimum" } else { "estimated minimum" };
-    text_right(&mut c, f, 7.5, W - MARGIN - 8.0, head_y + head_h - 29.0, &format!("{} - {source}{star_note}", ch.kind.label().to_uppercase()), 0.8);
+    let source = match est.limited_by {
+        LimitedBy::Published => "published minimum",
+        LimitedBy::Coded => "coded minimum",
+        _ => "estimated minimum",
+    };
+    let circling_note = if ch.circling_only { " - CIRCLING ONLY" } else { "" };
+    text_right(&mut c, f, 7.5, W - MARGIN - 8.0, head_y + head_h - 29.0, &format!("{}{circling_note} - {source}{star_note}", ch.kind.label().to_uppercase()), 0.8);
 
     let strip_h = 30.0;
     let strip_y = head_y - 4.0 - strip_h;
@@ -1463,6 +1512,10 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
         sentence.pop();
     }
     text(&mut c, f, 7.0, MARGIN + 86.0, missed_y, &sentence, 0.2);
+    if let Some((climb, what)) = &ch.missed_climb {
+        let note = format!("CLIMB {climb:.0} FT/NM TO CLEAR {}", what.to_uppercase());
+        text_right(&mut c, b, 6.5, W - MARGIN - 2.0, missed_y, &note, 0.15);
+    }
 
     // The notes, in one line under the missed approach.
     let notes = chart_notes(ch, est).join("  ");
@@ -1475,10 +1528,10 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
     // Footer.
     line(&mut c, MARGIN, MARGIN + 18.0, W - MARGIN, MARGIN + 18.0, 0.8, RULE);
     let printed = chrono::Utc::now().format("%d %b %Y").to_string().to_uppercase();
-    let caveat = if est.limited_by == LimitedBy::Coded {
-        "NOT FOR REAL-WORLD NAVIGATION. The minimum is the one coded in the simulator's navigation data: fly the published chart."
-    } else {
-        "NOT FOR REAL-WORLD NAVIGATION. The minimum on this chart is calculated, not published: fly the published chart."
+    let caveat = match est.limited_by {
+        LimitedBy::Published => "NOT FOR REAL-WORLD NAVIGATION. The minimum is read from the state's own published chart; everything else here is drawn from free data: fly the published chart.",
+        LimitedBy::Coded => "NOT FOR REAL-WORLD NAVIGATION. The minimum is the one coded in the simulator's navigation data: fly the published chart.",
+        _ => "NOT FOR REAL-WORLD NAVIGATION. The minimum on this chart is calculated, not published: fly the published chart.",
     };
     text(&mut c, f, 6.5, MARGIN, MARGIN + 9.0, caveat, 0.25);
     text(
@@ -1514,6 +1567,19 @@ pub fn pick<'a>(a: &'a AirportProcedures, want: Option<&str>) -> Option<&'a Proc
         return all.into_iter().max_by_key(|p| final_legs(p).len());
     };
     let want = want.trim().trim_start_matches("RW").to_uppercase();
+    // A name, the way a chart writes it: "ILS 35C", "RNAV Z 16".
+    // A name, the way a chart writes it: every word asked for has to appear in it.
+    // "RNAV 16" finds "RNAV (GPS) Z RWY 16"; failing that the runway alone is used.
+    let words: Vec<&str> = want.split_whitespace().collect();
+    if words.len() > 1 {
+        if let Some(found) = all.iter().find(|p| {
+            let name = p.name.to_uppercase().replace(['(', ')'], " ");
+            words.iter().all(|word| name.split_whitespace().any(|part| part == *word))
+        }) {
+            return Some(found);
+        }
+    }
+    let want = words.last().copied().unwrap_or(&want).to_string();
     let (runway, variant) = match want.split_once('-') {
         Some((r, n)) => (r.to_string(), n.trim().parse::<usize>().ok()),
         None => (want.clone(), None),

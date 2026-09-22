@@ -18,8 +18,9 @@ pub struct Options {
     pub out_dir: PathBuf,
     /// How many airports to work on at once.
     pub jobs: usize,
-    /// Which system minimum applies, where the procedure codes none of its own.
-    pub kind: Approach,
+    /// Override what sort of approach every chart is treated as. Left out, the
+    /// navigation data says, approach by approach.
+    pub kind: Option<Approach>,
     /// A chart for every runway rather than only the airport's fullest approach.
     pub every_runway: bool,
     /// Leave off the minimum safe altitude ring, which costs a second and much wider
@@ -104,10 +105,20 @@ fn one(
 ) -> Result<PathBuf> {
     let setup = crate::approach::prepare_from(procedures, http, cache, idx, runway, crate::approach::Options { quiet: true, wide_terrain: !opts.no_msa, ..Default::default() })?;
     let procedure = setup.procedure();
-    let est = crate::approach::estimate(&setup, opts.kind);
-    let circling: Vec<(char, f64)> = crate::approach::circling_table(&setup).into_iter().map(|(letter, ft, _)| (letter, ft)).collect();
+    // What sort of approach it is sets the floor and the protected area. The data says,
+    // unless the caller insisted.
+    let kind = opts
+        .kind
+        .or_else(|| procedure.approach_type.map(crate::minima::Approach::for_type))
+        .unwrap_or(Approach::PrecisionCat1);
+    let est = crate::approach::estimate(&setup, kind);
+    let published = crate::approach::published(http, cache, &setup, kind);
+    let est = crate::approach::with_published(est, published.as_ref());
+    let worked_out: Vec<(char, f64)> = crate::approach::circling_table(&setup).into_iter().map(|(letter, ft, _)| (letter, ft)).collect();
+    let circling = crate::approach::circling_from(published.as_ref(), worked_out);
     let out = opts.out_dir.join(format!("{}-RW{}.pdf", setup.procedures.icao, procedure.runway));
     let chart = crate::output::approach::Chart {
+        published: published.as_ref(),
         airport: &setup.procedures,
         airport_name: setup.airport_name.as_deref(),
         procedure,
@@ -124,13 +135,16 @@ fn one(
         track_deg: setup.track_deg(),
         course_mag_deg: setup.course_mag_deg(),
         variation_deg: setup.variation_deg(),
-        kind: opts.kind,
+        kind,
         circling: &circling,
         airport_dir: setup.airport_dir.as_deref(),
         runway_ends: setup.runway_ends,
         runway_size: setup.runway_detail.as_ref().and_then(|t| t.landing_m.zip(t.width_m)),
         runway_lighting: setup.runway_detail.as_ref().map(|t| t.lighting.as_slice()).unwrap_or(&[]),
         airac: crate::sources::msfs::airac_dates(),
+        missed_climb: crate::approach::missed_approach(&setup, &est).map(|m| (m.climb_ft_per_nm, m.what)),
+        coded_ft: crate::minima::coded_minimum(&setup.final_legs(), setup.tdze_ft),
+        circling_only: setup.is_circling_only(),
     };
     crate::output::approach::write(&chart, &est, &out)?;
     Ok(out)

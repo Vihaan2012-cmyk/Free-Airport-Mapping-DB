@@ -113,9 +113,9 @@ enum Cmd {
         /// List the approaches and arrivals this airport has, and stop.
         #[arg(long)]
         list: bool,
-        /// Approach type, which sets the floor the minimum may not go below.
-        #[arg(long, default_value = "ils")]
-        kind: String,
+        /// Override what sort of approach it is. Left out, the navigation data says.
+        #[arg(long)]
+        kind: Option<String>,
         /// Where to write the PDF.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -136,9 +136,10 @@ enum Cmd {
         /// How many airports to work on at once.
         #[arg(long, default_value_t = 4)]
         jobs: usize,
-        /// Approach type, which sets the floor where the procedure codes no minimum.
-        #[arg(long, default_value = "ils")]
-        kind: String,
+        /// Override what sort of approach every chart is treated as. Left out, the
+        /// navigation data says, approach by approach.
+        #[arg(long)]
+        kind: Option<String>,
         /// A chart for every runway, not only the airport's fullest approach.
         #[arg(long)]
         every_runway: bool,
@@ -146,6 +147,12 @@ enum Cmd {
         /// page: it reads the terrain for 25 miles around every airport.
         #[arg(long)]
         no_msa: bool,
+    },
+    /// Check the FAA chart reader against minima read off the printed page by hand.
+    PublishedCheck {
+        /// JSON list of fixtures: pdf_name, icao, runway, kind and what the chart says.
+        #[arg(long, default_value = "tests/fixtures/faa-published-minima.json")]
+        fixtures: PathBuf,
     },
     /// Measure our estimated minima against published ones, from a table of charts.
     MinimaAudit {
@@ -1022,7 +1029,7 @@ pub fn run() -> Result<()> {
         Cmd::Procedures { icao, json } => procedures_cmd(&icao, json),
         Cmd::Terrain { icao, radius_km, step_m } => terrain_cmd(&icao, radius_km, step_m),
         Cmd::ApproachCharts { icaos, list, out_dir, jobs, kind, every_runway, no_msa } => {
-            let opts = crate::output::charts_bulk::Options { out_dir, jobs, kind: approach_kind(&kind)?, every_runway, no_msa };
+            let opts = crate::output::charts_bulk::Options { out_dir, jobs, kind: kind.as_deref().map(approach_kind).transpose()?, every_runway, no_msa };
             let airports = crate::output::charts_bulk::airports(&icaos, list.as_deref())?;
             if airports.is_empty() {
                 return Err(anyhow!("name some airports, or give --list a file of them"));
@@ -1030,8 +1037,9 @@ pub fn run() -> Result<()> {
             crate::output::charts_bulk::run(&airports, &opts)
         }
         Cmd::MinimaAudit { truth, out, jobs } => crate::audit::run(&truth, out.as_deref(), jobs),
+        Cmd::PublishedCheck { fixtures } => crate::audit::published_check(&fixtures),
         Cmd::ApproachChart { icao, runway, approach, star, list, kind, out, open } => {
-            approach_chart_cmd(&icao, approach.as_deref().or(runway.as_deref()), star.as_deref(), list, &kind, out, open)
+            approach_chart_cmd(&icao, approach.as_deref().or(runway.as_deref()), star.as_deref(), list, kind.as_deref(), out, open)
         }
         Cmd::Layers => {
             layers_cmd();
@@ -1046,9 +1054,9 @@ pub fn run() -> Result<()> {
 
 /// An approach chart: airport, terrain, obstacles, the procedure and an estimated minimum.
 #[allow(clippy::too_many_arguments)]
-fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, list: bool, kind: &str, out: Option<PathBuf>, open: bool) -> Result<()> {
+fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, list: bool, kind: Option<&str>, out: Option<PathBuf>, open: bool) -> Result<()> {
     let icao = icao.to_uppercase();
-    let kind = approach_kind(kind)?;
+    let asked = kind.map(approach_kind).transpose()?;
     crate::term::start(&format!("Approach chart for {icao}"));
     if list {
         return list_procedures(&icao);
@@ -1066,11 +1074,29 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
         },
         None => None,
     };
+    // What sort of approach it is decides the floor and the area, unless told otherwise.
+    let kind = asked
+        .or_else(|| procedure.approach_type.map(crate::minima::Approach::for_type))
+        .unwrap_or(crate::minima::Approach::PrecisionCat1);
+    if asked.is_none() {
+        if let Some(what) = procedure.approach_type {
+            crate::term::info(&format!("{icao}: {} approach, minima as {}", what.label(), kind.label()));
+        }
+    }
     let est = crate::approach::estimate(&setup, kind);
-    let circling: Vec<(char, f64)> = crate::approach::circling_table(&setup).into_iter().map(|(letter, ft, _)| (letter, ft)).collect();
+    // Where the state publishes this approach's minimum, the chart prints that instead of
+    // ours.
+    let published = crate::approach::published(&http, &cache, &setup, kind);
+    if let Some(p) = &published {
+        crate::term::info(&format!("{icao}: {} published on \"{}\" as {:.0} ft", p.label, p.chart, p.altitude_ft));
+    }
+    let est = crate::approach::with_published(est, published.as_ref());
+    let worked_out: Vec<(char, f64)> = crate::approach::circling_table(&setup).into_iter().map(|(letter, ft, _)| (letter, ft)).collect();
+    let circling = crate::approach::circling_from(published.as_ref(), worked_out);
 
     let out = out.unwrap_or_else(|| PathBuf::from(format!("{icao}-RW{}-approach.pdf", procedure.runway)));
     let chart = crate::output::approach::Chart {
+        published: published.as_ref(),
         airport: &setup.procedures,
         airport_name: setup.airport_name.as_deref(),
         procedure,
@@ -1094,6 +1120,9 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
         runway_size: setup.runway_detail.as_ref().and_then(|t| t.landing_m.zip(t.width_m)),
         runway_lighting: setup.runway_detail.as_ref().map(|t| t.lighting.as_slice()).unwrap_or(&[]),
         airac: crate::sources::msfs::airac_dates(),
+        missed_climb: crate::approach::missed_approach(&setup, &est).map(|m| (m.climb_ft_per_nm, m.what)),
+        coded_ft: crate::minima::coded_minimum(&setup.final_legs(), setup.tdze_ft),
+        circling_only: setup.is_circling_only(),
     };
     crate::output::approach::write(&chart, &est, &out)?;
     crate::term::success(&format!(
@@ -1105,6 +1134,7 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
             crate::minima::LimitedBy::Terrain => format!("terrain reaching {:.0} ft", est.highest_terrain_ft),
             crate::minima::LimitedBy::Obstacle => format!("{} at {:.0} ft", est.obstacle.as_deref().unwrap_or("an obstacle"), est.obstacle_top_ft.unwrap_or(0.0)),
             crate::minima::LimitedBy::Coded => "the procedure's own coded minimum, not an estimate".to_string(),
+            crate::minima::LimitedBy::Published => format!("the published chart, {}", est.obstacle.as_deref().unwrap_or("read from the FAA")),
         }
     ));
     crate::term::file(Some(&icao), &out.display().to_string(), "approach chart");
@@ -1141,7 +1171,11 @@ fn list_procedures(icao: &str) -> Result<()> {
         };
         let vias: Vec<&str> = p.transitions.iter().filter(|t| t.part.is_empty() && !t.name.is_empty()).map(|t| t.name.as_str()).collect();
         let legs: usize = p.transitions.iter().filter(|t| t.part == "final").map(|t| t.legs.len()).sum();
-        println!("  --approach {name:<8} {legs} legs{}", if vias.is_empty() { String::new() } else { format!("   via {}", vias.join(", ")) });
+        println!(
+            "  --approach {name:<8} {:<22} {legs} legs{}",
+            crate::output::approach::title_of(p),
+            if vias.is_empty() { String::new() } else { format!("   via {}", vias.join(", ")) }
+        );
     }
     let stars: Vec<&str> = procedures.procedures.iter().filter(|p| p.kind == crate::sources::msfs::procedures::Kind::Star).map(|p| p.name.as_str()).collect();
     if !stars.is_empty() {
