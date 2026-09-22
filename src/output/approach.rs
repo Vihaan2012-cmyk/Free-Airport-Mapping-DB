@@ -298,12 +298,12 @@ impl View {
         // pushed that way — but not the whole distance. A chart leaves country beyond the
         // airport as well as behind it, and an airport squeezed against the edge of the
         // paper is the first thing that looks wrong.
-        const TOWARDS_THE_APPROACH: f64 = 0.45;
+        const TOWARDS_THE_APPROACH: f64 = 0.47;
         let back = (track_deg + 180.0).to_radians();
         let shift = far * TOWARDS_THE_APPROACH;
         let centre = (airport.0 + shift * back.cos() / 60.0, airport.1 + shift * back.sin() / 60.0 / cos);
         // Then it is opened out until it holds everything, with a margin.
-        const MARGIN_NM: f64 = 0.9;
+        const MARGIN_NM: f64 = 0.75;
         let from_centre = |(lat, lon): (f64, f64)| ((lat - centre.0) * 60.0, (lon - centre.1) * 60.0 * cos);
         let (mut half_n, mut half_e) = (0.0f64, 0.0f64);
         for point in points.iter().copied().chain([airport]) {
@@ -618,7 +618,16 @@ fn draw_airport(c: &mut Content, dir: &FsPath, v: &View) -> bool {
             }
         }
         if any {
-            c.fill_even_odd();
+            if layer == "runwayelement" {
+                // A runway a few hundred feet wide is a hair's breadth at this scale, so
+                // it is drawn with a line as well as a fill: a chart shows every runway
+                // at the airport, not only the one being landed on.
+                c.set_stroke_gray(grey);
+                c.set_line_width(1.6);
+                c.fill_even_odd_and_stroke();
+            } else {
+                c.fill_even_odd();
+            }
             drawn = true;
         } else {
             c.end_path();
@@ -663,7 +672,10 @@ fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, role: 
     if !taken.label(c, bold, 7.0, px + 6.0, py + 1.0, &leg.fix, INK) {
         return;
     }
-    let mut row = py - 7.0;
+    // Under the fix, unless the fix is near the foot of the map, where there is no under.
+    let downwards = py - v.y > 34.0;
+    let step = if downwards { -7.0f32 } else { 7.0 };
+    let mut row = py + step;
     if let Some(a) = leg.altitude_ft.filter(|a| *a > floor_ft) {
         let rule = match leg.altitude_rule {
             crate::sources::msfs::procedures::AltitudeRule::AtOrAbove => "+",
@@ -671,7 +683,7 @@ fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, role: 
             _ => "",
         };
         taken.label(c, font, 6.5, px + 6.0, row, &format!("{a:.0}{rule}"), 0.28);
-        row -= 7.0;
+        row += step;
     }
     // How the fix is defined, which is how a chart names it: "7 DME FUN".
     //
@@ -686,14 +698,14 @@ fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, role: 
         let nm = ((flat - dlat) * 60.0).hypot((flon - dlon) * 60.0 * dlat.to_radians().cos().max(0.05));
         if nm > 0.4 {
             taken.label(c, font, 6.0, px + 6.0, row, &format!("D{nm:.1} {ident}"), 0.4);
-            row -= 7.0;
+            row += step;
         }
     } else if let (Some(rho), false) = (leg.rho_nm, leg.navaid.is_empty()) {
         if let Some(digits) = leg.fix.strip_prefix(leg.navaid.as_str()) {
             let named: Option<f64> = digits.parse::<f64>().ok().map(|v| if digits.len() > 2 { v / 10.0 } else { v });
             if named.map(|n| (n - rho).abs() < 0.3).unwrap_or(false) {
                 taken.label(c, font, 6.0, px + 6.0, row, &format!("{rho:.1} DME {}", leg.navaid), 0.4);
-                row -= 7.0;
+                row += step;
             }
         }
     }
@@ -1657,6 +1669,12 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         if let Some(under) = under {
             text_centred(c, font, 5.2, *px, ground_y - 16.0, under, 0.4);
         }
+        // What the glidepath crosses it at, which is the height a crew checks against.
+        if let Some(leg) = final_legs(ch.procedure).iter().find(|l| l.fix == *name) {
+            if let Some(alt) = leg.altitude_ft.filter(|_| ch.glidepath_deg.is_some() && !name.starts_with("RW")) {
+                text_centred(c, font, 5.2, *px, ground_y - 23.0, &format!("GS {alt:.0}'"), 0.25);
+            }
+        }
         line(c, *px, ground_y - 3.0, *px, *py, 0.4, 0.5);
     }
     // How far it is from each to the next, along the bottom between tick marks.
@@ -1673,9 +1691,54 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         text_centred(c, font, 6.0, (a.1 + b.1) / 2.0, rule_y - 2.0, &format!("{gap:.1}"), 0.3);
     }
 
+    // The course flown, written along the descent with an arrow, the way a chart writes
+    // it: on the path itself, between one fix and the next.
+    let course = ch.ils.and_then(|i| i.course_mag_deg).or(ch.course_mag_deg).unwrap_or(track_deg);
+    for pair in marks.windows(2).take(2) {
+        let (a, b) = (&pair[0], &pair[1]);
+        if (b.1 - a.1).abs() < 60.0 {
+            continue;
+        }
+        let (mx, my) = ((a.1 + b.1) / 2.0, (a.2 + b.2) / 2.0);
+        let written = format!("{course:03.0}\u{b0}");
+        let wide = text_width(bold, 7.0, &written);
+        let left = mx - wide / 2.0 - 5.0;
+        label(c, bold, 7.0, left, my + 6.0, &written, INK);
+        let tip = left + wide + 8.0;
+        line(c, tip - 6.0, my + 8.5, tip, my + 8.5, 0.7, INK);
+        c.set_fill_gray(INK);
+        c.move_to(tip + 2.5, my + 8.5);
+        c.line_to(tip - 1.0, py_offset(my, 10.3));
+        c.line_to(tip - 1.0, py_offset(my, 6.7));
+        c.close_path();
+        c.fill_nonzero();
+    }
+    // Where the glidepath is joined, which a chart marks with a star.
+    let faf_fix = final_legs(ch.procedure)
+        .iter()
+        .find(|l| l.role == Some(crate::sources::msfs::procedures::FixRole::Final))
+        .map(|l| l.fix.clone());
+    if let Some(faf) = faf_fix.and_then(|fix| marks.iter().find(|(_, _, _, name, _)| *name == fix)) {
+        let (px, py) = (faf.1, faf.2);
+        for i in 0..3 {
+            let a = (i as f32 * 60.0).to_radians();
+            line(c, px - a.cos() * 3.4, py - a.sin() * 3.4, px + a.cos() * 3.4, py + a.sin() * 3.4, 0.9, INK);
+        }
+    }
+    // The climb away from the missed approach point, at the end of the descent.
+    let end_x = at_nm(0.0) - 14.0;
+    let end_y = at_ft(ch.tdze_ft + crossing_ft) + 1.0;
+    line(c, end_x, end_y, end_x + 9.0, end_y + 8.0, 1.2, INK);
+    c.set_fill_gray(INK);
+    c.move_to(end_x + 11.5, end_y + 10.0);
+    c.line_to(end_x + 6.2, end_y + 8.6);
+    c.line_to(end_x + 8.6, end_y + 4.6);
+    c.close_path();
+    c.fill_nonzero();
+
     // Glidepath angle and threshold crossing height, in the corner a chart puts them.
     label(c, font, 6.5, at_nm(0.0) - 46.0, tch + 9.0, &format!("TCH {crossing_ft:.0}'"), 0.3);
-    text_right(c, font, 6.5, x + w - 6.0, ground_y - 25.0, &format!("TDZE {:.0}'", ch.tdze_ft), 0.3);
+    text_right(c, font, 6.5, x + w - 8.0, y + 4.0, &format!("TDZE {:.0}'", ch.tdze_ft), 0.3);
     if let Some(deg) = ch.glidepath_deg {
         text(c, bold, 8.0, x + 6.0, y + h - 12.0, &format!("GP {deg:.2}"), INK);
     }
@@ -1764,7 +1827,7 @@ fn draw_briefing_strip(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f
     // The safe altitude, on the right, across the whole height.
     draw_msa_circle(c, font, bold, x + w - msa_w / 2.0, y + h / 2.0 + 4.0, 30.0, ch.msa_sectors, ch.msa_ft, &ch.msa_caption);
 
-    let (comms_h, data_h, missed_h, trans_h) = (24.0, 30.0, 22.0, 12.0);
+    let (comms_h, data_h, missed_h, trans_h) = (21.0, 28.0, 25.0, 10.0);
     let comms_y = y + h - comms_h;
     let data_y = comms_y - data_h;
     let missed_y = data_y - missed_h;
@@ -1837,7 +1900,7 @@ fn draw_briefing_strip(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f
     // in a hurry, and a chart gives it the whole line.
     let left = inner_x + 66.0;
     let room = inner_w - 72.0;
-    let (mut size, mut lines) = (10.5f32, Vec::new());
+    let (mut size, mut lines) = (10.0f32, Vec::new());
     while size > 6.0 {
         lines = wrap_to_width(&missed, font, size, room);
         if lines.len() <= 2 {
@@ -1845,7 +1908,7 @@ fn draw_briefing_strip(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f
         }
         size -= 0.5;
     }
-    let top = missed_y + missed_h - if lines.len() > 1 { 9.0 } else { (missed_h + size) / 2.0 - 2.0 };
+    let top = missed_y + missed_h - if lines.len() > 1 { 10.0 } else { (missed_h + size) / 2.0 - 2.0 };
     for (i, l) in lines.iter().take(2).enumerate() {
         text(c, font, size, left, top - i as f32 * (size + 1.5), l, INK);
     }
@@ -1980,6 +2043,11 @@ fn draw_speed_band(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, 
     if let Some(to) = to {
         text_centred(c, bold, 8.0, cells.0 + cells.1 * 2.5, y + 5.0, &to, INK);
     }
+}
+
+/// A height a little above or below another, which keeps an arrow head symmetrical.
+fn py_offset(y: f32, by: f32) -> f32 {
+    y + by
 }
 
 /// How far the last segment runs: from the final approach fix to the missed approach
@@ -2224,15 +2292,15 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
 
     // The bands of the page, in the order a chart has always had them: what to brief,
     // then the picture, then the descent, then the speeds, then the minima.
-    let strip_h = 104.0;
+    let strip_h = 100.0;
     let strip_y = head_y - 3.0 - strip_h;
     draw_briefing_strip(&mut c, f, b, ch, MARGIN, strip_y, W - 2.0 * MARGIN, strip_h, est, track);
 
     let min_h = 88.0;
     let min_y = MARGIN + 16.0;
-    let speed_h = 38.0;
+    let speed_h = 36.0;
     let speed_y = min_y + min_h + 3.0;
-    let prof_h = 116.0;
+    let prof_h = 106.0;
     let prof_y = speed_y + speed_h + 3.0;
     let plan_y = prof_y + prof_h + 3.0;
     let plan_h = strip_y - 3.0 - plan_y;
