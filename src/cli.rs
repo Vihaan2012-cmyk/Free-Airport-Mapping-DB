@@ -1095,7 +1095,15 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
     let circling = crate::approach::circling_from(published.as_ref(), worked_out);
 
     let out = out.unwrap_or_else(|| PathBuf::from(format!("{icao}-RW{}-approach.pdf", procedure.runway)));
+    // The beacons near the airport, and the localiser serving the runway, which the plan
+    // draws and the fixes are measured from.
+    let navaids = crate::sources::xplane::navdata::within(setup.procedures.lat, setup.procedures.lon, 40.0);
+    let ils = crate::sources::xplane::navdata::ils(&setup.procedures.icao, &procedure.runway);
     let chart = crate::output::approach::Chart {
+        navaids: &navaids,
+        ils: ils.as_ref(),
+        glidepath_deg: kind.has_glidepath().then(|| ils.as_ref().and_then(|i| i.glidepath_deg).unwrap_or(3.0)),
+        published_loc: crate::approach::published_localiser(&http, &cache, &setup, kind),
         published: published.as_ref(),
         airport: &setup.procedures,
         airport_name: setup.airport_name.as_deref(),

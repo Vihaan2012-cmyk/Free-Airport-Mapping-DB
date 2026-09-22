@@ -25,12 +25,20 @@ use std::sync::OnceLock;
 const SECTION_VOR: u32 = 0x13;
 const SECTION_NDB: u32 = 0x17;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Kind {
+    Vor,
+    Ndb,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Navaid {
     pub lat: f64,
     pub lon: f64,
     /// Megahertz for a VOR, kilohertz for an NDB.
     pub frequency: f64,
+    /// Which sort of beacon it is, which is what decides the symbol drawn for it.
+    pub kind: Kind,
 }
 
 /// Every beacon the simulator knows, by ident. Read once: it is a few megabytes of file
@@ -93,13 +101,33 @@ fn read_file(d: &[u8], out: &mut HashMap<String, Navaid>) {
             // A beacon can be listed more than once; the first is as good as any, and a
             // VOR is preferred over an NDB of the same name because procedures are
             // written against it.
+            let kind = if vor { Kind::Vor } else { Kind::Ndb };
             if vor {
-                out.insert(ident, Navaid { lat, lon, frequency });
+                out.insert(ident, Navaid { lat, lon, frequency, kind });
             } else {
-                out.entry(ident).or_insert(Navaid { lat, lon, frequency });
+                out.entry(ident).or_insert(Navaid { lat, lon, frequency, kind });
             }
         }
     }
+}
+
+/// Every beacon within a given distance of a point, nearest first.
+///
+/// A chart draws the beacons in the piece of country it covers whether or not the
+/// procedure is written against them: they are how a reader knows where they are.
+pub fn within(lat: f64, lon: f64, radius_nm: f64) -> Vec<(String, Navaid)> {
+    let cos = lat.to_radians().cos().max(0.05);
+    let mut out: Vec<(String, Navaid, f64)> = index()
+        .iter()
+        .filter_map(|(ident, n)| {
+            let dn = (n.lat - lat) * 60.0;
+            let de = (n.lon - lon) * 60.0 * cos;
+            let nm = dn.hypot(de);
+            (nm <= radius_nm).then(|| (ident.clone(), *n, nm))
+        })
+        .collect();
+    out.sort_by(|a, b| a.2.total_cmp(&b.2));
+    out.into_iter().map(|(ident, n, _)| (ident, n)).collect()
 }
 
 /// A position a given distance out on a radial from a beacon.
@@ -120,7 +148,7 @@ mod tests {
 
     #[test]
     fn a_radial_runs_the_way_it_points() {
-        let beacon = Navaid { lat: 50.0, lon: 0.0, frequency: 112.2 };
+        let beacon = Navaid { lat: 50.0, lon: 0.0, frequency: 112.2, kind: Kind::Vor };
         let north = along_radial(beacon, 0.0, 6.0, 0.0);
         assert!((north.0 - 50.1).abs() < 1e-6, "{north:?}");
         assert!(north.1.abs() < 1e-6);
