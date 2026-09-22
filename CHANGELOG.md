@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.5.3 (2026-09-22)
+
+The plan view, which was the weakest part of the page.
+
+- **The window is framed on what it has to hold.** It used to be sized by how far the
+  approach reached and then shifted a fixed share of the way back towards it, which
+  works until the approach leaves in one direction and the missed approach in another.
+  At Madeira that put the airport hard against the bottom edge with its runway and
+  missed approach running off the paper. The window is now the box around everything
+  that must be on it, centred on itself, with real room around the airport because that
+  is where the runway, the missed approach and the labels for both are drawn.
+
+- **The ways in are drawn as tracks.** A hairline a third of a shade off the sea reads
+  as a construction line; the arrival transitions are now at a weight that can be
+  followed, and carry an arrowhead saying which way round they are flown.
+
+- **The runway can be seen at any scale.** Twenty-six miles across the paper, a two-mile
+  runway is eight millimetres of it and a short one is three, so the mark is stretched
+  about its own middle to a length that reads.
+
+- **The highest ground on the page is marked and named**, with the triangle a chart
+  marks a summit with.
+
+- **Empty columns are not ruled.** The minima table drew FULL / TDZ-CL out / ALS out
+  whether or not a published visibility had been read to put under them, and three
+  empty ruled columns say the chart failed to draw rather than that there is nothing to
+  say. Outside the United States there is usually nothing to say.
+
+- A fix measured from a beacon is written D12.0 FUN, the way it is read on the
+  instrument, rather than 12.0 DME FUN.
+
 ## 0.5.2 (2026-09-22)
 
 The profile band and the plan view, read against the published plate they copy.
