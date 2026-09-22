@@ -146,6 +146,17 @@ impl Setup {
         crate::minima::Path::new(points).unwrap_or_else(|| crate::minima::Path::straight(threshold, self.track_deg(), 12.0))
     }
 
+    /// Every runway end of the airport, which is what a circling area is drawn from.
+    /// Failing a build to read them from, the airport itself.
+    pub fn runway_ends(&self) -> Vec<(f64, f64)> {
+        let ends: Vec<(f64, f64)> = self.airport_dir.as_deref().map(|d| thresholds(d).into_iter().map(|t| (t.lat, t.lon)).collect()).unwrap_or_default();
+        if ends.is_empty() {
+            vec![(self.procedures.lat, self.procedures.lon)]
+        } else {
+            ends
+        }
+    }
+
     pub fn threshold_point(&self) -> (f64, f64) {
         self.threshold.map(|(lat, lon, _)| (lat, lon)).unwrap_or((self.procedures.lat, self.procedures.lon))
     }
@@ -274,6 +285,12 @@ pub fn prepare(http: &Http, cache: &Cache, idx: &AirportIndex, icao: &str, appro
     let Some(procedures) = procedures::find(&icao)? else {
         return Err(anyhow!("{icao} has no procedures in the simulator's navigation data (is a simulator installed?)"));
     };
+    prepare_from(procedures, http, cache, idx, approach, opts)
+}
+
+/// The same, for an airport whose procedures have already been read.
+pub fn prepare_from(procedures: AirportProcedures, http: &Http, cache: &Cache, idx: &AirportIndex, approach: Option<&str>, opts: Options) -> Result<Setup> {
+    let icao = procedures.icao.to_uppercase();
     let chosen = crate::output::approach::pick(&procedures, approach).ok_or_else(|| anyhow!("{icao} has no approach matching {}; try --list", approach.unwrap_or("any")))?;
     let index = procedures.procedures.iter().position(|p| std::ptr::eq(p, chosen)).unwrap_or(0);
     let mut procedures = procedures;
@@ -373,6 +390,106 @@ pub fn prepare(http: &Http, cache: &Cache, idx: &AirportIndex, icao: &str, appro
 }
 
 /// The minimum for a prepared approach.
+/// What the ground looks like around an approach, for working out where an estimate
+/// goes wrong. Everything here is a height above sea level in feet.
+#[derive(Debug, Clone, Default)]
+pub struct Survey {
+    /// The highest ground in the corridor the minimum is worked out from.
+    pub corridor_terrain_ft: f64,
+    /// The highest obstacle in that corridor.
+    pub corridor_obstacle_ft: f64,
+    /// The highest obstacle and the highest ground within a mile and a third of the
+    /// airport, within two and a third, and within five: the circling areas for the
+    /// aircraft categories, and a wider look for comparison.
+    pub near_obstacle_ft: f64,
+    pub near_terrain_ft: f64,
+    pub ring13_ft: f64,
+    pub ring23_ft: f64,
+    pub ring50_ft: f64,
+    /// How far out the final approach fix is, in miles.
+    pub faf_nm: f64,
+}
+
+/// Look at everything around the approach, whether or not it sets the minimum.
+pub fn survey(setup: &Setup, kind: crate::minima::Approach) -> Survey {
+    let path = setup.path();
+    let (airport_lat, airport_lon) = (setup.procedures.lat, setup.procedures.lon);
+    let mut s = Survey {
+        corridor_terrain_ft: crate::minima::highest_terrain(&setup.patch, &path, kind).unwrap_or(f64::NAN),
+        ..Default::default()
+    };
+    s.corridor_obstacle_ft = crate::minima::limiting_obstacle(&setup.obstacles, &path, kind, setup.tdze_ft)
+        .map(|l| l.top_ft)
+        .unwrap_or(f64::NAN);
+    let near = |lat: f64, lon: f64| {
+        let dn = (lat - airport_lat) * 60.0;
+        let de = (lon - airport_lon) * 60.0 * airport_lat.to_radians().cos().max(0.05);
+        dn.hypot(de) <= 5.0
+    };
+    s.near_obstacle_ft = setup
+        .obstacles
+        .iter()
+        .filter(|o| near(o.lat, o.lon))
+        .filter_map(|o| o.top_ft)
+        .fold(f64::NAN, f64::max);
+    let mut highest = f64::NAN;
+    for row in 0..setup.patch.height {
+        for col in 0..setup.patch.width {
+            let h = setup.patch.at(row, col);
+            if !h.is_finite() {
+                continue;
+            }
+            let (lat, lon) = setup.patch.position(row, col);
+            if near(lat, lon) {
+                highest = highest.max(h as f64 / 0.3048);
+            }
+        }
+    }
+    s.near_terrain_ft = highest;
+    // The highest of anything at all within each ring.
+    for (radius, slot) in [(1.3, 0), (2.3, 1), (5.0, 2)] {
+        let mut top = f64::NAN;
+        let inside = |lat: f64, lon: f64| {
+            let dn = (lat - airport_lat) * 60.0;
+            let de = (lon - airport_lon) * 60.0 * airport_lat.to_radians().cos().max(0.05);
+            dn.hypot(de) <= radius
+        };
+        for o in setup.obstacles.iter().filter(|o| inside(o.lat, o.lon)) {
+            if let Some(t) = o.top_ft {
+                top = if top.is_nan() { t } else { top.max(t) };
+            }
+        }
+        for row in 0..setup.patch.height {
+            for col in 0..setup.patch.width {
+                let h = setup.patch.at(row, col);
+                if !h.is_finite() {
+                    continue;
+                }
+                let (lat, lon) = setup.patch.position(row, col);
+                if inside(lat, lon) {
+                    let ft = h as f64 / 0.3048;
+                    top = if top.is_nan() { ft } else { top.max(ft) };
+                }
+            }
+        }
+        match slot {
+            0 => s.ring13_ft = top,
+            1 => s.ring23_ft = top,
+            _ => s.ring50_ft = top,
+        }
+    }
+    // The final approach fix: the last fix on the final that holds an altitude.
+    s.faf_nm = setup
+        .final_legs()
+        .iter()
+        .filter(|l| l.altitude_ft.is_some() && !l.fix.starts_with("RW"))
+        .filter_map(|l| l.lat.zip(l.lon))
+        .next_back()
+        .map(|(lat, lon)| setup.distance_nm(lat, lon))
+        .unwrap_or(f64::NAN);
+    s
+}
+
 /// The circling minima for every aircraft category, where the procedure does not code
 /// one of its own.
 pub fn circling_table(setup: &Setup) -> Vec<(char, f64, Option<String>)> {
@@ -380,7 +497,7 @@ pub fn circling_table(setup: &Setup) -> Vec<(char, f64, Option<String>)> {
         .iter()
         .enumerate()
         .map(|(i, (letter, _, _))| {
-            let (ft, what) = crate::minima::circling_minimum(&setup.patch, &setup.obstacles, (setup.procedures.lat, setup.procedures.lon), setup.field_elev_ft, i);
+            let (ft, what) = crate::minima::circling_minimum(&setup.patch, &setup.obstacles, &setup.runway_ends(), setup.field_elev_ft, i);
             (*letter, ft, what)
         })
         .collect()
@@ -407,7 +524,7 @@ pub fn estimate(setup: &Setup, kind: crate::minima::Approach) -> crate::minima::
     // worked out over the whole area instead. The smallest category is what the single
     // figure reports; the chart prints all four.
     if kind == crate::minima::Approach::Circling {
-        let (ft, what) = crate::minima::circling_minimum(&setup.patch, &setup.obstacles, (setup.procedures.lat, setup.procedures.lon), setup.field_elev_ft, 0);
+        let (ft, what) = crate::minima::circling_minimum(&setup.patch, &setup.obstacles, &setup.runway_ends(), setup.field_elev_ft, 0);
         let highest = terrain.as_ref().map(|t| t.top_ft).unwrap_or(setup.tdze_ft);
         let limit = crate::minima::Limit { top_ft: highest, required_ft: ft, what: what.clone().unwrap_or_else(|| "terrain".into()) };
         return crate::minima::estimate_with(kind, setup.field_elev_ft, Some(limit), None);

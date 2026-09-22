@@ -560,6 +560,41 @@ fn airport(d: &[u8], rec: &Record, file: &Path, fixes: &Fixes) -> Option<Airport
 
 /// Read the procedures of one airport from the simulator's navigation data. None when
 /// no simulator is installed, or the airport has no published procedures.
+/// The same, for a list of airports at once.
+///
+/// The navigation data is a few thousand files and an airport can be in any of them, so
+/// looking one up means reading files until it turns up. Looking up two hundred that way
+/// reads the same files two hundred times over; this reads each once and takes whatever
+/// it was asked for.
+pub fn find_many(icaos: &[String]) -> Result<std::collections::HashMap<String, AirportProcedures>> {
+    let wanted: std::collections::HashSet<String> = icaos.iter().map(|i| i.to_uppercase()).collect();
+    let mut out = std::collections::HashMap::new();
+    for dir in super::nav_dirs() {
+        for file in walk_nax(&dir) {
+            if out.len() == wanted.len() {
+                return Ok(out);
+            }
+            let Ok(data) = std::fs::read(&file) else { continue };
+            let here: Vec<Record> = bgl::section_records(&data, bgl::SECTION_AIRPORT)
+                .into_iter()
+                .filter(|rec| rec.id == bgl::REC_AIRPORT && rec.end - rec.start >= 0x44)
+                .filter(|rec| wanted.contains(&bgl::ident(bgl::u32le(&data, rec.start + 0x28))))
+                .collect();
+            if here.is_empty() {
+                continue;
+            }
+            // The waypoint table is only worth building for a file that holds one of them.
+            let fixes = waypoints(&data);
+            for rec in here {
+                if let Some(a) = airport(&data, &rec, &file, &fixes) {
+                    out.insert(a.icao.clone(), a);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub fn find(icao: &str) -> Result<Option<AirportProcedures>> {
     let want = icao.to_uppercase();
     for dir in super::nav_dirs() {

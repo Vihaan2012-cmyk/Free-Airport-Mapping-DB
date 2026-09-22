@@ -108,16 +108,48 @@ impl<'a> Reader<'a> {
     }
 }
 
-fn parse_layout(d: &[u8]) -> Result<Layout> {
+/// Every level of detail the file holds, finest first.
+///
+/// These files carry reduced copies of themselves: a degree of ground is stored at 3600
+/// pixels across, and again at 1800, 900 and 450. Reading the smallest copy that is
+/// still finer than what was asked for turns the terrain around an airport from
+/// megabytes into a few kilobytes, which is the difference between a chart taking two
+/// seconds and taking a tenth of one.
+fn parse_layouts(d: &[u8]) -> Result<Vec<Layout>> {
+    let mut out = Vec::new();
+    let mut at = {
+        if d.len() < 8 {
+            return Err(anyhow!("short header"));
+        }
+        let little = &d[0..2] == b"II";
+        let r = Reader { d, little };
+        if r.u16(2) != 42 {
+            return Err(anyhow!("not a classic TIFF"));
+        }
+        r.u32(4) as usize
+    };
+    // The finest image places the ground; the reduced copies inherit that placement.
+    let mut placement: Option<((f64, f64), (f64, f64), u32)> = None;
+    while at != 0 && at + 2 <= d.len() && out.len() < 12 {
+        let (layout, next) = parse_ifd(d, at, placement)?;
+        if placement.is_none() {
+            placement = Some((layout.origin, layout.scale, layout.width));
+        }
+        out.push(layout);
+        at = next;
+    }
+    if out.is_empty() {
+        return Err(anyhow!("no images in the file"));
+    }
+    Ok(out)
+}
+
+fn parse_ifd(d: &[u8], ifd: usize, placement: Option<((f64, f64), (f64, f64), u32)>) -> Result<(Layout, usize)> {
     if d.len() < 8 {
         return Err(anyhow!("short header"));
     }
     let little = &d[0..2] == b"II";
     let r = Reader { d, little };
-    if r.u16(2) != 42 {
-        return Err(anyhow!("not a classic TIFF"));
-    }
-    let ifd = r.u32(4) as usize;
     if ifd + 2 > d.len() {
         return Err(anyhow!("header cut short"));
     }
@@ -133,14 +165,28 @@ fn parse_layout(d: &[u8]) -> Result<Layout> {
         let count = r.u32(e + 4) as usize;
         tags.insert(tag, r.values(kind, count, e + 8));
     }
+    let next = {
+        let e = ifd + 2 + n * 12;
+        if e + 4 <= d.len() {
+            r.u32(e) as usize
+        } else {
+            0
+        }
+    };
     let one = |t: u16| tags.get(&t).and_then(|v| v.first().copied());
-    let pixel_scale = tags.get(&33550).cloned().unwrap_or_default();
-    let tiepoint = tags.get(&33922).cloned().unwrap_or_default();
-    if pixel_scale.len() < 2 || tiepoint.len() < 5 {
-        return Err(anyhow!("no geographic placement in the file"));
-    }
-    Ok(Layout {
-        width: one(256).unwrap_or(0.0) as u32,
+    let width = one(256).unwrap_or(0.0) as u32;
+    // A reduced copy carries no placement of its own; it covers the same ground as the
+    // full-sized image, with pixels as much larger as it is smaller.
+    let (origin, scale) = match (tags.get(&33550), tags.get(&33922), placement) {
+        (Some(pixel_scale), Some(tiepoint), _) if pixel_scale.len() >= 2 && tiepoint.len() >= 5 => ((tiepoint[3], tiepoint[4]), (pixel_scale[0], pixel_scale[1])),
+        (_, _, Some((origin, scale, full_width))) if width > 0 => {
+            let factor = full_width as f64 / width as f64;
+            (origin, (scale.0 * factor, scale.1 * factor))
+        }
+        _ => return Err(anyhow!("no geographic placement in the file")),
+    };
+    let layout = Layout {
+        width,
         height: one(257).unwrap_or(0.0) as u32,
         tile_w: one(322).unwrap_or(0.0) as u32,
         tile_h: one(323).unwrap_or(0.0) as u32,
@@ -150,9 +196,10 @@ fn parse_layout(d: &[u8]) -> Result<Layout> {
         sample_format: one(339).unwrap_or(1.0) as u16,
         tile_offsets: tags.get(&324).map(|v| v.iter().map(|x| *x as u64).collect()).unwrap_or_default(),
         tile_bytes: tags.get(&325).map(|v| v.iter().map(|x| *x as u64).collect()).unwrap_or_default(),
-        origin: (tiepoint[3], tiepoint[4]),
-        scale: (pixel_scale[0], pixel_scale[1]),
-    })
+        origin,
+        scale,
+    };
+    Ok((layout, next))
 }
 
 fn inflate(data: &[u8]) -> Result<Vec<u8>> {
@@ -314,27 +361,40 @@ impl Patch {
 
 struct Source {
     url: String,
-    layout: Layout,
+    /// Finest first.
+    levels: Vec<Layout>,
+}
+
+impl Source {
+    /// The smallest copy whose pixels are still finer than the spacing asked for.
+    fn level_for(&self, step_deg: f64) -> &Layout {
+        self.levels
+            .iter()
+            .filter(|l| l.scale.0 <= step_deg * 1.01 && !l.tile_offsets.is_empty() && l.tile_w > 0)
+            .next_back()
+            .unwrap_or(&self.levels[0])
+    }
 }
 
 fn open(http: &Http, cache: &Cache, lat_deg: i32, lon_deg: i32) -> Result<Source> {
     let name = tile_name(lat_deg, lon_deg);
     let url = format!("{BASE}/{name}/{name}.tif");
     let head = cache.get_or_fetch_bytes(&format!("copernicus/{name}.header"), || http.get_range(&url, 0, HEADER_BYTES))?;
-    let layout = parse_layout(&head).with_context(|| format!("read the header of {name}"))?;
+    let levels = parse_layouts(&head).with_context(|| format!("read the header of {name}"))?;
+    let layout = &levels[0];
     if layout.tile_w == 0 || layout.tile_offsets.is_empty() {
         return Err(anyhow!("{name}: not tiled as expected"));
     }
     if layout.bits != 32 || layout.sample_format != 3 {
         return Err(anyhow!("{name}: heights are not 32-bit floats"));
     }
-    Ok(Source { url, layout })
+    Ok(Source { url, levels })
 }
 
-fn tile(http: &Http, cache: &Cache, src: &Source, name: &str, index: usize) -> Result<Vec<f32>> {
-    let l = &src.layout;
+fn tile(http: &Http, cache: &Cache, src: &Source, l: &Layout, name: &str, level: usize, index: usize) -> Result<Vec<f32>> {
     let (off, len) = (l.tile_offsets[index], l.tile_bytes[index]);
-    let raw = cache.get_or_fetch_bytes(&format!("copernicus/{name}/{index}.tile"), || http.get_range(&src.url, off, len))?;
+    let key = if level == 0 { format!("copernicus/{name}/{index}.tile") } else { format!("copernicus/{name}/L{level}-{index}.tile") };
+    let raw = cache.get_or_fetch_bytes(&key, || http.get_range(&src.url, off, len))?;
     let mut bytes = match l.compression {
         1 => raw,
         8 | 32946 => inflate(&raw)?,
@@ -357,7 +417,7 @@ pub fn patch(http: &Http, cache: &Cache, lat: f64, lon: f64, radius_km: f64, ste
 
     let mut heights = vec![f32::NAN; width * height];
     let mut sources: HashMap<(i32, i32), Option<(String, Source)>> = HashMap::new();
-    let mut tiles: HashMap<(i32, i32, usize), Vec<f32>> = HashMap::new();
+    let mut tiles: HashMap<(i32, i32, usize, usize), Vec<f32>> = HashMap::new();
 
     for row in 0..height {
         let plat = north - row as f64 * step_lat;
@@ -375,7 +435,10 @@ pub fn patch(http: &Http, cache: &Cache, lat: f64, lon: f64, radius_km: f64, ste
                 }
             });
             let Some((name, src)) = entry else { continue };
-            let l = &src.layout;
+            // The smallest copy of the ground that is still finer than the spacing asked
+            // for: a chart wants a quarter of a mile, not thirty metres.
+            let level = src.levels.iter().position(|c| std::ptr::eq(c, src.level_for(step_lat))).unwrap_or(0);
+            let l = &src.levels[level];
             // Pixel in the file, then which tile holds it.
             let px = ((plon - l.origin.0) / l.scale.0).floor();
             let py = ((l.origin.1 - plat) / l.scale.1).floor();
@@ -388,9 +451,9 @@ pub fn patch(http: &Http, cache: &Cache, lat: f64, lon: f64, radius_km: f64, ste
             if index >= l.tile_offsets.len() {
                 continue;
             }
-            let data = match tiles.entry((key.0, key.1, index)) {
+            let data = match tiles.entry((key.0, key.1, level, index)) {
                 std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
-                std::collections::hash_map::Entry::Vacant(v) => match tile(http, cache, src, name, index) {
+                std::collections::hash_map::Entry::Vacant(v) => match tile(http, cache, src, l, name, level, index) {
                     Ok(t) => v.insert(t),
                     Err(e) => {
                         log::warn!("Copernicus DEM {name} tile {index}: {e:#}");

@@ -36,7 +36,9 @@ impl Case {
     fn approach(&self) -> Approach {
         match self.kind.trim().to_ascii_lowercase().as_str() {
             "circling" => Approach::Circling,
-            "loc" | "vor" | "ndb" | "lnav" | "np" | "nonprecision" => Approach::NonPrecision,
+            "loc" | "lda" | "lnav" => Approach::Localiser,
+            "vor" | "np" | "nonprecision" => Approach::NonPrecision,
+            "ndb" => Approach::Ndb,
             "rnav" | "lpv" | "lnav/vnav" => Approach::VerticallyGuided,
             _ => Approach::PrecisionCat1,
         }
@@ -64,6 +66,18 @@ pub struct Outcome {
     pub dem_median_ft: f64,
     pub dem_min_ft: f64,
     pub dem_p25_ft: f64,
+    /// What the ground around the approach looks like, for working out where an
+    /// estimate went wrong.
+    pub corridor_terrain_ft: f64,
+    pub corridor_obstacle_ft: f64,
+    pub near_terrain_ft: f64,
+    pub near_obstacle_ft: f64,
+    pub ring13_ft: f64,
+    pub ring23_ft: f64,
+    pub ring50_ft: f64,
+    pub faf_nm: f64,
+    pub tdze_used_ft: f64,
+    pub field_elev_ft: f64,
     pub limited_by: &'static str,
     /// What set our number, where something on the ground did.
     pub controlling: String,
@@ -140,6 +154,7 @@ pub fn run(truth: &Path, out: Option<&Path>, jobs: usize) -> Result<()> {
                     .unwrap_or_default();
                 let pick = |f: f64| if samples.is_empty() { f64::NAN } else { samples[((samples.len() - 1) as f64 * f) as usize] };
                 let est = crate::approach::estimate(&setup, case.approach());
+                let look = crate::approach::survey(&setup, case.approach());
                 let outcome = Outcome {
                     icao: case.icao.clone(),
                     runway: case.runway.clone(),
@@ -150,6 +165,16 @@ pub fn run(truth: &Path, out: Option<&Path>, jobs: usize) -> Result<()> {
                     da_error_ft: est.altitude_ft - case.published_da_ft,
                     tdze_error_ft: case.published_tdze_ft.map(|t| setup.tdze_ft - t).unwrap_or(f64::NAN),
                     kind: if case.kind.trim().is_empty() { "ils".to_string() } else { case.kind.trim().to_string() },
+                    corridor_terrain_ft: look.corridor_terrain_ft,
+                    corridor_obstacle_ft: look.corridor_obstacle_ft,
+                    near_terrain_ft: look.near_terrain_ft,
+                    near_obstacle_ft: look.near_obstacle_ft,
+                    ring13_ft: look.ring13_ft,
+                    ring23_ft: look.ring23_ft,
+                    ring50_ft: look.ring50_ft,
+                    faf_nm: look.faf_nm,
+                    tdze_used_ft: setup.tdze_ft,
+                    field_elev_ft: setup.field_elev_ft,
                     dem_max_ft: pick(1.0),
                     dem_median_ft: pick(0.5),
                     dem_min_ft: pick(0.0),
