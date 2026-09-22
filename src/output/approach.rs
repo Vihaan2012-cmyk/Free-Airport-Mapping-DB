@@ -75,6 +75,10 @@ pub struct Chart<'a> {
     /// What the safe altitude ring is measured from, which is the published centre where
     /// there is a published one and the airport itself where there is not.
     pub msa_caption: String,
+    /// The hold the missed approach ends in, where one is published for it.
+    pub missed_hold: Option<&'a crate::sources::navdata::Hold>,
+    /// What is flown to the localiser minimum, where the chart publishes one.
+    pub published_loc_visibility: Option<String>,
     /// The glidepath angle, where the approach is flown down one.
     pub glidepath_deg: Option<f64>,
     /// The minimum with the glidepath out of use — the localiser line of the same chart,
@@ -137,6 +141,16 @@ fn text(c: &mut Content, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f
     c.set_fill_gray(grey);
     c.set_font(font, size);
     c.next_line(x, y);
+    c.show(Str(&ascii(s)));
+    c.end_text();
+}
+
+/// Text turned on its side, reading upwards, as a chart labels the strip down its edge.
+fn text_up(c: &mut Content, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) {
+    c.begin_text();
+    c.set_fill_gray(grey);
+    c.set_font(font, size);
+    c.set_text_matrix([0.0, 1.0, -1.0, 0.0, x, y]);
     c.show(Str(&ascii(s)));
     c.end_text();
 }
@@ -277,7 +291,7 @@ impl View {
         let back = (track_deg + 180.0).to_radians();
         let shift_nm = far / 2.0;
         let centre = (airport.0 + shift_nm * back.cos() / 60.0, airport.1 + shift_nm * back.sin() / 60.0 / cos);
-        let half_nm = (far / 2.0 * 1.2 + 1.5).clamp(PLAN_MIN_NM / 2.0, PLAN_MAX_NM / 2.0);
+        let half_nm = (far / 2.0 * 1.06 + 0.8).clamp(PLAN_MIN_NM / 2.0, PLAN_MAX_NM / 2.0);
 
         // The shorter side of the box has to hold that, whichever way the approach runs.
         let aspect = (w / h) as f64;
@@ -690,6 +704,105 @@ fn draw_holds(c: &mut Content, font: Name, v: &View, legs: &[&Leg]) {
     }
 }
 
+/// The hold a missed approach ends in, drawn in its own box because the fix it is flown
+/// at is usually well off the edge of the map.
+///
+/// A chart says so plainly — "NOT TO SCALE" — and draws the racetrack with the course
+/// flown towards the fix and the course flown away from it, which is what a crew sets up.
+fn draw_hold_box(c: &mut Content, font: Name, bold: Name, x: f32, y: f32, w: f32, h: f32, hold: &crate::sources::navdata::Hold, beacon: Option<&Beacon>) {
+    fill_box(c, x, y, w, h, 1.0);
+    box_outline(c, x, y, w, h, 0.8, INK);
+    text(c, font, 5.2, x + 5.0, y + h - 8.0, "NOT TO SCALE", 0.4);
+
+    // The racetrack, laid out along the course flown towards the fix. The fix itself is
+    // at the end of the inbound leg, which is where the aircraft arrives.
+    let (cx, cy) = (x + w * 0.62, y + h * 0.5);
+    let inbound = hold.inbound_deg as f32;
+    let (leg, wide) = (17.0f32, 9.0f32);
+    // Along the inbound course, and to the holding side of it.
+    let ahead = inbound.to_radians();
+    let side = if hold.right_turns { 1.0f32 } else { -1.0f32 };
+    let across = (inbound + 90.0 * side).to_radians();
+    let at = |d: f32, s: f32| (cx + ahead.sin() * d + across.sin() * s, cy + ahead.cos() * d + across.cos() * s);
+    // Two straight legs and two half turns, as eight-segment arcs.
+    let (near, far) = (at(-leg / 2.0, 0.0), at(leg / 2.0, 0.0));
+    let (near_out, far_out) = (at(-leg / 2.0, wide), at(leg / 2.0, wide));
+    line(c, near.0, near.1, far.0, far.1, 1.0, INK);
+    line(c, near_out.0, near_out.1, far_out.0, far_out.1, 1.0, INK);
+    for end_far in [true, false] {
+        let centre = if end_far { at(leg / 2.0, wide / 2.0) } else { at(-leg / 2.0, wide / 2.0) };
+        let r = wide / 2.0;
+        // The half turn runs from one straight leg to the other, bulging away from the
+        // middle of the racetrack.
+        let start = -90.0f32;
+        let mut last: Option<(f32, f32)> = None;
+        for step in 0..=8 {
+            let a = (start + step as f32 * 22.5).to_radians();
+            // Around the end, in the plane of the racetrack.
+            let (dx, ds) = (a.cos() * r, a.sin() * r);
+            let p = (
+                centre.0 + ahead.sin() * dx * if end_far { 1.0 } else { -1.0 } + across.sin() * ds,
+                centre.1 + ahead.cos() * dx * if end_far { 1.0 } else { -1.0 } + across.cos() * ds,
+            );
+            if let Some(prev) = last {
+                line(c, prev.0, prev.1, p.0, p.1, 1.0, INK);
+            }
+            last = Some(p);
+        }
+    }
+    // The arrow that says which way round it is flown, on the inbound leg.
+    arrow_head(c, near, far, INK);
+
+    // The courses either side, and what the fix is.
+    let outbound = (hold.inbound_deg + 180.0) % 360.0;
+    text_centred(c, font, 5.2, cx, cy - wide - 11.0, &format!("{:03.0}\u{b0}", hold.inbound_deg), 0.25);
+    text_centred(c, font, 5.2, cx, cy + wide + 7.0, &format!("{outbound:03.0}\u{b0}"), 0.25);
+
+    let name = beacon.map(|b| b.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| hold.fix.clone());
+    text(c, bold, 7.0, x + 5.0, y + 12.0, &name, INK);
+    match beacon {
+        Some(b) => text(c, font, 6.0, x + 5.0, y + 4.0, &format!("{:.1} {}", b.frequency, b.ident), 0.25),
+        None => text(c, font, 6.0, x + 5.0, y + 4.0, &hold.fix, 0.25),
+    }
+    // A maximum only where one is really published; the databases carry a sentinel just
+    // below eighteen thousand to mean there is none.
+    if let Some(max) = hold.max_altitude_ft.filter(|m| *m < 17_000.0) {
+        text_right(c, font, 5.2, x + w - 5.0, y + 4.0, &format!("MAX {max:.0}'"), 0.35);
+    }
+    if let Some(minutes) = hold.leg_time_min {
+        text_right(c, font, 5.2, x + w - 5.0, y + h - 8.0, &format!("{minutes:.0} MIN"), 0.35);
+    }
+}
+
+/// The safe altitude ring: the circle, its sectors, and what it is measured from.
+///
+/// A chart puts this in the briefing strip rather than on the map, because it is read
+/// before the approach is flown rather than during it.
+fn draw_msa_circle(c: &mut Content, font: Name, bold: Name, cx: f32, cy: f32, r: f32, sectors: &[crate::minima::Sector], msa_ft: Option<f64>, caption: &str) {
+    c.set_stroke_gray(INK);
+    c.set_line_width(0.9);
+    circle(c, cx, cy, r);
+    c.stroke();
+    if sectors.len() > 1 {
+        for s in sectors {
+            let start = (s.from_deg as f32).to_radians();
+            line(c, cx, cy, cx + start.sin() * r, cy + start.cos() * r, 0.6, 0.4);
+            let mut sweep = s.to_deg - s.from_deg;
+            if sweep <= 0.0 {
+                sweep += 360.0;
+            }
+            let middle = ((s.from_deg + sweep / 2.0) as f32).to_radians();
+            let (lx, ly) = (cx + middle.sin() * r * 0.55, cy + middle.cos() * r * 0.55);
+            text_centred(c, bold, 7.5, lx, ly - 2.5, &format!("{:.0}", s.altitude_ft), INK);
+            let (bx, by) = (cx + start.sin() * (r + 7.0), cy + start.cos() * (r + 7.0));
+            text_centred(c, font, 5.0, bx, by - 2.0, &format!("{:03.0}", s.from_deg), 0.45);
+        }
+    } else if let Some(only) = sectors.first().map(|s| s.altitude_ft).or(msa_ft) {
+        text_centred(c, bold, 9.0, cx, cy - 3.0, &format!("{only:.0}"), INK);
+    }
+    text_centred(c, font, 5.0, cx, cy - r - 14.0, caption, 0.3);
+}
+
 /// The localiser's beam, drawn the way a chart draws it: a long narrow wedge running
 /// back from the threshold along the course, widening as it goes.
 ///
@@ -909,13 +1022,10 @@ fn draw_furniture(
     font: Name,
     bold: Name,
     v: &View,
-    msa_ft: Option<f64>,
-    sectors: &[crate::minima::Sector],
     variation_deg: Option<f64>,
     runway_deg: Option<f64>,
     has_water: bool,
     highest_ft: f64,
-    caption: &str,
 ) {
     // Degrees and minutes along the edges, as a chart rules them.
     let step = (if v.span_nm() > 24.0 { 20.0 } else if v.span_nm() > 10.0 { 10.0 } else { 5.0 }) / 60.0;
@@ -1016,40 +1126,52 @@ fn draw_furniture(
     }
     text(c, font, 6.5, bx + bar + 3.0, by - 2.0, &format!("{step_nm:.0} NM"), INK);
 
-    // The safe altitude ring, divided into the quadrants a chart divides it into.
-    let (cx, cy) = (v.x + v.w - 42.0, v.y + v.h - 44.0);
-    let r = 30.0;
-    if !sectors.is_empty() {
-        fill_box(c, cx - r - 12.0, cy - r - 20.0, 2.0 * r + 24.0, 2.0 * r + 30.0, 1.0);
-        c.set_stroke_gray(INK);
-        c.set_line_width(0.9);
-        circle(c, cx, cy, r);
-        c.stroke();
-        for s in sectors {
-            // The line that starts this sector, and its figure in the middle of it.
-            let start = (s.from_deg as f32).to_radians();
-            line(c, cx, cy, cx + start.sin() * r, cy + start.cos() * r, 0.6, 0.4);
-            let mut sweep = s.to_deg - s.from_deg;
-            if sweep <= 0.0 {
-                sweep += 360.0;
-            }
-            let middle = ((s.from_deg + sweep / 2.0) as f32).to_radians();
-            let (lx, ly) = (cx + middle.sin() * r * 0.55, cy + middle.cos() * r * 0.55);
-            text_centred(c, bold, 7.5, lx, ly - 2.5, &format!("{:.0}", s.altitude_ft), INK);
-            // The bearing the sector starts at, just outside the ring.
-            let (bx, by) = (cx + start.sin() * (r + 6.0), cy + start.cos() * (r + 6.0));
-            text_centred(c, font, 5.0, bx, by - 2.0, &format!("{:03.0}", s.from_deg), 0.45);
-        }
-        text_centred(c, font, 5.5, cx, cy - r - 16.0, caption, 0.3);
-    } else if let Some(msa) = msa_ft {
-        fill_box(c, cx - r - 12.0, cy - r - 20.0, 2.0 * r + 24.0, 2.0 * r + 30.0, 1.0);
-        c.set_stroke_gray(INK);
-        c.set_line_width(0.9);
-        circle(c, cx, cy, r * 0.7);
-        c.stroke();
-        text_centred(c, bold, 10.0, cx, cy - 3.0, &format!("{msa:.0}"), INK);
-        text_centred(c, font, 5.5, cx, cy - r - 16.0, caption, 0.3);
+    // What the tints mean, above the scale bar. Only the bands the ground here reaches:
+    // a key running to 2,625 ft over an airport whose highest ground is sixty tells the
+    // reader nothing and makes the page look like it failed to draw.
+    let swatch = 8.0;
+    let bands = TERRAIN_BANDS.iter().take_while(|(top, _)| *top < highest_ft).count() + 1;
+    let bands = bands.min(TERRAIN_BANDS.len());
+    let rows = bands + usize::from(has_water);
+    if rows == 0 {
+        return;
     }
+    let key_h = rows as f32 * swatch + 12.0;
+    let (kx, ky) = (v.x + 10.0, v.y + 30.0);
+    fill_box(c, kx - 4.0, ky - 4.0, 54.0, key_h, 1.0);
+    text(c, font, 5.5, kx, ky + key_h - 12.0, "ELEVATION", 0.4);
+    if has_water {
+        let (r, g, b) = WATER_TINT;
+        c.set_fill_rgb(r, g, b);
+        c.rect(kx, ky, 13.0, swatch - 1.5);
+        c.fill_nonzero();
+        box_outline(c, kx, ky, 13.0, swatch - 1.5, 0.3, 0.6);
+        text(c, font, 5.5, kx + 16.0, ky + 1.0, "WATER", 0.35);
+    }
+    let ky = ky + if has_water { swatch } else { 0.0 };
+    for (i, (top, (r, g, b))) in TERRAIN_BANDS.iter().take(bands).enumerate() {
+        let row = ky + (bands - 1 - i) as f32 * swatch;
+        c.set_fill_rgb(*r, *g, *b);
+        c.rect(kx, row, 13.0, swatch - 1.5);
+        c.fill_nonzero();
+        box_outline(c, kx, row, 13.0, swatch - 1.5, 0.3, 0.6);
+        let label = if *top == f64::MAX || i + 1 == bands { format!("{:.0}+", if i == 0 { 0.0 } else { TERRAIN_BANDS[i - 1].0 }) } else { format!("{top:.0}") };
+        text(c, font, 5.5, kx + 16.0, row + 1.0, &label, 0.35);
+    }
+
+    // Scale bar, bottom left.
+    let px_nm = v.px_per_nm();
+    let step_nm = if v.span_nm() > 16.0 { 5.0 } else { 2.0 };
+    let bar = step_nm as f32 * px_nm;
+    let (bx, by) = (v.x + 12.0, v.y + 16.0);
+    fill_box(c, bx - 4.0, by - 4.0, bar + 30.0, 16.0, 1.0);
+    line(c, bx, by, bx + bar, by, 1.2, INK);
+    for i in 0..=1 {
+        let x = bx + i as f32 * bar;
+        line(c, x, by - 3.0, x, by + 3.0, 1.2, INK);
+    }
+    text(c, font, 6.5, bx + bar + 3.0, by - 2.0, &format!("{step_nm:.0} NM"), INK);
+
 }
 
 /// How wide the inset is, in miles.
@@ -1253,7 +1375,9 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         let b = track_pts[track_pts.len() - 1];
         let course = ch.ils.and_then(|i| i.course_mag_deg).or(ch.course_mag_deg).unwrap_or(track_deg);
         let (mx, my) = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
-        taken.label(c, bold, 8.5, mx + 7.0, my - 14.0, &format!("{course:03.0}"), INK);
+        if ch.ils.is_none() {
+            taken.label(c, bold, 8.5, mx + 7.0, my - 14.0, &format!("{course:03.0}"), INK);
+        }
         if let Some(ils) = ch.ils {
             let line = format!("{course:03.0}\u{b0}   {:.2}   {}", ils.frequency, ils.ident);
             let bw = text_width(bold, 7.5, &line) + 12.0;
@@ -1284,6 +1408,13 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
 
     draw_obstacles(c, font, bold, &v, ch.obstacles, ch.tdze_ft + 150.0, est.obstacle_top_ft.filter(|_| est.limited_by == LimitedBy::Obstacle));
     c.restore_state();
+    // The hold the missed approach ends in, in its own box: the fix is usually well off
+    // the edge of the map, and a chart shows it anyway.
+    if let Some(hold) = ch.missed_hold {
+        let (bw, bh) = (126.0, 62.0);
+        let beacon = ch.navaids.iter().find(|b| b.ident == hold.fix);
+        draw_hold_box(c, font, bold, x + w - bw - 6.0, y + h - bh - 6.0, bw, bh, hold, beacon);
+    }
     // The airport close up, in the bottom corner, but only when the plan is too wide to
     // show it properly on its own.
     if v.span_nm() > 9.0 {
@@ -1298,7 +1429,7 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
                 h.is_finite() && (h as f64 / 0.3048) <= WATER_FT
             })
         });
-    draw_furniture(c, font, bold, &v, ch.msa_ft, ch.msa_sectors, ch.variation_deg, Some(track_deg), has_water, est.highest_terrain_ft, &ch.msa_caption);
+    draw_furniture(c, font, bold, &v, ch.variation_deg, Some(track_deg), has_water, est.highest_terrain_ft);
     box_outline(c, x, y, w, h, 1.2, INK);
     v
 }
@@ -1326,6 +1457,17 @@ fn missed_text(legs: &[&Leg]) -> String {
     let mut s = parts.join(", then ");
     s.get_mut(0..1).map(|c| c.make_ascii_uppercase());
     format!("{s}.")
+}
+
+/// The fix a missed approach ends at, which is where its hold is flown.
+pub fn missed_hold_fix(p: &Procedure) -> Option<String> {
+    let legs = part_legs(p, "missed");
+    legs.iter()
+        .rev()
+        .find(|l| matches!(l.path.as_str(), "HM" | "HA" | "HF"))
+        .or_else(|| legs.iter().rev().find(|l| !l.fix.is_empty()))
+        .map(|l| l.fix.clone())
+        .filter(|f| !f.is_empty())
 }
 
 /// How far a fix is from the threshold, in miles, from where it actually is.
@@ -1451,37 +1593,6 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         }
         _ => 0.0,
     };
-    if segment > 0.5 {
-        // Ground speed against what it costs: how long the last segment takes, and on a
-        // glidepath how fast to come down. Both are what a chart is read for on the way
-        // in, and the descent rate is the number set in the aircraft.
-        const SPEEDS: [f64; 6] = [80.0, 100.0, 120.0, 140.0, 160.0, 180.0];
-        let slope = ch.glidepath_deg.filter(|d| *d > 0.5);
-        let rows = if slope.is_some() { 3 } else { 2 };
-        let (tw, th) = (14.0 + SPEEDS.len() as f32 * 21.0, 8.0 + rows as f32 * 8.0);
-        let (tx, ty) = (x + w - tw - 6.0, y + h - th - 6.0);
-        fill_box(c, tx, ty, tw, th, 1.0);
-        box_outline(c, tx, ty, tw, th, 0.7, RULE);
-        let row_y = |n: usize| ty + th - 8.0 - n as f32 * 8.0;
-        text(c, font, 5.5, tx + 3.0, row_y(0), "KT", 0.4);
-        text(c, font, 5.5, tx + 3.0, row_y(1), "MIN", 0.4);
-        if slope.is_some() {
-            text(c, font, 5.5, tx + 3.0, row_y(2), "FPM", 0.4);
-        }
-        for (i, speed) in SPEEDS.iter().enumerate() {
-            let cx = tx + 14.0 + i as f32 * 21.0;
-            let minutes = segment / speed * 60.0;
-            text(c, font, 6.0, cx, row_y(0), &format!("{speed:.0}"), 0.25);
-            text(c, bold, 6.0, cx, row_y(1), &format!("{}:{:02.0}", minutes as u32, (minutes.fract() * 60.0).round()), INK);
-            if let Some(deg) = slope {
-                // A mile of ground at this speed, down the glidepath, in feet a minute.
-                let fpm = speed * deg.to_radians().tan() * 6076.115 / 60.0;
-                text(c, font, 6.0, cx, row_y(2), &format!("{:.0}", (fpm / 5.0).round() * 5.0), 0.25);
-            }
-        }
-        text(c, font, 5.5, tx - 2.0 - text_width(font, 5.5, "FAF TO MAP 0.0 NM"), ty + th / 2.0 - 2.0, &format!("FAF TO MAP {segment:.1} NM"), 0.35);
-    }
-
     // The minimum, across the profile.
     let my = at_ft(est.altitude_ft);
     c.save_state();
@@ -1645,6 +1756,318 @@ fn chart_notes(ch: &Chart, est: &Estimate) -> Vec<String> {
     out
 }
 
+/// What a crew reads before the approach, in the grid a chart puts it in: the radios
+/// across the top, then the numbers that matter — what the localiser is tuned to, the
+/// final course, the fix and altitude the descent starts from, the minimum, and the
+/// elevations — then the missed approach in words, then the transition altitudes, then
+/// the notes. The safe altitude ring stands at the right of the whole thing.
+fn draw_briefing_strip(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate, track_deg: f64) {
+    const TAB: f32 = 11.0;
+    let msa_w = 92.0;
+    let inner_x = x + TAB;
+    let inner_w = w - TAB - msa_w;
+    box_outline(c, x, y, w, h, 1.2, INK);
+    line(c, inner_x, y, inner_x, y + h, 0.8, INK);
+    line(c, x + w - msa_w, y, x + w - msa_w, y + h, 0.8, INK);
+    text_up(c, font, 6.0, x + 8.0, y + 8.0, "BRIEFING STRIP", 0.35);
+
+    // The safe altitude, on the right, across the whole height.
+    draw_msa_circle(c, font, bold, x + w - msa_w / 2.0, y + h / 2.0 + 4.0, 30.0, ch.msa_sectors, ch.msa_ft, &ch.msa_caption);
+
+    let (comms_h, data_h, missed_h, trans_h) = (24.0, 30.0, 22.0, 12.0);
+    let comms_y = y + h - comms_h;
+    let data_y = comms_y - data_h;
+    let missed_y = data_y - missed_h;
+    let trans_y = missed_y - trans_h;
+
+    // The radios, in the order they are used.
+    let radios = ch.airport.briefing_frequencies();
+    let shown: Vec<_> = radios.iter().take(4).collect();
+    if !shown.is_empty() {
+        let cw = inner_w / shown.len() as f32;
+        for (i, f) in shown.iter().enumerate() {
+            let cx = inner_x + i as f32 * cw;
+            if i > 0 {
+                line(c, cx, comms_y, cx, comms_y + comms_h, 0.6, 0.55);
+            }
+            text_centred(c, font, 5.5, cx + cw / 2.0, comms_y + comms_h - 8.0, &f.kind.to_uppercase(), 0.4);
+            text_centred(c, bold, 9.5, cx + cw / 2.0, comms_y + 5.0, &format!("{:.3}", f.mhz), INK);
+        }
+    }
+    line(c, inner_x, comms_y, x + w - msa_w, comms_y, 0.8, INK);
+
+    // The numbers, each in its own cell.
+    let faf = final_legs(ch.procedure)
+        .iter()
+        .rev()
+        .find(|l| l.role == Some(crate::sources::msfs::procedures::FixRole::Final))
+        .map(|l| (l.fix.clone(), l.altitude_ft))
+        .or_else(|| {
+            final_legs(ch.procedure)
+                .iter()
+                .rev()
+                .find(|l| l.altitude_ft.is_some() && !l.fix.starts_with("RW"))
+                .map(|l| (l.fix.clone(), l.altitude_ft))
+        });
+    let course = ch.ils.and_then(|i| i.course_mag_deg).or(ch.course_mag_deg).unwrap_or(track_deg);
+    let mut cells: Vec<(String, String, String)> = Vec::new();
+    if let Some(ils) = ch.ils {
+        cells.push(("LOC".into(), ils.ident.clone(), format!("{:.1}", ils.frequency)));
+    }
+    cells.push(("FINAL".into(), "APCH CRS".into(), format!("{course:03.0}\u{b0}")));
+    if let Some((fix, alt)) = &faf {
+        let height = alt.map(|a| format!(" ({:.0}')", a - ch.tdze_ft)).unwrap_or_default();
+        cells.push((String::new(), fix.clone(), format!("{}'{height}", alt.unwrap_or(0.0))));
+    }
+    let label = if est.approach.has_glidepath() { "DA(H)" } else { "MDA(H)" };
+    cells.push((est.approach.label().to_uppercase(), label.into(), format!("{:.0}'({:.0}')", est.altitude_ft, est.height_ft)));
+    cells.push((String::new(), "APT ELEV".into(), format!("{:.0}'", ch.field_elev_ft)));
+    cells.push((String::new(), "TDZE".into(), format!("{:.0}'", ch.tdze_ft)));
+    let cw = inner_w / cells.len() as f32;
+    for (i, (top, middle, value)) in cells.iter().enumerate() {
+        let cx = inner_x + i as f32 * cw;
+        if i > 0 {
+            line(c, cx, data_y, cx, data_y + data_h, 0.6, 0.55);
+        }
+        if !top.is_empty() {
+            text_centred(c, font, 5.0, cx + cw / 2.0, data_y + data_h - 7.0, top, 0.4);
+        }
+        text_centred(c, font, 5.5, cx + cw / 2.0, data_y + data_h - 14.0, middle, 0.35);
+        text_centred(c, bold, 9.5, cx + cw / 2.0, data_y + 5.0, value, INK);
+    }
+    line(c, inner_x, data_y, x + w - msa_w, data_y, 0.8, INK);
+
+    // The missed approach, in the words a chart uses.
+    text(c, bold, 7.0, inner_x + 5.0, missed_y + missed_h - 9.0, "MISSED APCH:", INK);
+    let missed = missed_text(&part_legs(ch.procedure, "missed"));
+    let room = ((inner_w - 74.0) / 3.3) as usize;
+    for (i, l) in wrap(&missed, room.max(20)).into_iter().take(2).enumerate() {
+        text(c, font, 7.5, inner_x + 62.0, missed_y + missed_h - 9.0 - i as f32 * 9.0, &l, INK);
+    }
+    line(c, inner_x, missed_y, x + w - msa_w, missed_y, 0.8, INK);
+
+    // Transition altitude and level, which are a chart's own row.
+    let thirds = inner_w / 3.0;
+    for (i, s) in ["ALT SET: HPA/INCHES", "TRANS LEVEL: BY ATC", "TRANS ALT: BY ATC"].iter().enumerate() {
+        text(c, font, 5.5, inner_x + 5.0 + i as f32 * thirds, trans_y + 3.5, s, 0.35);
+    }
+    line(c, inner_x, trans_y, x + w - msa_w, trans_y, 0.6, 0.55);
+
+    // The notes, numbered as a chart numbers them.
+    let notes = chart_notes(ch, est);
+    let mut row = trans_y - 7.0;
+    for (i, note) in notes.iter().take(2).enumerate() {
+        text(c, font, 5.5, inner_x + 5.0, row, &format!("{}. {note}", i + 1), 0.3);
+        row -= 7.0;
+    }
+}
+
+
+/// The speeds a crew flies the last miles at, and what each costs: the rate of descent to
+/// hold on the glidepath, and the time from the final approach fix to the missed approach
+/// point. Beside them, what the runway offers in the way of lights, and what the missed
+/// approach asks for, in the symbols a chart uses rather than in a sentence.
+fn draw_speed_band(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, segment_nm: f64) {
+    const SPEEDS: [f64; 6] = [70.0, 90.0, 100.0, 120.0, 140.0, 160.0];
+    box_outline(c, x, y, w, h, 1.2, INK);
+    // The table takes the left two thirds; the lights and the missed approach the rest.
+    let table_w = w * 0.56;
+    let label_w = 74.0;
+    let cw = (table_w - label_w) / SPEEDS.len() as f32;
+    let rows = 3.0;
+    let rh = h / rows;
+    for i in 1..3 {
+        line(c, x, y + i as f32 * rh, x + table_w, y + i as f32 * rh, 0.5, 0.55);
+    }
+    line(c, x + label_w, y, x + label_w, y + h, 0.5, 0.55);
+    for i in 1..SPEEDS.len() {
+        let cx = x + label_w + i as f32 * cw;
+        line(c, cx, y, cx, y + h, 0.4, 0.6);
+    }
+    let row_y = |n: f32| y + h - (n + 1.0) * rh + rh / 2.0 - 2.5;
+    text(c, font, 5.8, x + 4.0, row_y(0.0), "Gnd speed-Kts", 0.3);
+    let slope = ch.glidepath_deg.unwrap_or(3.0);
+    text(c, font, 5.8, x + 4.0, row_y(1.0), &format!("GS {slope:.2}\u{b0}"), 0.3);
+    text(c, font, 5.8, x + 4.0, row_y(2.0), &format!("FAF to MAP {segment_nm:.1}"), 0.3);
+    for (i, speed) in SPEEDS.iter().enumerate() {
+        let cx = x + label_w + i as f32 * cw + cw / 2.0;
+        text_centred(c, bold, 6.5, cx, row_y(0.0), &format!("{speed:.0}"), INK);
+        let fpm = speed * slope.to_radians().tan() * 6076.115 / 60.0;
+        text_centred(c, font, 6.5, cx, row_y(1.0), &format!("{:.0}", (fpm / 1.0).round()), 0.15);
+        if segment_nm > 0.3 {
+            let minutes = segment_nm / speed * 60.0;
+            text_centred(c, font, 6.5, cx, row_y(2.0), &format!("{}:{:02.0}", minutes as u32, (minutes.fract() * 60.0).round()), 0.15);
+        }
+    }
+
+    // What the runway offers to see it by.
+    let lights_x = x + table_w;
+    let lights_w = 78.0;
+    line(c, lights_x, y, lights_x, y + h, 0.8, INK);
+    let lights = if ch.runway_lighting.is_empty() { vec!["NO LIGHTING LISTED"] } else { ch.runway_lighting.to_vec() };
+    let mut row = y + h - 9.0;
+    for l in lights.iter().take(3) {
+        text(c, font, 6.0, lights_x + 5.0, row, l, 0.25);
+        row -= 8.0;
+    }
+
+    // The missed approach, as the three things a crew does.
+    let missed_x = lights_x + lights_w;
+    line(c, missed_x, y, missed_x, y + h, 0.8, INK);
+    let legs = part_legs(ch.procedure, "missed");
+    let climb = legs.iter().find_map(|l| l.altitude_ft);
+    let top = legs.iter().filter_map(|l| l.altitude_ft).fold(f64::NAN, f64::max);
+    let heading = legs
+        .iter()
+        .find(|l| matches!(l.path.as_str(), "CI" | "VI" | "VM" | "FM"))
+        .and_then(|l| l.course_deg)
+        .or_else(|| legs.iter().find_map(|l| l.course_deg));
+    let to = legs.iter().rev().find(|l| !l.fix.is_empty()).map(|l| l.fix.clone());
+    let cells = (missed_x, (x + w - missed_x) / 3.0);
+    if let Some(alt) = climb {
+        text_centred(c, bold, 11.0, cells.0 + cells.1 * 0.5, y + h / 2.0 - 2.0, &format!("{alt:.0}'"), INK);
+        // The arrow that means climb.
+        let ax = cells.0 + cells.1 * 0.5;
+        line(c, ax, y + 4.0, ax, y + 12.0, 1.0, INK);
+        c.set_fill_gray(INK);
+        c.move_to(ax, y + 15.0);
+        c.line_to(ax + 3.0, y + 11.0);
+        c.line_to(ax - 3.0, y + 11.0);
+        c.close_path();
+        c.fill_nonzero();
+    }
+    if top.is_finite() && climb.map(|a| top > a + 100.0).unwrap_or(false) {
+        line(c, cells.0 + cells.1, y, cells.0 + cells.1, y + h, 0.5, 0.55);
+        text_centred(c, bold, 11.0, cells.0 + cells.1 * 1.5, y + h / 2.0 - 2.0, &format!("{top:.0}'"), INK);
+    }
+    line(c, cells.0 + cells.1 * 2.0, y, cells.0 + cells.1 * 2.0, y + h, 0.5, 0.55);
+    if let Some(hdg) = heading {
+        text_centred(c, bold, 9.0, cells.0 + cells.1 * 2.5, y + h - 12.0, &format!("{hdg:03.0}\u{b0}"), INK);
+        text_centred(c, font, 5.5, cells.0 + cells.1 * 2.5, y + h - 19.0, "hdg", 0.35);
+    }
+    if let Some(to) = to {
+        text_centred(c, bold, 8.0, cells.0 + cells.1 * 2.5, y + 5.0, &to, INK);
+    }
+}
+
+/// How far the last segment runs: from the final approach fix to the missed approach
+/// point, measured along the path rather than as the difference of two distances.
+fn faf_to_map_nm(ch: &Chart) -> f64 {
+    let legs = final_legs(ch.procedure);
+    let thr = ch.threshold.unwrap_or((ch.airport.lat, ch.airport.lon));
+    let where_it_is = |leg: &Leg| leg.lat.zip(leg.lon).unwrap_or(thr);
+    let faf = legs.iter().position(|l| l.role == Some(crate::sources::msfs::procedures::FixRole::Final));
+    let map = legs.iter().rposition(|l| l.role == Some(crate::sources::msfs::procedures::FixRole::MissedApproachPoint)).unwrap_or(legs.len().saturating_sub(1));
+    let Some(faf) = faf.filter(|f| *f < map) else { return 0.0 };
+    legs[faf..=map]
+        .windows(2)
+        .map(|pair| {
+            let (a, b) = (where_it_is(pair[0]), where_it_is(pair[1]));
+            ((b.0 - a.0) * 60.0).hypot((b.1 - a.1) * 60.0 * a.0.to_radians().cos().max(0.05))
+        })
+        .sum()
+}
+
+/// The minima, in the table a chart prints them in: the straight-in landing on the left,
+/// by aircraft category, and circling to land on the right.
+///
+/// The visibility beside each altitude is what the state publishes with it. The two
+/// columns for lights out are the standard allowance rather than a reading: with the
+/// touchdown zone and centreline lights out an ILS needs a longer runway visual range,
+/// and with the approach lights out longer still. They are marked as such.
+fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate) {
+    box_outline(c, x, y, w, h, 1.2, INK);
+    let straight_w = w * 0.66;
+    let circle_x = x + straight_w;
+    line(c, circle_x, y, circle_x, y + h, 0.9, INK);
+
+    let head_h = 12.0;
+    let sub_h = 30.0;
+    let head_y = y + h - head_h;
+    let sub_y = head_y - sub_h;
+    let row_h = (sub_y - y) / 4.0;
+    fill_box(c, x, head_y, w, head_h, 0.14);
+    let straight = if ch.circling_only { "CIRCLING APPROACH".to_string() } else { format!("STRAIGHT-IN LANDING RWY {}", ch.procedure.runway) };
+    text_centred(c, bold, 7.0, x + straight_w / 2.0, head_y + 3.5, &straight, 1.0);
+    text_centred(c, bold, 7.0, circle_x + (w - straight_w) / 2.0, head_y + 3.5, "CIRCLE-TO-LAND", 1.0);
+    line(c, x, sub_y, x + w, sub_y, 0.8, INK);
+
+    // The straight-in half: what is flown, and to what.
+    let has_loc = ch.published_loc.is_some();
+    let main_w = if has_loc { straight_w * 0.52 } else { straight_w };
+    if has_loc {
+        line(c, x + main_w, y, x + main_w, sub_y + sub_h, 0.6, 0.55);
+    }
+    let label = if est.approach.has_glidepath() { "DA(H)" } else { "MDA(H)" };
+    text_centred(c, bold, 8.0, x + main_w / 2.0, sub_y + sub_h - 9.0, est.approach.label(), INK);
+    text_centred(c, font, 7.5, x + main_w / 2.0, sub_y + sub_h - 19.0, &format!("{label} {:.0}'({:.0}')", est.altitude_ft, est.height_ft), INK);
+    if let Some((alt, hat)) = ch.published_loc {
+        text_centred(c, bold, 8.0, x + main_w + (straight_w - main_w) / 2.0, sub_y + sub_h - 9.0, "LOC (GS out)", INK);
+        text_centred(c, font, 7.5, x + main_w + (straight_w - main_w) / 2.0, sub_y + sub_h - 20.0, &format!("MDA(H) {alt:.0}'({hat:.0}')"), INK);
+    }
+    // The circling half: how fast each category may fly, and how low it may go.
+    let kts_w = 34.0;
+    line(c, circle_x + kts_w, y, circle_x + kts_w, sub_y + sub_h, 0.6, 0.55);
+    text_centred(c, font, 5.5, circle_x + kts_w / 2.0, sub_y + sub_h - 9.0, "Max", 0.35);
+    text_centred(c, font, 5.5, circle_x + kts_w / 2.0, sub_y + sub_h - 16.0, "Kts", 0.35);
+    text_centred(c, font, 6.5, circle_x + kts_w + (w - straight_w - kts_w) / 2.0, sub_y + 8.0, "MDA(H)", 0.2);
+
+    // A row to each category.
+    const KTS: [&str; 4] = ["90", "120", "140", "165"];
+    let published = ch.published;
+    for (i, letter) in ["A", "B", "C", "D"].iter().enumerate() {
+        let row_y = sub_y - (i + 1) as f32 * row_h;
+        if i > 0 {
+            line(c, x, row_y + row_h, x + w, row_y + row_h, 0.4, 0.65);
+        }
+        let middle = row_y + row_h / 2.0 - 2.5;
+        text(c, bold, 7.0, x + 4.0, middle, letter, INK);
+        // What this category flies the straight-in to. Where the categories share a
+        // minimum the chart prints it once, so the same figure stands in every row.
+        let column = published.and_then(|p| p.categories.get(i).or_else(|| p.categories.first()));
+        let visibility = column.map(|c| c.visibility.clone()).unwrap_or_default();
+        if !visibility.is_empty() {
+            let allowance = lights_out(&visibility, i);
+            let third = main_w / 3.0;
+            text_centred(c, font, 7.0, x + 16.0 + third * 0.5, middle, &visibility, 0.1);
+            text_centred(c, font, 7.0, x + 16.0 + third * 1.5, middle, &allowance.0, 0.3);
+            text_centred(c, font, 7.0, x + 16.0 + third * 2.5, middle, &allowance.1, 0.3);
+        }
+        if let Some((_, _)) = ch.published_loc {
+            let loc_visibility = ch.published_loc_visibility.clone().unwrap_or_default();
+            text_centred(c, font, 7.0, x + main_w + (straight_w - main_w) / 2.0, middle, &loc_visibility, 0.1);
+        }
+        text_centred(c, font, 6.5, circle_x + kts_w / 2.0, middle, KTS[i], 0.35);
+        if let Some((_, ft)) = ch.circling.get(i) {
+            let height = ft - ch.field_elev_ft;
+            text_centred(c, bold, 7.5, circle_x + kts_w + (w - straight_w - kts_w) / 2.0, middle, &format!("{ft:.0}'({height:.0}')"), INK);
+        }
+    }
+    // The column headings for the straight-in, which say what is out of service.
+    let third = main_w / 3.0;
+    for (i, s) in ["FULL", "TDZ/CL out", "ALS out"].iter().enumerate() {
+        text_centred(c, font, 5.2, x + 16.0 + third * (i as f32 + 0.5), sub_y + 2.5, s, 0.4);
+    }
+    line(c, x, sub_y + 11.0, x + straight_w, sub_y + 11.0, 0.4, 0.7);
+}
+
+/// What the standard allowance adds to a visibility when the lights are out.
+///
+/// An approach flown to a runway visual range of 1,800 ft needs 2,400 with the touchdown
+/// zone and centreline lights unserviceable, and 4,000 with the approach lights out.
+/// These are the ordinary allowances rather than anything read off a chart.
+fn lights_out(visibility: &str, category: usize) -> (String, String) {
+    let _ = category;
+    let rvr: Option<u32> = visibility.strip_prefix("RVR ").and_then(|v| v.trim().parse().ok());
+    match rvr {
+        Some(18) => ("RVR 24".into(), "RVR 40".into()),
+        Some(24) => ("RVR 40".into(), "RVR 50".into()),
+        Some(40) => ("RVR 50".into(), "RVR 60".into()),
+        Some(other) => (format!("RVR {}", other + 6), format!("RVR {}", other + 12)),
+        None => (String::new(), String::new()),
+    }
+}
+
 /// The strip of numbers a crew reads first, in boxes across the page.
 fn draw_briefing(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate, track_deg: f64) {
     let cells: Vec<(String, String)> = vec![
@@ -1773,54 +2196,38 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
     let circling_note = if ch.circling_only { " - CIRCLING ONLY" } else { "" };
     text_right(&mut c, f, 7.5, W - MARGIN - 8.0, head_y + head_h - 29.0, &format!("{}{circling_note} - {source}{star_note}", ch.kind.label().to_uppercase()), 0.8);
 
-    let strip_h = 30.0;
-    let strip_y = head_y - 4.0 - strip_h;
-    draw_briefing(&mut c, f, b, ch, MARGIN, strip_y, W - 2.0 * MARGIN, strip_h, est, track);
+    // The bands of the page, in the order a chart has always had them: what to brief,
+    // then the picture, then the descent, then the speeds, then the minima.
+    let strip_h = 104.0;
+    let strip_y = head_y - 3.0 - strip_h;
+    draw_briefing_strip(&mut c, f, b, ch, MARGIN, strip_y, W - 2.0 * MARGIN, strip_h, est, track);
 
-    let freq_h = 18.0;
-    let freq_y = strip_y - 3.0 - freq_h;
-    draw_frequencies(&mut c, f, b, ch, MARGIN, freq_y, W - 2.0 * MARGIN, freq_h);
-    let below_strip = if ch.airport.briefing_frequencies().is_empty() { strip_y } else { freq_y };
-
-    let min_h = 104.0;
-    let min_y = MARGIN + 26.0;
-    let prof_h = 140.0;
-    let prof_y = min_y + min_h + 30.0;
-    let plan_y = prof_y + prof_h + 6.0;
-    let plan_h = below_strip - 6.0 - plan_y;
+    let min_h = 88.0;
+    let min_y = MARGIN + 16.0;
+    let speed_h = 38.0;
+    let speed_y = min_y + min_h + 3.0;
+    let prof_h = 116.0;
+    let prof_y = speed_y + speed_h + 3.0;
+    let plan_y = prof_y + prof_h + 3.0;
+    let plan_h = strip_y - 3.0 - plan_y;
     let v = draw_plan(&mut c, f, b, ch, MARGIN, plan_y, W - 2.0 * MARGIN, plan_h, est, track);
 
     // A caption under the plan, saying what the picture is made of.
     let built = if ch.airport_dir.is_some() { "airport from our own build" } else { "airport not built yet" };
     let caption = format!("{:.0} NM across - terrain tinted by elevation - {built}", v.span_nm());
-    let cap_w = text_width(f, 6.5, &caption) + 10.0;
-    fill_box(&mut c, MARGIN + 92.0, plan_y + 1.0, cap_w, 11.0, 1.0);
-    text(&mut c, f, 6.5, MARGIN + 96.0, plan_y + 4.0, &caption, 0.4);
+    let cap_w = text_width(f, 6.0, &caption) + 10.0;
+    fill_box(&mut c, MARGIN + 92.0, plan_y + 1.0, cap_w, 10.0, 1.0);
+    text(&mut c, f, 6.0, MARGIN + 96.0, plan_y + 3.5, &caption, 0.4);
 
     draw_profile(&mut c, f, b, ch, MARGIN, prof_y, W - 2.0 * MARGIN, prof_h, est, track);
-
-    // The missed approach, in its own line above the minima band, as charts do.
-    let missed = part_legs(ch.procedure, "missed");
-    let missed_y = min_y + min_h + 19.0;
-    text(&mut c, b, 7.0, MARGIN + 2.0, missed_y, "MISSED APPROACH:", INK);
-    let room = W - 2.0 * MARGIN - 86.0;
-    let mut sentence = missed_text(&missed);
-    while text_width(f, 7.0, &sentence) > room && sentence.len() > 4 {
-        sentence.pop();
-    }
-    text(&mut c, f, 7.0, MARGIN + 86.0, missed_y, &sentence, 0.2);
+    let segment = faf_to_map_nm(ch);
+    draw_speed_band(&mut c, f, b, ch, MARGIN, speed_y, W - 2.0 * MARGIN, speed_h, segment);
     if let Some((climb, what)) = &ch.missed_climb {
-        let note = format!("CLIMB {climb:.0} FT/NM TO CLEAR {}", what.to_uppercase());
-        text_right(&mut c, b, 6.5, W - MARGIN - 2.0, missed_y, &note, 0.15);
+        let note = format!("MISSED APPROACH CLIMB {climb:.0} FT/NM TO CLEAR {}", what.to_uppercase());
+        text(&mut c, f, 5.5, MARGIN + 2.0, min_y + min_h + speed_h + 5.0, &note, 0.3);
     }
 
-    // The notes, in one line under the missed approach.
-    let notes = chart_notes(ch, est).join("  ");
-    for (i, row) in wrap(&notes, 150).into_iter().take(2).enumerate() {
-        text(&mut c, f, 6.5, MARGIN + 2.0, missed_y - 9.0 - i as f32 * 8.0, &row, 0.35);
-    }
-
-    draw_minima(&mut c, f, b, ch, MARGIN, min_y, W - 2.0 * MARGIN, min_h, est);
+    draw_minima_table(&mut c, f, b, ch, MARGIN, min_y, W - 2.0 * MARGIN, min_h, est);
 
     // Footer.
     line(&mut c, MARGIN, MARGIN + 18.0, W - MARGIN, MARGIN + 18.0, 0.8, RULE);

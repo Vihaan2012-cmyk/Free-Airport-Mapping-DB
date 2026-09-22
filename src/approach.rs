@@ -705,7 +705,7 @@ pub fn circling_from(published: Option<&crate::sources::dtpp::Published>, worked
         Some(p) => ['A', 'B', 'C', 'D']
             .iter()
             .enumerate()
-            .filter_map(|(i, letter)| p.circling.get(i).or_else(|| p.circling.last()).map(|(ft, _)| (*letter, *ft)))
+            .filter_map(|(i, letter)| p.circling.get(i).or_else(|| p.circling.last()).map(|c| (*letter, c.altitude_ft)))
             .collect(),
         None => worked_out,
     }
@@ -721,14 +721,14 @@ pub fn published_localiser(
     cache: &crate::cache::Cache,
     setup: &Setup,
     kind: crate::minima::Approach,
-) -> Option<(f64, f64)> {
+) -> Option<(f64, f64, String)> {
     if kind != crate::minima::Approach::PrecisionCat1 || setup.is_circling_only() {
         return None;
     }
     let procedure = setup.procedure();
     let line = crate::sources::dtpp::Line::StraightIn(crate::sources::msfs::procedures::ApproachType::Localiser);
     let read = crate::sources::dtpp::published(http, cache, &setup.procedures.icao, line, &procedure.runway, procedure.suffix, setup.tdze_ft)?;
-    Some((read.altitude_ft, read.height_ft))
+    Some((read.altitude_ft, read.height_ft, read.visibility))
 }
 
 /// What the missed approach from a given minimum asks for.
