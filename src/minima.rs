@@ -26,11 +26,16 @@ use serde::{Deserialize, Serialize};
 pub enum Approach {
     /// ILS or GLS with a decision height.
     PrecisionCat1,
-    /// Localiser, LP, VOR or similar: descent to a minimum altitude, no glidepath.
-    NonPrecision,
     /// RNAV with vertical guidance (LPV, LNAV/VNAV).
     VerticallyGuided,
-    /// Circling to land.
+    /// Localiser, LDA or RNAV without vertical guidance: flown down a course held to a
+    /// fine tolerance, so the least clearance of the approaches without a glidepath.
+    Localiser,
+    /// VOR and the like: a course held on a beacon, which wanders more than a localiser.
+    NonPrecision,
+    /// NDB, which wanders more still.
+    Ndb,
+    /// Circling to land: manoeuvring visually about the aerodrome.
     Circling,
 }
 
@@ -40,8 +45,12 @@ impl Approach {
         match self {
             Approach::PrecisionCat1 => 200.0,
             Approach::VerticallyGuided => 250.0,
+            Approach::Localiser => 250.0,
             Approach::NonPrecision => 300.0,
-            Approach::Circling => 400.0,
+            Approach::Ndb => 350.0,
+            // Above the aerodrome rather than the touchdown zone, which is how a
+            // circling minimum is quoted.
+            Approach::Circling => 350.0,
         }
     }
 
@@ -55,11 +64,13 @@ impl Approach {
     /// is no glidepath; with one, the clearance surface does this job.
     pub fn obstacle_margin_ft(self) -> f64 {
         match self {
-            // A precision approach keeps its clearance through the glidepath geometry
+            // A precision approach keeps its clearance through the clearance surface
             // rather than a flat margin; this stands in for it.
             Approach::PrecisionCat1 | Approach::VerticallyGuided => 100.0,
-            Approach::NonPrecision => 250.0,
-            Approach::Circling => 300.0,
+            // The clearance a designer keeps over the controlling obstacle in the final
+            // segment. It rises with how loosely the course can be held.
+            Approach::Localiser => 250.0,
+            Approach::NonPrecision | Approach::Ndb | Approach::Circling => 300.0,
         }
     }
 
@@ -67,7 +78,9 @@ impl Approach {
         match self {
             Approach::PrecisionCat1 => "ILS CAT I",
             Approach::VerticallyGuided => "RNAV (vertical guidance)",
-            Approach::NonPrecision => "non-precision",
+            Approach::Localiser => "localiser or RNAV, no glidepath",
+            Approach::NonPrecision => "VOR or similar",
+            Approach::Ndb => "NDB",
             Approach::Circling => "circling",
         }
     }
@@ -152,21 +165,15 @@ fn clearance_surface_ft(touchdown_elev_ft: f64, along_nm: f64, across_nm: f64) -
     touchdown_elev_ft + along_ft / 102.0 + sideways_ft
 }
 
-/// How far to the side the obstacle clearance stays at its full value, and how far out
-/// it has faded to nothing. Without a glidepath the approach is protected by a margin
-/// rather than a surface, and that margin tapers away towards the edge of the area, so
-/// a mountainside at the very edge does not carry the same weight as a hill on the
-/// centreline.
-const PRIMARY_NM: f64 = 0.8;
-
 /// The altitude one thing on the ground forces, or `None` if it forces nothing.
 pub fn required_altitude(approach: Approach, touchdown_elev_ft: f64, top_ft: f64, along_nm: f64, across_nm: f64) -> Option<f64> {
     if !approach.has_glidepath() {
-        let (_, _, edge_nm) = corridor(approach);
-        let taper = if across_nm.abs() <= PRIMARY_NM {
+        let primary = primary_half_width_nm(approach);
+        let (_, _, edge) = corridor(approach);
+        let taper = if across_nm.abs() <= primary {
             1.0
         } else {
-            (1.0 - (across_nm.abs() - PRIMARY_NM) / (edge_nm - PRIMARY_NM).max(0.01)).clamp(0.0, 1.0)
+            (1.0 - (across_nm.abs() - primary) / (edge - primary).max(0.01)).clamp(0.0, 1.0)
         };
         return Some(top_ft + approach.obstacle_margin_ft() * taper);
     }
@@ -222,7 +229,7 @@ pub fn estimate_with(approach: Approach, touchdown_elev_ft: f64, terrain: Option
     } else {
         (by_terrain, LimitedBy::Terrain)
     };
-    let altitude = if limited_by == LimitedBy::SystemMinimum { altitude } else { round_up(altitude, 10.0) };
+    let altitude = if limited_by == LimitedBy::SystemMinimum { altitude } else { round_up(altitude, 20.0) };
     Estimate {
         approach,
         altitude_ft: altitude,
@@ -317,27 +324,31 @@ impl Path {
 /// The figures are the ones procedure designers use: the area grows with category, and
 /// no circling minimum may sit lower than a set height above the aerodrome whatever the
 /// ground does. Everything in the area has to be cleared by the same margin.
-pub const CIRCLING_AREA: [(char, f64, f64); 4] = [('A', 1.68, 394.0), ('B', 2.66, 492.0), ('C', 4.20, 591.0), ('D', 5.28, 700.0)];
+pub const CIRCLING_AREA: [(char, f64, f64); 4] = [('A', 1.3, 350.0), ('B', 1.5, 350.0), ('C', 1.7, 450.0), ('D', 2.3, 550.0)];
 
 /// The clearance kept above whatever stands in the circling area.
-const CIRCLING_MARGIN_FT: f64 = 295.0;
+const CIRCLING_MARGIN_FT: f64 = 300.0;
 
 /// The circling minimum for one aircraft category: what the highest thing within its
 /// radius forces, or the floor for that category, whichever is higher.
 pub fn circling_minimum(
     patch: &crate::sources::copernicus::Patch,
     obstacles: &[crate::sources::obstacles::Obstacle],
-    airport: (f64, f64),
+    runway_ends: &[(f64, f64)],
     aerodrome_elev_ft: f64,
     category: usize,
 ) -> (f64, Option<String>) {
     let (_, radius_nm, floor_ft) = CIRCLING_AREA[category.min(3)];
     let mut highest = f64::NEG_INFINITY;
     let mut what: Option<String> = None;
+    // The area is the arcs swung from every runway end, which at an airport with long
+    // runways reaches a good deal further than a circle about the middle of it.
     let within = |lat: f64, lon: f64| {
-        let dn = (lat - airport.0) * 60.0;
-        let de = (lon - airport.1) * 60.0 * airport.0.to_radians().cos().max(0.05);
-        dn.hypot(de) <= radius_nm
+        runway_ends.iter().any(|(elat, elon)| {
+            let dn = (lat - elat) * 60.0;
+            let de = (lon - elon) * 60.0 * elat.to_radians().cos().max(0.05);
+            dn.hypot(de) <= radius_nm
+        })
     };
     for row in 0..patch.height {
         for col in 0..patch.width {
@@ -358,7 +369,7 @@ pub fn circling_minimum(
             what = Some(o.label());
         }
     }
-    let by_ground = if highest.is_finite() { round_up(highest + CIRCLING_MARGIN_FT, 10.0) } else { f64::NEG_INFINITY };
+    let by_ground = if highest.is_finite() { round_up(highest + CIRCLING_MARGIN_FT, 20.0) } else { f64::NEG_INFINITY };
     let by_floor = aerodrome_elev_ft + floor_ft;
     if by_ground > by_floor {
         (by_ground, what)
@@ -421,10 +432,29 @@ pub fn limiting_obstacle(obstacles: &[crate::sources::obstacles::Obstacle], path
 /// Without a glidepath the aircraft levels off and flies the last miles at one altitude,
 /// so everything in the segment does have to be cleared.
 fn corridor(approach: Approach) -> (f64, f64, f64) {
-    if approach.has_glidepath() {
-        (0.0, 1.2, 1.0)
-    } else {
-        (0.0, 6.0, 1.5)
+    match approach {
+        _ if approach.has_glidepath() => (0.0, 1.2, 1.0),
+        // How wide the area is depends on how finely the course can be held. A
+        // localiser or an RNAV track is held to a few tenths of a mile; a course held
+        // on a VOR wanders further the further out you are, and one held on an NDB
+        // further still, so their areas are wider and run further out.
+        Approach::Localiser => (0.0, 6.0, 1.0),
+        Approach::Ndb => (0.0, 10.0, 3.0),
+        _ => (0.0, 10.0, 2.5),
+    }
+}
+
+/// How far out from the centreline the full clearance is kept.
+///
+/// An area this wide is not all treated alike: out to here the whole clearance applies,
+/// and beyond it the clearance tapers away to nothing at the edge, so a hillside at the
+/// very edge of a wide area does not weigh as heavily as one under the aircraft. Only
+/// the approaches without a glidepath are built this way.
+fn primary_half_width_nm(approach: Approach) -> f64 {
+    match approach {
+        Approach::Localiser => 1.0,
+        Approach::Ndb => 1.7,
+        _ => 1.5,
     }
 }
 
@@ -486,13 +516,24 @@ mod tests {
 
     #[test]
     fn terrain_raises_the_minimum_and_marks_it_an_estimate() {
-        // A non-precision approach with a 2000 ft ridge under it: no glidepath to hide
-        // beneath, so the whole ridge has to be cleared.
+        // An approach on a beacon with a 2000 ft ridge under it: no glidepath to hide
+        // beneath, so the whole ridge has to be cleared by the 300 ft such an approach
+        // keeps, and the answer is published to the next twenty feet.
         let terrain = limit(Approach::NonPrecision, 600.0, 2000.0, 3.0);
         let e = estimate_with(Approach::NonPrecision, 600.0, terrain, None);
-        assert_eq!(e.altitude_ft, 2250.0); // 2000 + 250
+        assert_eq!(e.altitude_ft, 2300.0);
         assert_eq!(e.limited_by, LimitedBy::Terrain);
         assert!(!e.reliable);
+    }
+
+    #[test]
+    fn a_looser_approach_keeps_more_clearance() {
+        // The same ridge, by kind: a localiser is held finely enough to need less room
+        // than a beacon.
+        let loc = required_altitude(Approach::Localiser, 600.0, 2000.0, 3.0, 0.0).unwrap();
+        let vor = required_altitude(Approach::NonPrecision, 600.0, 2000.0, 3.0, 0.0).unwrap();
+        assert_eq!(loc, 2250.0);
+        assert_eq!(vor, 2300.0);
     }
 
     #[test]
@@ -518,18 +559,20 @@ mod tests {
     }
 
     #[test]
-    fn clearance_fades_towards_the_edge_of_a_non_precision_area() {
-        // On the centreline the whole margin applies; at the outer edge, none of it.
+    fn clearance_fades_only_beyond_the_primary_area() {
+        // The full clearance out to a mile and a half either side, then tapering to
+        // nothing at the edge of the area.
         let on = required_altitude(Approach::NonPrecision, 100.0, 400.0, 3.0, 0.0).unwrap();
-        let edge = required_altitude(Approach::NonPrecision, 100.0, 400.0, 3.0, 1.5).unwrap();
-        assert_eq!(on, 650.0);
-        assert_eq!(edge, 400.0);
+        let primary_edge = required_altitude(Approach::NonPrecision, 100.0, 400.0, 3.0, 1.5).unwrap();
+        let outer = required_altitude(Approach::NonPrecision, 100.0, 400.0, 3.0, 2.5).unwrap();
+        assert_eq!(on, primary_edge);
+        assert_eq!(outer, 400.0);
     }
 
     #[test]
     fn without_a_glidepath_everything_has_to_be_cleared() {
         // No surface to hide under: the margin applies wherever the obstacle is.
-        assert_eq!(required_altitude(Approach::NonPrecision, 100.0, 400.0, 4.0, 0.0), Some(650.0));
+        assert_eq!(required_altitude(Approach::NonPrecision, 100.0, 400.0, 4.0, 0.0), Some(700.0));
     }
 
     #[test]

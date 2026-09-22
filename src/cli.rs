@@ -123,6 +123,30 @@ enum Cmd {
         #[arg(long)]
         open: bool,
     },
+    /// Approach charts for a list of airports, in one pass.
+    ApproachCharts {
+        /// ICAO codes. A list file can be given instead, or as well.
+        icaos: Vec<String>,
+        /// A file of ICAO codes, one per line, or the first column of a CSV.
+        #[arg(long)]
+        list: Option<PathBuf>,
+        /// Where the PDFs go.
+        #[arg(long, default_value = "charts")]
+        out_dir: PathBuf,
+        /// How many airports to work on at once.
+        #[arg(long, default_value_t = 4)]
+        jobs: usize,
+        /// Approach type, which sets the floor where the procedure codes no minimum.
+        #[arg(long, default_value = "ils")]
+        kind: String,
+        /// A chart for every runway, not only the airport's fullest approach.
+        #[arg(long)]
+        every_runway: bool,
+        /// Leave off the minimum safe altitude ring, which is the slowest thing on the
+        /// page: it reads the terrain for 25 miles around every airport.
+        #[arg(long)]
+        no_msa: bool,
+    },
     /// Measure our estimated minima against published ones, from a table of charts.
     MinimaAudit {
         /// CSV of published figures: icao,runway,published_da_ft,published_hat_ft,published_tdze_ft.
@@ -997,6 +1021,14 @@ pub fn run() -> Result<()> {
         Cmd::Clean { icaos, dir, all } => clean_cmd(icaos, dir, all),
         Cmd::Procedures { icao, json } => procedures_cmd(&icao, json),
         Cmd::Terrain { icao, radius_km, step_m } => terrain_cmd(&icao, radius_km, step_m),
+        Cmd::ApproachCharts { icaos, list, out_dir, jobs, kind, every_runway, no_msa } => {
+            let opts = crate::output::charts_bulk::Options { out_dir, jobs, kind: approach_kind(&kind)?, every_runway, no_msa };
+            let airports = crate::output::charts_bulk::airports(&icaos, list.as_deref())?;
+            if airports.is_empty() {
+                return Err(anyhow!("name some airports, or give --list a file of them"));
+            }
+            crate::output::charts_bulk::run(&airports, &opts)
+        }
         Cmd::MinimaAudit { truth, out, jobs } => crate::audit::run(&truth, out.as_deref(), jobs),
         Cmd::ApproachChart { icao, runway, approach, star, list, kind, out, open } => {
             approach_chart_cmd(&icao, approach.as_deref().or(runway.as_deref()), star.as_deref(), list, &kind, out, open)
@@ -1015,15 +1047,8 @@ pub fn run() -> Result<()> {
 /// An approach chart: airport, terrain, obstacles, the procedure and an estimated minimum.
 #[allow(clippy::too_many_arguments)]
 fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, list: bool, kind: &str, out: Option<PathBuf>, open: bool) -> Result<()> {
-    use crate::minima::Approach;
     let icao = icao.to_uppercase();
-    let kind = match kind.to_ascii_lowercase().as_str() {
-        "ils" | "cat1" | "precision" => Approach::PrecisionCat1,
-        "rnav" | "lpv" | "lnav/vnav" => Approach::VerticallyGuided,
-        "loc" | "vor" | "ndb" | "nonprecision" | "np" => Approach::NonPrecision,
-        "circling" => Approach::Circling,
-        other => return Err(anyhow!("approach type must be ils, rnav, loc or circling, not {other}")),
-    };
+    let kind = approach_kind(kind)?;
     crate::term::start(&format!("Approach chart for {icao}"));
     if list {
         return list_procedures(&icao);
@@ -1081,6 +1106,20 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
         let _ = std::process::Command::new("cmd").args(["/C", "start", "", &out.display().to_string()]).spawn();
     }
     Ok(())
+}
+
+/// What a `--kind` name means.
+fn approach_kind(name: &str) -> Result<crate::minima::Approach> {
+    use crate::minima::Approach;
+    Ok(match name.to_ascii_lowercase().as_str() {
+        "ils" | "cat1" | "precision" => Approach::PrecisionCat1,
+        "rnav" | "lpv" | "lnav/vnav" => Approach::VerticallyGuided,
+        "loc" | "lda" | "lnav" => Approach::Localiser,
+        "vor" | "nonprecision" | "np" => Approach::NonPrecision,
+        "ndb" => Approach::Ndb,
+        "circling" => Approach::Circling,
+        other => return Err(anyhow!("approach type must be ils, rnav, loc, lnav, vor, ndb or circling, not {other}")),
+    })
 }
 
 /// What an airport has to choose from.
