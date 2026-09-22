@@ -75,6 +75,14 @@ pub struct Chart<'a> {
     /// What the safe altitude ring is measured from, which is the published centre where
     /// there is a published one and the airport itself where there is not.
     pub msa_caption: String,
+    /// The distances from the localiser the published profile is ticked at.
+    pub dme_checkpoints: &'a [f64],
+    /// The approach lighting the runway has, as the chart names it.
+    pub approach_lights: Option<&'a str>,
+    /// What the localiser minimum is flown to, by aircraft category.
+    pub published_loc_columns: &'a [crate::sources::dtpp::Column],
+    /// The airway the missed approach joins, where the chart names one.
+    pub missed_airway: Option<&'a str>,
     /// The height the glidepath crosses the threshold at, where it is published.
     pub threshold_crossing_ft: Option<f64>,
     /// The hold flown if the missed approach cannot be, where a chart names one.
@@ -1305,7 +1313,17 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         let (fx, fy) = v.at(far.0, far.1);
         taken.reserve(nx.min(fx) - 6.0, ny.min(fy) - 6.0, (fx - nx).abs() + 12.0, (fy - ny).abs() + 12.0);
     }
-    taken.reserve(v.x + v.w - 120.0, v.y + v.h - 100.0, 120.0, 100.0);
+    // The corners the hold boxes will take, spoken for before anything is labelled.
+    let mut corners: Vec<(f32, f32, f32, f32)> = Vec::new();
+    if ch.missed_hold.is_some() {
+        corners.push((v.x + v.w - 134.0, v.y + v.h - 70.0, 134.0, 70.0));
+    }
+    if ch.alternate_hold.is_some() {
+        corners.push((v.x + v.w - 134.0, v.y, 134.0, 70.0));
+    }
+    for (bx, by, bw, bh) in &corners {
+        taken.reserve(*bx, *by, *bw, *bh);
+    }
     // What the distances on the fixes are measured from.
     let dme = ch.ils.and_then(|i| i.dme.map(|at| (i.ident.as_str(), at)));
     // The beacons the procedure is written against, which are drawn whether or not they
@@ -1399,6 +1417,37 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         let pts = draw_track(c, &v, &missed, ch.threshold, 1.4, true, 0.15);
         if pts.len() >= 2 {
             arrow_head(c, pts[pts.len() - 2], pts[pts.len() - 1], 0.15);
+        }
+        // The airway it joins, in the black flag a chart writes an airway in. The fix it
+        // runs to is usually well off the map, so the flag goes as far out along the
+        // track as the paper allows.
+        if let (Some(airway), true) = (ch.missed_airway, pts.len() >= 2) {
+            let (a, b) = (pts[pts.len() - 2], pts[pts.len() - 1]);
+            let fw = text_width(bold, 6.5, airway) + 10.0;
+            let clear_of_boxes = |p: (f32, f32)| {
+                let (fx, fy) = (p.0 - fw / 2.0, p.1 - 5.0);
+                !corners.iter().any(|(bx, by, bw, bh)| fx < bx + bw && *bx < fx + fw && fy < by + bh && *by < fy + 11.0)
+            };
+            let fits = |p: (f32, f32)| {
+                v.inside((p.0 - fw / 2.0 - 2.0, p.1 - 7.0), 0.0) && v.inside((p.0 + fw / 2.0 + 2.0, p.1 + 9.0), 0.0) && clear_of_boxes(p)
+            };
+            let _ = (a, b);
+            // Anywhere along the track, from the far end back, wherever there is paper.
+            let place = pts.windows(2).rev().find_map(|pair| {
+                let (a, b) = (pair[0], pair[1]);
+                (0..=18)
+                    .rev()
+                    .flat_map(|i| [i as f32 / 20.0, (i as f32 + 0.5) / 20.0])
+                    .map(|t| (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t))
+                    .find(|p| fits(*p))
+            });
+            if let Some((mx, my)) = place {
+                taken.reserve(mx - fw / 2.0, my - 5.0, fw, 11.0);
+                c.set_fill_gray(0.1);
+                c.rect(mx - fw / 2.0, my - 5.0, fw, 11.0);
+                c.fill_nonzero();
+                text_centred(c, bold, 6.5, mx, my - 2.0, airway, 1.0);
+            }
         }
         for leg in &missed {
             draw_fix(c, font, bold, &v, leg, None, ch.tdze_ft, &mut taken, dme);
@@ -1560,6 +1609,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
             format!("D{nm:.1} {ident}")
         })
     };
+    let crossing_ft = ch.threshold_crossing_ft.unwrap_or(50.0);
     let mut marks: Vec<(f64, f32, f32, String, Option<String>)> = Vec::new();
     for (px, py, leg) in &points {
         if !leg.fix.starts_with("RW") {
@@ -1574,7 +1624,6 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     }
     // The marker beacons, at the height the glidepath crosses them, which is what a chart
     // prints beside each one.
-    let crossing_ft = ch.threshold_crossing_ft.unwrap_or(50.0);
     if let Some(ils) = ch.ils {
         let slope = ch.glidepath_deg.unwrap_or(3.0).to_radians().tan();
         for (kind, lat, lon) in &ils.markers {
@@ -1589,6 +1638,24 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
             c.rect(px - 3.0, ground_y - 1.0, 6.0, 9.0);
             c.fill_nonzero();
             marks.push((nm, px, py, kind.label().to_string(), Some(format!("GS {height:.0}'"))));
+        }
+    }
+    // The published profile is ticked at distances from the localiser rather than at the
+    // fixes alone, and the distance between each pair is what a chart prints along the
+    // bottom. A tick at D3.1 is nothing our data knows of; the chart knows.
+    if let Some((_, at)) = ch.ils.and_then(|i| i.dme.map(|at| (i.ident.clone(), at))) {
+        let dme_to_threshold = ((thr.0 - at.0) * 60.0).hypot((thr.1 - at.1) * 60.0 * thr.0.to_radians().cos().max(0.05));
+        for d in ch.dme_checkpoints {
+            let nm = d - dme_to_threshold;
+            if nm < 0.02 || nm > total_nm {
+                continue;
+            }
+            if marks.iter().any(|(had, _, _, _, _)| (had - nm).abs() < 0.25) {
+                continue;
+            }
+            let px = at_nm(nm);
+            let py = at_ft(ch.tdze_ft + crossing_ft + nm * 6076.115 * ch.glidepath_deg.unwrap_or(3.0).to_radians().tan());
+            marks.push((nm, px, py, format!("D{d:.1}"), Some(ch.ils.map(|i| i.ident.clone()).unwrap_or_default())));
         }
     }
     marks.sort_by(|a, b| b.0.total_cmp(&a.0));
@@ -1621,7 +1688,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
 
     // Glidepath angle and threshold crossing height, in the corner a chart puts them.
     label(c, font, 6.5, at_nm(0.0) - 46.0, tch + 9.0, &format!("TCH {crossing_ft:.0}'"), 0.3);
-    text_right(c, font, 6.5, x + w - 6.0, ground_y + 6.0, &format!("TDZE {:.0}'", ch.tdze_ft), 0.3);
+    text_right(c, font, 6.5, x + w - 6.0, ground_y - 25.0, &format!("TDZE {:.0}'", ch.tdze_ft), 0.3);
     if let Some(deg) = ch.glidepath_deg {
         text(c, bold, 8.0, x + 6.0, y + h - 12.0, &format!("GP {deg:.2}"), INK);
     }
@@ -1966,15 +2033,39 @@ fn draw_speed_band(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, 
         }
     }
 
-    // What the runway offers to see it by.
+    // What the runway offers to see it by, drawn as a chart draws it: the approach
+    // lighting as a ladder up to the threshold, and the glidepath lights beside it.
     let lights_x = x + table_w;
     let lights_w = 78.0;
     line(c, lights_x, y, lights_x, y + h, 0.8, INK);
-    let lights = if ch.runway_lighting.is_empty() { vec!["NO LIGHTING LISTED"] } else { ch.runway_lighting.to_vec() };
-    let mut row = y + h - 9.0;
-    for l in lights.iter().take(3) {
-        text(c, font, 6.0, lights_x + 5.0, row, l, 0.25);
-        row -= 8.0;
+    let name = ch.approach_lights.map(|s| s.to_string()).or_else(|| {
+        ch.runway_lighting.iter().find(|l| l.contains("ALS") || l.contains("MALS")).map(|l| (*l).to_string())
+    });
+    if let Some(name) = &name {
+        // The ladder: a centreline with its crossbars, and the longer one that marks a
+        // thousand feet from the threshold.
+        let lx = lights_x + 14.0;
+        let (top, bottom) = (y + h - 6.0, y + 6.0);
+        line(c, lx, bottom, lx, top, 0.9, INK);
+        let rungs = 5;
+        for i in 0..rungs {
+            let ry = bottom + (top - bottom) * (i as f32 + 0.6) / rungs as f32;
+            let half = if i == rungs / 2 { 7.0 } else { 3.5 };
+            line(c, lx - half, ry, lx + half, ry, 0.9, INK);
+        }
+        text(c, font, 5.5, lights_x + 26.0, y + h / 2.0 - 2.0, name, 0.25);
+    }
+    // The visual glidepath, as its four boxes.
+    if ch.runway_lighting.iter().any(|l| l.contains("PAPI") || l.contains("VASI")) || name.is_some() {
+        let px = lights_x + lights_w - 14.0;
+        for i in 0..4 {
+            let py = y + 8.0 + i as f32 * 5.0;
+            c.set_fill_gray(0.15);
+            c.rect(px, py, 4.0, 3.5);
+            c.fill_nonzero();
+        }
+        let label = if ch.runway_lighting.iter().any(|l| l.contains("VASI")) { "VASI" } else { "PAPI" };
+        text_centred(c, font, 5.0, px + 2.0, y + h - 9.0, label, 0.3);
     }
 
     // The missed approach, as the three things a crew does.
@@ -2099,9 +2190,16 @@ fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32
             text_centred(c, font, 7.0, x + 16.0 + third * 1.5, middle, &allowance.0, 0.3);
             text_centred(c, font, 7.0, x + 16.0 + third * 2.5, middle, &allowance.1, 0.3);
         }
-        if let Some((_, _)) = ch.published_loc {
-            let loc_visibility = ch.published_loc_visibility.clone().unwrap_or_default();
-            text_centred(c, font, 7.0, x + main_w + (straight_w - main_w) / 2.0, middle, &loc_visibility, 0.1);
+        if ch.published_loc.is_some() {
+            // Where the chart prints fewer columns than there are categories, each column
+            // stands for its share of them: two columns mean A and B take the first, C
+            // and D the second.
+            let columns = ch.published_loc_columns;
+            let loc = match columns.len() {
+                0 => ch.published_loc_visibility.clone().unwrap_or_default(),
+                n => columns[(i * n / 4).min(n - 1)].visibility.clone(),
+            };
+            text_centred(c, font, 7.0, x + main_w + (straight_w - main_w) / 2.0, middle, &loc, 0.1);
         }
         text_centred(c, font, 6.5, circle_x + kts_w / 2.0, middle, KTS[i], 0.35);
         if let Some((_, ft)) = ch.circling.get(i) {
