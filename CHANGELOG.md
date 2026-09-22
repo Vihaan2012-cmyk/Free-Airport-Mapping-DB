@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.5.2 (2026-09-22)
+
+The profile band and the plan view, read against the published plate they copy.
+
+- **The recommended altitudes table**, which a plate prints beside the plan so the
+  descent can be checked against the DME at a glance. The numbers are not separately
+  published: they are the profile, read off at whole miles, so they are taken from the
+  descent angle and the final approach fix and cannot disagree with the picture above
+  them. Against Jeppesen's own table for Madeira the two agree exactly at the fix and
+  within forty feet seven miles later. On an approach with a glidepath the same table is
+  the one flown when the glidepath fails, and it is headed LOC (GS out), as a plate
+  heads it.
+
+- **The height of each terrain band, written on the band.** The tint said where the
+  ground was high and never how high; the figure goes in the widest piece of each band
+  on the page.
+
+- **The DME beside every fix**, not only where there is a localiser with one. On a VOR
+  approach that number is how the fix is identified in the aeroplane: Madeira's fixes
+  now read D12.0 FUN, D7.0 FUN, D3.6 FUN, which is what the plate calls them.
+
+- **The angle the descent is actually flown at.** Without a glidepath to state one, the
+  profile printed three degrees and the rate-of-descent table was computed from it —
+  a third steeper than Madeira's approach asks for. The angle is now taken from the
+  altitudes the procedure publishes over the distance they are flown, written on the
+  slope where a plate writes it, and called a descent angle rather than a glidepath.
+
+- **The missed approach point is marked.** Only approaches carrying a published
+  localiser minimum were getting the M, because only those drew the V beside it.
+
+- The beacon the approach passes over is drawn as a chart draws a station passage, and
+  fix names, altitudes and the distances along the bottom are set at the weight a plate
+  sets them in.
+
 ## 0.5.1 (2026-09-22)
 
 - **The A220 airport moving map is back, carrying only our own files.** The map itself
