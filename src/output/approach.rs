@@ -78,6 +78,9 @@ pub struct Chart<'a> {
     /// What the airport is called by its other code, and where in the world it is.
     pub airport_iata: Option<&'a str>,
     pub airport_place: Option<&'a str>,
+    /// The airports near this one, which a chart shows so a reader knows what else is
+    /// under them: name, and where it is.
+    pub nearby_airports: &'a [(String, f64, f64)],
     /// The distances from the localiser the published profile is ticked at.
     pub dme_checkpoints: &'a [f64],
     /// The approach lighting the runway has, as the chart names it.
@@ -636,9 +639,14 @@ fn draw_airport(c: &mut Content, dir: &FsPath, v: &View) -> bool {
     drawn
 }
 
+/// What the published chart writes under a fix, where it writes anything.
+fn fix_note<'a>(ch: &'a Chart, fix: &str) -> Option<&'a str> {
+    ch.published?.text.fix_notes.get(&fix.to_uppercase()).map(String::as_str)
+}
+
 /// A fix, drawn where it actually is. Charts mark the final approach fix differently
 /// from the rest, so it can be picked out at a glance.
-fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, role: Option<&str>, floor_ft: f64, taken: &mut Taken, dme: Option<(&str, (f64, f64))>) {
+fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, role: Option<&str>, floor_ft: f64, taken: &mut Taken, dme: Option<(&str, (f64, f64))>, note: Option<&str>) {
     let is_faf = role == Some("FAF");
     // The missed approach point is marked where it falls, which is often the runway.
     let (Some(lat), Some(lon)) = (leg.lat, leg.lon) else { return };
@@ -711,6 +719,12 @@ fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, role: 
     }
     if let Some(part) = role {
         taken.label(c, bold, 6.0, px + 6.0, row, part, 0.15);
+        row += step;
+    }
+    // How the fix is found, where the published chart says: a radar fix is not a place
+    // an aircraft can find for itself.
+    if let Some(note) = note {
+        taken.label(c, font, 5.5, px + 6.0, row, note, 0.35);
     }
 }
 
@@ -1420,6 +1434,20 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
     }
     // What the distances on the fixes are measured from.
     let dme = ch.ils.and_then(|i| i.dme.map(|at| (i.ident.as_str(), at)));
+    // The other airports on the map. A chart names them because a reader looking down at
+    // a runway needs to know whether it is the one he is going to.
+    for (name, lat, lon) in ch.nearby_airports {
+        let (px, py) = v.at(*lat, *lon);
+        if !v.inside((px, py), 26.0) {
+            continue;
+        }
+        c.set_stroke_gray(0.45);
+        c.set_line_width(0.7);
+        circle(c, px, py, 2.6);
+        c.stroke();
+        line(c, px - 4.2, py, px + 4.2, py, 0.7, 0.45);
+        taken.label(c, font, 5.5, px + 6.0, py - 2.0, name, 0.45);
+    }
     // The beacons the procedure is written against, which are drawn whether or not they
     // are near: the missed approach goes to one, and the reader has to see it.
     let wanted: Vec<String> = ch
@@ -1442,7 +1470,7 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
                 }
             }
             for leg in &legs {
-                draw_fix(c, font, bold, &v, leg, None, ch.tdze_ft, &mut taken, dme);
+                draw_fix(c, font, bold, &v, leg, None, ch.tdze_ft, &mut taken, dme, fix_note(ch, &leg.fix));
             }
             holds.extend(legs.iter().copied());
         }
@@ -1453,7 +1481,7 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         let legs: Vec<&Leg> = t.legs.iter().collect();
         draw_track(c, &v, &legs, None, 0.9, false, 0.35);
         for (i, leg) in legs.iter().enumerate() {
-            draw_fix(c, font, bold, &v, leg, (i == 0).then_some("IAF"), ch.tdze_ft, &mut taken, dme);
+            draw_fix(c, font, bold, &v, leg, (i == 0).then_some("IAF"), ch.tdze_ft, &mut taken, dme, fix_note(ch, &leg.fix));
         }
         holds.extend(legs.iter().copied());
     }
@@ -1481,7 +1509,7 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
     }
     let roles = fix_roles(&finals);
     for (leg, role) in finals.iter().zip(roles) {
-        draw_fix(c, font, bold, &v, leg, role, ch.tdze_ft, &mut taken, dme);
+        draw_fix(c, font, bold, &v, leg, role, ch.tdze_ft, &mut taken, dme, fix_note(ch, &leg.fix));
     }
     holds.extend(finals.iter().copied());
     // The inbound course, written along the final the way a chart does, and the
@@ -1499,9 +1527,10 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
             let bw = text_width(bold, 7.5, &line) + 12.0;
             let (bx, by) = (mx - bw - 12.0, my - 20.0);
             if v.inside((bx, by), 0.0) && v.inside((bx + bw, by + 13.0), 0.0) {
-                fill_box(c, bx, by, bw, 13.0, 1.0);
-                box_outline(c, bx, by, bw, 13.0, 0.8, INK);
-                text(c, bold, 7.5, bx + 6.0, by + 4.0, &line, INK);
+                fill_box(c, bx, by, bw, 17.0, 1.0);
+                box_outline(c, bx, by, bw, 17.0, 0.8, INK);
+                text(c, bold, 7.5, bx + 6.0, by + 8.0, &line, INK);
+                draw_morse(c, bx + 6.0, by + 3.5, &ils.ident, 0.25);
             }
         }
     }
@@ -1556,7 +1585,7 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
             }
         }
         for leg in &missed {
-            draw_fix(c, font, bold, &v, leg, None, ch.tdze_ft, &mut taken, dme);
+            draw_fix(c, font, bold, &v, leg, None, ch.tdze_ft, &mut taken, dme, fix_note(ch, &leg.fix));
         }
         holds.extend(missed.iter().copied());
     }
@@ -1750,6 +1779,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         })
     };
     let mut marks: Vec<(f64, f32, f32, String, Option<String>)> = Vec::new();
+    let mut marker_heights: Vec<(f32, String)> = Vec::new();
     for (px, py, leg) in &points {
         if !leg.fix.starts_with("RW") {
             let s = format!("{:.0}'", leg.altitude_ft.unwrap_or(0.0));
@@ -1779,7 +1809,11 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
                 let step = bh * (i as f32 + 0.5) / 5.0;
                 line(c, bx, by + step, bx + (bh - step).min(bw), by + step + (bh - step).min(bw).min(step), 0.4, 0.3);
             }
-            marks.push((nm, px, py, kind.label().to_string(), Some(format!("GS {height:.0}'"))));
+            let measured = dme_label(*lat, *lon);
+            marks.push((nm, px, py, kind.label().to_string(), measured.or(Some(format!("GS {height:.0}'")))));
+            // Both, where there is room: how far out it is, and how high the glidepath
+            // crosses it.
+            marker_heights.push((px, format!("GS {height:.0}'")));
 
         }
     }
@@ -1839,6 +1873,11 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
                 text_centred(c, font, 5.2, *px, row, &format!("GS {alt:.0}'"), 0.25);
                 row -= 6.5;
             }
+        }
+        // A marker gives its distance and the height the glidepath crosses it at.
+        if let Some((_, height)) = marker_heights.iter().find(|(mx, _)| (mx - px).abs() < 0.5) {
+            text_centred(c, font, 5.2, *px, row, height, 0.25);
+            row -= 6.5;
         }
         c.save_state();
         c.set_dash_pattern([2.0, 2.0], 0.0);
@@ -2028,7 +2067,7 @@ fn draw_briefing_strip(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f
 
     // The radios, in the order they are used.
     let radios = ch.airport.briefing_frequencies();
-    let shown: Vec<_> = radios.iter().take(4).collect();
+    let shown: Vec<_> = radios.iter().take(6).collect();
     if !shown.is_empty() {
         let cw = inner_w / shown.len() as f32;
         for (i, f) in shown.iter().enumerate() {
@@ -2037,7 +2076,8 @@ fn draw_briefing_strip(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f
                 line(c, cx, comms_y, cx, comms_y + comms_h, 0.6, 0.55);
             }
             text_centred(c, font, 5.5, cx + cw / 2.0, comms_y + comms_h - 8.0, &f.kind.to_uppercase(), 0.4);
-            text_centred(c, bold, 9.5, cx + cw / 2.0, comms_y + 5.0, &format!("{:.3}", f.mhz), INK);
+            let size = if shown.len() > 4 { 8.5 } else { 9.5 };
+            text_centred(c, bold, size, cx + cw / 2.0, comms_y + 5.0, &format!("{:.3}", f.mhz), INK);
         }
     }
     line(c, inner_x, comms_y, x + w - msa_w, comms_y, 0.8, INK);
@@ -2383,6 +2423,15 @@ fn wrap_to_width(s: &str, font: Name, size: f32, width: f32) -> Vec<String> {
     out
 }
 
+/// A neighbouring airport's name, short enough to sit on a map.
+pub fn shorten_place(name: &str) -> String {
+    let short = shorten(name);
+    match short.split_whitespace().count() {
+        0..=3 => short,
+        _ => short.split_whitespace().take(3).collect::<Vec<_>>().join(" "),
+    }
+}
+
 /// The abbreviations a chart uses for the long words in an airport's name.
 fn shorten(name: &str) -> String {
     let mut out = name.to_uppercase();
@@ -2493,7 +2542,7 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
     let min_y = MARGIN + 16.0;
     let speed_h = 36.0;
     let speed_y = min_y + min_h + 3.0;
-    let prof_h = 120.0;
+    let prof_h = 134.0;
     let prof_y = speed_y + speed_h + 3.0;
     let plan_y = prof_y + prof_h + 3.0;
     let plan_h = strip_y - 3.0 - plan_y;
@@ -2515,6 +2564,13 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
     }
 
     draw_minima_table(&mut c, f, b, ch, MARGIN, min_y, W - 2.0 * MARGIN, min_h, est);
+
+    // The amendment the procedure is at, stamped down the edge of the page the way a
+    // chart stamps it: it is how a crew knows the page in the folder is the current one.
+    if let Some(amendment) = ch.published.and_then(|p| p.text.amendment.clone()) {
+        let spelt = amendment.to_uppercase().replace("AMDT", "AMDT ").replace("  ", " ");
+        text_up(&mut c, f, 6.0, MARGIN - 5.0, MARGIN + 30.0, &spelt, 0.35);
+    }
 
     // Footer.
     line(&mut c, MARGIN, MARGIN + 18.0, W - MARGIN, MARGIN + 18.0, 0.8, RULE);
