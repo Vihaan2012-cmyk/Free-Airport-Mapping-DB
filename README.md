@@ -27,9 +27,7 @@ Three programs:
    [latest release](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB/releases/latest)
    and run it. It installs for your user only, so it needs no administrator rights,
    except for the optional A350/A380X step described below.
-2. Leave the setup options ticked:
-   - **A220 moving map** copies the map into every Microsoft Flight Simulator 2020 and
-     2024 it finds. If you had the GM5 A220 map, it is set aside and put back on uninstall.
+2. Leave the setup option ticked:
    - **A350 and A380X** points Navigraph's map server address at your computer and
      trusts a local certificate, so those aircraft load maps from AMDB Bridge. Windows
      asks for administrator permission once.
@@ -37,12 +35,12 @@ Three programs:
    airport takes 20-40 seconds while it is built; after that it is instant.
 
 Closing the window keeps AMDB Bridge running in the notification area. Right-click its
-icon to exit. The window also installs, updates or removes the A220 map, starts with
-Windows or with the simulator, and shows what it is doing.
+icon to exit. The window starts with Windows or with the simulator, and shows what it is
+doing.
 
-Uninstalling removes everything it changed outside its own folder: the A220 map (and
-brings back any map it set aside), the start-up entries, the A350 patch, the address
-redirect and the certificate. It asks before deleting the airports it built.
+Uninstalling removes everything it changed outside its own folder: the start-up entries,
+the A350 patch, the address redirect and the certificate. It asks before deleting the
+airports it built.
 
 To build the installer yourself: `python tools/make_installer.py` (needs Rust and
 Inno Setup 6).
@@ -57,10 +55,9 @@ sudo ./amdb-bridge navigraph on    # once, only for the iniBuilds A350 / FlyByWi
 ./amdb-bridge serve --xplane       # every time you fly
 ```
 
-It finds Microsoft Flight Simulator under Steam's Proton and X-Plane 12 by itself. For
-the A220 map, copy `msfs/zzz-amdb-a220-amm` into your MSFS Community folder
-(`amdb-bridge status` prints where that is). Run `navigraph on` again after updating,
-since a new binary loses its permission to use port 443.
+It finds Microsoft Flight Simulator under Steam's Proton and X-Plane 12 by itself. Run
+`navigraph on` again after updating, since a new binary loses its permission to use
+port 443.
 
 ## Quick start (command line)
 
@@ -194,36 +191,9 @@ enum values. No Navigraph account is needed. `patch` / `unpatch` are a no-admin
 alternative that rewrites the aircraft bundles instead.
 
 Aircraft: FlyByWire A380X (OANS + BTV, tested), FlyByWire A32NX development builds,
-iniBuilds A350 (its EFB only hands the OANS gauge a token with a Navigraph
+and iniBuilds A350 (its EFB only hands the OANS gauge a token with a Navigraph
 subscription, so `serve` rewrites that one handler; backup kept, `unpatch` restores,
-`--no-patch` skips), and the GM5 A220 Airport Moving Map for the Synaptic A220
-(`serve` adds a token fallback and lets it find the airport through the bridge's
-`/v1/nearest`, since the sim-side search returns nothing under MSFS 2020; on 2020 the
-package folder must sort after `synaptic-aircraft-a220`, e.g. `zzz-gm5-a220-amm`,
-which `tools/port_a220_amm.py` does for you).
-
-## Airport moving map for the A220 (MSFS)
-
-An airport moving map for the Synaptic A220, as its own Community package rather than a
-patch of anyone else's add-on. It reads straight from a running `amdb-bridge` over HTTP,
-so it needs no Navigraph account, no hosts-file redirect, no certificate and no
-administrator rights. MSFS 2020 and 2024 both work from the one folder.
-
-```
-python tools/build_a220_amm.py            # install into every sim found
-python tools/build_a220_amm.py --uninstall  # remove it, restoring anything it displaced
-amdb-bridge serve --no-hosts --no-patch   # then leave this running while you fly
-```
-
-Releases ship the same package with an `install.bat` for people who would rather not
-clone the repository. It draws 22 layers in the aircraft's own palette — runway markings,
-shoulders, service roads, stand areas, guidance lines, holding positions, structures and
-hotspots — with runway designators boxed and turned along the runway, and stand numbers
-that thin out as the range widens. The map appears by itself once you are on the ground;
-`L:AMDB_AMM_VISIBLE` and `L:AMDB_AMM_RANGE` are bindable if you want manual control.
-
-Only one package can override the A220's display units, so remove any other A220 moving
-map first. `install.bat` does that for you and keeps the displaced copy in `_disabled`.
+`--no-patch` skips).
 
 ## X-Plane 12
 

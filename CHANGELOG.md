@@ -2,6 +2,13 @@
 
 ## 0.5.0 (2026-09-22)
 
+- **The A220 airport moving map package is withdrawn.** It replaced the Synaptic A220's
+  own display-unit bootstrap, and the file that did so was all but identical to the
+  aircraft's: same class, same four members, same registration call. That is the
+  aircraft maker's code however small, and shipping it is not ours to do. The package,
+  the tools that built and installed it, the installer option and the buttons in the
+  desktop app are all gone; nothing that remains redistributes anyone else's files.
+
 - **Approach charts.** `amdbgen approach-chart <ICAO>` draws a full approach chart as a
   PDF, styled like an airline chart and branded "AMDB V1": a header, a briefing strip
   (final course, touchdown zone elevation, airport elevation, minimum safe altitude
