@@ -125,6 +125,16 @@ pub fn layer(scope: Option<&str>, i: usize, n: usize, name: &str, count: usize) 
     let _ = term().write_line(&text);
 }
 
+/// Per-stage progress while a flight is planned: `stage 4/12  airway network  46,774 fixes,
+/// 156,271 edges  98 ms`. The same shape as `layer`, because a plan is built the way a map
+/// is: one named thing after another, each worth seeing the size and the cost of.
+pub fn stage(i: usize, n: usize, name: &str, detail: &str, millis: u128) {
+    let counter = style(format!("{i:>2}/{n}")).dim().to_string();
+    let took = if millis == 0 { String::new() } else { style(format!("{millis} ms")).dim().to_string() };
+    let text = format!("{} {:<8} {} {:<22} {:<38} {}", style("·").magenta(), style("stage").magenta().bold().underlined(), counter, name, style(detail).green(), took);
+    let _ = term().write_line(&text);
+}
+
 /// A produced file or folder with its size.
 pub fn file(scope: Option<&str>, path: &str, detail: &str) {
     let scope_txt = scope.map(|s| format!("{} {} ", style(format!("[{s}]")).dim(), SEP)).unwrap_or_default();

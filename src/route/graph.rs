@@ -247,7 +247,10 @@ impl Graph {
     /// The network in the navigation database on this machine.
     pub fn from_navdata() -> Graph {
         let mut g = Graph::default();
-        for s in crate::sources::navdata::airway_segments() {
+        // Collected once and consumed: asking the database for them twice reads ninety
+        // thousand rows for nothing.
+        let segs = crate::sources::navdata::airway_segments();
+        for s in segs {
             g.add(&s.airway, (&s.from.0, (s.from.1, s.from.2)), (&s.to.0, (s.to.1, s.to.2)), s.one_way, s.min_ft, s.max_ft);
         }
         g
