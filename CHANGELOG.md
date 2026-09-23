@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.6 (2026-09-23)
+
+- **The visual glidepath is found again.** A PAPI is matched to the runway it serves by
+  where it stands and which way it points, rather than by the label on it. Madeira's are
+  called PAPI-5L, PAPI-5R and PAPI-23L — that suffix is the side of the runway the unit
+  sits on, not a runway ident — so comparing it to "05" matched nothing and every chart
+  for the field came out with an empty lighting box. This is a fix to the airport build,
+  so it reaches the moving map and the airport diagram as well as the approach chart.
+  Rebuild an airport to pick it up.
+
+- **The missed approach box says what its fix is found on.** Where there is no second
+  altitude to print, the middle cell now carries the beacon, its frequency and the
+  radial — FUN 112.20 R-170 — which is how a crew identifies the fix without a map.
+
 ## 0.5.5 (2026-09-23)
 
 - **Published holds are drawn.** A hold at an initial approach fix is somewhere to wait

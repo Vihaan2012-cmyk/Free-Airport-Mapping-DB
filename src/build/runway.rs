@@ -104,7 +104,28 @@ pub fn build(ctx: &mut Ctx) {
             let lda = ops::dist(t, other_thr);
             let tora = g.length;
             let stopway = r.stopway_m[k];
-            let vasis = ctx.src.lights.iter().find(|l| l.runway.as_deref() == Some(end.ident.as_str()) && matches!(l.kind, lighting::PAPI | lighting::VASI | lighting::APAPI)).map(|l| l.kind);
+            // The visual glidepath this end has, if any. The label on the object is tried
+            // first, and then where it stands and which way it points: a PAPI sits beside
+            // the runway it serves, inside its length of the threshold, pointing along the
+            // direction landed on. Many are labelled by the side of the runway the unit is
+            // on — PAPI-5L and PAPI-5R are both runway 05 — so the label alone misses them.
+            let is_glidepath = |l: &crate::ir::LightObject| matches!(l.kind, lighting::PAPI | lighting::VASI | lighting::APAPI);
+            let vasis = ctx
+                .src
+                .lights
+                .iter()
+                .find(|l| is_glidepath(l) && l.runway.as_deref() == Some(end.ident.as_str()))
+                .or_else(|| {
+                    ctx.src.lights.iter().find(|l| {
+                        if !is_glidepath(l) {
+                            return false;
+                        }
+                        let Some(hdg) = l.heading_deg else { return false };
+                        let off = ((hdg - dir_in + 540.0) % 360.0 - 180.0).abs();
+                        off < 25.0 && ops::dist(l.pos, t) < g.length.max(400.0)
+                    })
+                })
+                .map(|l| l.kind);
             let f = AmdbFeature::new(Layer::RunwayThreshold, Point(t))
                 .with("idthr", end.ident.clone())
                 .with("idrwy", g.idrwy.clone())

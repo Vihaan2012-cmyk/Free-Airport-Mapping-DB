@@ -2736,6 +2736,17 @@ fn draw_speed_band(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, 
     if top.is_finite() && climb.map(|a| top > a + 100.0).unwrap_or(false) {
         line(c, cells.0 + cells.1, y, cells.0 + cells.1, y + h, 0.5, 0.55);
         text_centred(c, bold, 11.0, cells.0 + cells.1 * 1.5, y + h / 2.0 - 2.0, &format!("{top:.0}'"), INK);
+    } else if let (Some(beacon), Some(hold)) = (dme_reference(ch), ch.missed_hold) {
+        // Nothing to say about a second altitude, so the middle cell says instead what
+        // the fix the missed approach ends at is found on: the beacon, its frequency and
+        // the radial. That is how a crew identifies it without a moving map.
+        line(c, cells.0 + cells.1, y, cells.0 + cells.1, y + h, 0.5, 0.55);
+        let mid = cells.0 + cells.1 * 1.5;
+        text_centred(c, bold, 8.0, mid, y + h - 12.0, &beacon.ident, INK);
+        text_centred(c, font, 7.0, mid, y + h - 21.0, &format!("{:.2}", beacon.frequency), 0.15);
+        if let Some((_, _, radial)) = reference_for(ch, hold) {
+            text_centred(c, bold, 8.0, mid, y + 5.0, &format!("R-{radial:03.0}"), INK);
+        }
     }
     line(c, cells.0 + cells.1 * 2.0, y, cells.0 + cells.1 * 2.0, y + h, 0.5, 0.55);
     if let Some(hdg) = heading {
