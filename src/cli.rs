@@ -9,6 +9,7 @@ use crate::pipeline::{self, Config, FaaMode, Filter, OsmMode, Summary};
 use crate::sources::http::Http;
 use crate::term;
 use anyhow::{anyhow, Context, Result};
+use chrono::{DateTime, Utc};
 use clap::{Args, Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
@@ -141,6 +142,18 @@ enum Cmd {
         /// on, off or status
         state: String,
     },
+    /// SimBrief-compatible plans on the flight bags that read them (FlyByWire, PMDG,
+    /// iniBuilds, the Synaptic A220): `on` points their SimBrief address at the bridge,
+    /// `off` gives them SimBrief's own back, `status` says which each is. The same as the
+    /// bridge's `simbrief`, without its need for administrator rights.
+    TabletSimbrief {
+        /// on, off or status
+        state: String,
+    },
+    /// Plan a flight end to end: the route, the fuel, the weights, the reports and the
+    /// hazards planned round, printed as an operational flight plan and saved where the
+    /// bridge's SimBrief-compatible API will find it for the tablets.
+    Dispatch(DispatchArgs),
     /// A departure (SID) or arrival (STAR) chart, from the simulator's navigation data.
     ProcedureChart {
         icao: String,
@@ -410,6 +423,66 @@ pub struct PreviewArgs {
     /// Open the page in the default browser afterwards.
     #[arg(long)]
     open: bool,
+}
+
+#[derive(Args, Clone)]
+pub struct DispatchArgs {
+    /// Origin ICAO code.
+    origin: String,
+    /// Destination ICAO code.
+    destination: String,
+    /// ICAO aircraft type designator, e.g. A20N.
+    #[arg(long)]
+    aircraft: String,
+    /// Payload, kilograms.
+    #[arg(long, default_value_t = 0.0)]
+    payload: f64,
+    /// Passengers, for the weights and the SimBrief-shaped `weights.pax_count`.
+    #[arg(long, default_value_t = 0)]
+    pax: u32,
+    /// A cruise level, e.g. FL350 or 35000. Left out, a few levels round the aircraft's
+    /// usual cruise are considered and the cheapest way round chosen.
+    #[arg(long)]
+    level: Option<String>,
+    /// Cost index.
+    #[arg(long, default_value_t = 30.0)]
+    ci: f64,
+    /// Off-block time, RFC 3339 (e.g. 2026-09-23T18:00:00Z). An hour from now by default.
+    #[arg(long = "off-block")]
+    off_block: Option<String>,
+    /// An alternate ICAO code. Left out, one is chosen.
+    #[arg(long)]
+    alternate: Option<String>,
+    /// Flight information regions to avoid, comma separated or repeated.
+    #[arg(long = "avoid-fir", value_delimiter = ',')]
+    avoid_fir: Vec<String>,
+    /// RVSM does not apply.
+    #[arg(long = "no-rvsm")]
+    no_rvsm: bool,
+    /// Do not use the network: still air, no reports, no automatic alternate.
+    #[arg(long)]
+    offline: bool,
+    /// A JSON file of extra hazards and winds, over what the weather sources give.
+    #[arg(long)]
+    conditions: Option<PathBuf>,
+    /// Flight number / callsign, for the header, item 7 and ATC callsign.
+    #[arg(long = "flight")]
+    flight_number: Option<String>,
+    /// Registration, for item 18 and the aircraft block.
+    #[arg(long)]
+    registration: Option<String>,
+    /// Write the printed plan as a PDF.
+    #[arg(long)]
+    pdf: Option<PathBuf>,
+    /// Also write these exports, comma separated: pln, fms, rte, icao.
+    #[arg(long)]
+    export: Option<String>,
+    /// Also write the whole `Dispatch` as JSON.
+    #[arg(long)]
+    json: Option<PathBuf>,
+    /// Directory the exports and PDF default into when no path is given for them.
+    #[arg(long, default_value = ".")]
+    out_dir: PathBuf,
 }
 
 #[derive(Args, Clone)]
@@ -1139,6 +1212,35 @@ pub fn run() -> Result<()> {
             }
             Ok(())
         }
+        Cmd::TabletSimbrief { state } => {
+            use crate::bridge::patcher;
+            let state = state.to_ascii_lowercase();
+            let dirs = patcher::detect_community_dirs();
+            if dirs.is_empty() {
+                return Err(anyhow!("no simulator Community folder found on this computer"));
+            }
+            for d in &dirs {
+                match state.as_str() {
+                    "on" => {
+                        for f in patcher::patch_simbrief(d, crate::bridge::DEFAULT_PORT)? {
+                            crate::term::success(&format!("SimBrief plans from the bridge: {}", f.display()));
+                        }
+                    }
+                    "off" => {
+                        for f in patcher::unpatch_simbrief(d, crate::bridge::DEFAULT_PORT)? {
+                            crate::term::success(&format!("SimBrief's own address restored: {}", f.display()));
+                        }
+                    }
+                    "status" => {}
+                    other => return Err(anyhow!("tablet-simbrief takes on, off or status, not {other}")),
+                }
+                for (pkg, f, on) in patcher::scan_simbrief(d, crate::bridge::DEFAULT_PORT) {
+                    println!("  {pkg}  {}: {}", f.file_name().unwrap_or_default().to_string_lossy(), if on { "SimBrief plans from the bridge" } else { "SimBrief's own address" });
+                }
+            }
+            Ok(())
+        }
+        Cmd::Dispatch(a) => dispatch_cmd(a),
         Cmd::ApproachChart { icao, runway, approach, star, list, kind, out, png, scale, open } => {
             approach_chart_cmd(&icao, approach.as_deref().or(runway.as_deref()), star.as_deref(), list, kind.as_deref(), out, png, scale, open)
         }
@@ -1379,6 +1481,89 @@ fn xplane_cmd(targets: Vec<String>, dir: PathBuf, all: bool, install: bool, xpla
         // The moving map fetches from the running bridge (start it with `amdb-bridge serve --xplane`).
         let p = crate::output::xplane::install_script(&root, "http://127.0.0.1:8770")?;
         term::file(None, &p.display().to_string(), "FlyWithLua script installed; start `amdb-bridge serve --xplane`, then open it from Plugins > FlyWithLua > Macros > AMDB OANS");
+    }
+    Ok(())
+}
+
+/// A cruise level from "FL350" or "35000".
+fn parse_level(s: &str) -> Result<f64> {
+    let t = s.trim();
+    let digits = t.strip_prefix("FL").or_else(|| t.strip_prefix("fl")).unwrap_or(t);
+    let n: f64 = digits.parse().map_err(|_| anyhow!("--level expects e.g. FL350 or 35000, not {s}"))?;
+    Ok(if n < 1000.0 { n * 100.0 } else { n })
+}
+
+fn dispatch_cmd(a: DispatchArgs) -> Result<()> {
+    use crate::ofp::{self, export, pdf, DispatchOptions};
+
+    let mut opts = DispatchOptions::new(a.origin.to_uppercase(), a.destination.to_uppercase(), a.aircraft.to_uppercase());
+    opts.payload_kg = a.payload;
+    opts.passengers = a.pax;
+    opts.cost_index = a.ci;
+    opts.level = a.level.as_deref().map(parse_level).transpose()?;
+    if let Some(t) = &a.off_block {
+        opts.off_block = DateTime::parse_from_rfc3339(t).map_err(|e| anyhow!("--off-block: {e}"))?.with_timezone(&Utc);
+    }
+    opts.alternate = a.alternate.clone();
+    opts.avoid_firs = a.avoid_fir.iter().map(|s| s.trim().to_uppercase()).filter(|s| !s.is_empty()).collect();
+    opts.rvsm = !a.no_rvsm;
+    opts.offline = a.offline;
+    opts.conditions_file = a.conditions.clone();
+    opts.flight_number = a.flight_number.clone();
+    opts.registration = a.registration.clone();
+
+    term::start(&format!("Dispatching {} {} -> {}", opts.aircraft, opts.origin, opts.destination));
+    let t0 = std::time::Instant::now();
+    let dispatch = ofp::dispatch(&opts)?;
+    term::success(&format!(
+        "{} -> {} planned in {}: FL{:03.0}, {:.0} kg block fuel, {} warning(s)",
+        opts.origin,
+        opts.destination,
+        term::human_secs(t0.elapsed().as_secs_f64()),
+        dispatch.route.cruise_ft / 100.0,
+        dispatch.perf.fuel.block_kg,
+        dispatch.perf.warnings.len()
+    ));
+    println!("{}", crate::ofp::text::render(&dispatch, &opts));
+
+    let stem = format!("{}-{}", opts.origin, opts.destination);
+    if let Some(out) = &a.pdf {
+        let n = pdf::write(&dispatch, &opts, out)?;
+        term::file(None, &out.display().to_string(), &format!("operational flight plan (PDF), {}", term::human_bytes(n)));
+    }
+    for fmt in a.export.as_deref().unwrap_or("").split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let (path, n) = match fmt.to_ascii_lowercase().as_str() {
+            "pln" => {
+                let p = a.out_dir.join(format!("{stem}.pln"));
+                (p.clone(), export::write_pln(&dispatch, &p)?)
+            }
+            "fms" => {
+                let p = a.out_dir.join(format!("{stem}.fms"));
+                (p.clone(), export::write_fms(&dispatch, &p)?)
+            }
+            "rte" => {
+                let p = a.out_dir.join(format!("{stem}.rte"));
+                (p.clone(), export::write_rte(&dispatch, &p)?)
+            }
+            "icao" => {
+                let p = a.out_dir.join(format!("{stem}.fpl.txt"));
+                (p.clone(), export::write_icao_message(&dispatch, opts.flight_number.as_deref(), opts.registration.as_deref(), &p)?)
+            }
+            other => return Err(anyhow!("--export takes pln, fms, rte and/or icao, not {other}")),
+        };
+        term::file(None, &path.display().to_string(), &format!("{fmt} export, {}", term::human_bytes(n)));
+    }
+    if let Some(out) = &a.json {
+        let n = export::write_json(&dispatch, out)?;
+        term::file(None, &out.display().to_string(), &format!("Dispatch as JSON, {}", term::human_bytes(n)));
+    }
+
+    let saved = crate::bridge::simbrief::save(&dispatch, &opts)?;
+    term::file(None, &saved.display().to_string(), "saved for the bridge's SimBrief-compatible API");
+    if !dispatch.violations.is_empty() {
+        for v in &dispatch.violations {
+            term::warn(&format!("{}: {}", v.rule, v.message));
+        }
     }
     Ok(())
 }

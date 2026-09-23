@@ -561,6 +561,102 @@ pub fn unpatch_charts(community: &Path) -> Result<Vec<PathBuf>> {
     Ok(done)
 }
 
+// ---------------------------------------------------------------------------------
+// SimBrief, on the flight bags that read it directly (`bridge::simbrief`'s own doc
+// comment has what confirmed the address and its field names). Unlike the charts patch,
+// what is patched here is one constant every one of them names outright — SimBrief's own
+// public endpoint — so it needs none of the charts patch's per-build marker and base64:
+// what stood at that address before is always this one address, so restoring it is the
+// same plain substring swap the other way round.
+// ---------------------------------------------------------------------------------
+
+pub const SIMBRIEF_HOST: &str = "https://www.simbrief.com/api/xml.fetcher.php";
+
+fn simbrief_target(port: u16) -> String {
+    format!("http://127.0.0.1:{port}/api/xml.fetcher.php")
+}
+
+/// `Some(true)` pointed at the bridge, `Some(false)` still SimBrief's own, `None` neither.
+fn simbrief_state(text: &str, port: u16) -> Option<bool> {
+    if text.contains(&simbrief_target(port)) {
+        Some(true)
+    } else if text.contains(SIMBRIEF_HOST) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Point a script's SimBrief address at the bridge. `None` when it does not name it.
+pub fn patch_simbrief_text(text: &str, port: u16) -> Option<String> {
+    if !text.contains(SIMBRIEF_HOST) {
+        return None;
+    }
+    Some(text.replace(SIMBRIEF_HOST, &simbrief_target(port)))
+}
+
+/// Give a script its own SimBrief address back. `None` when it was not pointed here.
+pub fn unpatch_simbrief_text(text: &str, port: u16) -> Option<String> {
+    let target = simbrief_target(port);
+    if !text.contains(&target) {
+        return None;
+    }
+    Some(text.replace(&target, SIMBRIEF_HOST))
+}
+
+/// Scripts naming the SimBrief endpoint in a Community folder: (package, file, already
+/// pointed at the bridge).
+pub fn scan_simbrief(community: &Path, port: u16) -> Vec<(String, PathBuf, bool)> {
+    let mut out = Vec::new();
+    let Ok(rd) = fs::read_dir(community) else { return out };
+    for pkg in rd.flatten() {
+        let pdir = pkg.path();
+        if !pdir.is_dir() {
+            continue;
+        }
+        let mut js = Vec::new();
+        walk_js(&pdir.join("html_ui"), &mut js);
+        for f in js {
+            let Ok(text) = fs::read_to_string(&f) else { continue };
+            if let Some(patched) = simbrief_state(&text, port) {
+                out.push((pkg.file_name().to_string_lossy().to_string(), f, patched));
+            }
+        }
+    }
+    out
+}
+
+/// Point every script naming SimBrief in a Community folder at the bridge.
+pub fn patch_simbrief(community: &Path, port: u16) -> Result<Vec<PathBuf>> {
+    let mut done = Vec::new();
+    for (pkg, path, patched) in scan_simbrief(community, port) {
+        if patched {
+            continue;
+        }
+        let text = fs::read_to_string(&path)?;
+        let Some(new_text) = patch_simbrief_text(&text, port) else { continue };
+        fs::write(&path, new_text).with_context(|| format!("write {}", path.display()))?;
+        log::info!("{pkg}: SimBrief plans now come from the bridge ({})", path.display());
+        done.push(path);
+    }
+    Ok(done)
+}
+
+/// Give every script in a Community folder its own SimBrief address back.
+pub fn unpatch_simbrief(community: &Path, port: u16) -> Result<Vec<PathBuf>> {
+    let mut done = Vec::new();
+    for (_pkg, path, patched) in scan_simbrief(community, port) {
+        if !patched {
+            continue;
+        }
+        let text = fs::read_to_string(&path)?;
+        let Some(old) = unpatch_simbrief_text(&text, port) else { continue };
+        fs::write(&path, old).with_context(|| format!("write {}", path.display()))?;
+        done.push(path);
+    }
+    Ok(done)
+}
+
 /// Candidate Community folders for MSFS 2020 and 2024 (Store and Steam) on this machine.
 pub fn detect_community_dirs() -> Vec<PathBuf> {
     if !cfg!(windows) {
@@ -930,6 +1026,37 @@ mod tests {
             }
         }
         assert!(seen > 0, "no flight bags found");
+    }
+
+    #[test]
+    fn simbrief_address_is_pointed_here_and_put_back() {
+        let original = "async function fetchOfp(id){return fetch('https://www.simbrief.com/api/xml.fetcher.php?userid='+id+'&json=1');}";
+        let patched = patch_simbrief_text(original, 8770).unwrap();
+        assert!(patched.contains("http://127.0.0.1:8770/api/xml.fetcher.php?userid="));
+        assert!(!patched.contains("simbrief.com"));
+        assert!(patch_simbrief_text(&patched, 8770).is_none(), "idempotent");
+        assert_eq!(unpatch_simbrief_text(&patched, 8770).unwrap(), original);
+        assert!(unpatch_simbrief_text(original, 8770).is_none());
+        assert!(patch_simbrief_text("no simbrief here", 8770).is_none());
+    }
+
+    #[test]
+    fn simbrief_scan_reports_which_state_a_script_is_in() {
+        let dir = std::env::temp_dir().join(format!("amdb-bridge-simbrief-{}", std::process::id()));
+        let pkg = dir.join("some-efb").join("html_ui");
+        fs::create_dir_all(&pkg).unwrap();
+        let f = pkg.join("efb.js");
+        fs::write(&f, "fetch(`https://www.simbrief.com/api/xml.fetcher.php?json=1`)").unwrap();
+        let found = scan_simbrief(&dir, 8770);
+        assert_eq!(found.len(), 1);
+        assert!(!found[0].2, "not patched yet");
+        patch_simbrief(&dir, 8770).unwrap();
+        let found = scan_simbrief(&dir, 8770);
+        assert!(found[0].2, "patched now");
+        unpatch_simbrief(&dir, 8770).unwrap();
+        let found = scan_simbrief(&dir, 8770);
+        assert!(!found[0].2, "restored");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

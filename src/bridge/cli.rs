@@ -379,6 +379,19 @@ enum Cmd {
         #[arg(long, default_value_t = super::DEFAULT_PORT)]
         port: u16,
     },
+    /// SimBrief-compatible plans on the flight bags that read them: `on` points a script's
+    /// `xml.fetcher.php` address at this bridge, `off` gives it SimBrief's own back, and
+    /// `status` says which each is. No administrator rights needed. While on, a tablet
+    /// asking SimBrief for a plan is served the last one `amdbgen dispatch` planned,
+    /// whatever `userid` or `username` it names.
+    Simbrief {
+        /// on, off or status
+        state: String,
+        #[arg(long = "community")]
+        community: Vec<PathBuf>,
+        #[arg(long, default_value_t = super::DEFAULT_PORT)]
+        port: u16,
+    },
 }
 
 /// Saved settings (asking on the first run), with this run's overrides applied.
@@ -759,6 +772,37 @@ pub fn run() -> Result<()> {
                 crate::term::warn("no flight bag built on the Navigraph SDK found (iniBuilds A350, PMDG 737/777)");
             } else if state == "on" {
                 crate::term::info("Start the bridge before the flight: the tablet asks it for every chart.");
+            }
+            Ok(())
+        }
+        Cmd::Simbrief { state, community, port } => {
+            let state = state.to_ascii_lowercase();
+            let dirs = communities(&community);
+            let mut found = 0;
+            for d in &dirs {
+                match state.as_str() {
+                    "on" => {
+                        for f in patcher::patch_simbrief(d, port)? {
+                            crate::term::success(&format!("SimBrief plans from the bridge: {}", f.display()));
+                        }
+                    }
+                    "off" => {
+                        for f in patcher::unpatch_simbrief(d, port)? {
+                            crate::term::success(&format!("SimBrief's own address restored: {}", f.display()));
+                        }
+                    }
+                    "status" => {}
+                    other => return Err(anyhow!("simbrief takes on, off or status, not {other}")),
+                }
+                for (pkg, f, patched) in patcher::scan_simbrief(d, port) {
+                    found += 1;
+                    println!("  {pkg}  {}: {}", f.file_name().unwrap_or_default().to_string_lossy(), if patched { "SimBrief plans from the bridge" } else { "its own (SimBrief) address" });
+                }
+            }
+            if found == 0 {
+                crate::term::warn("no installed aircraft reads SimBrief directly that this bridge recognised");
+            } else if state == "on" {
+                crate::term::info("Start the bridge and run `amdbgen dispatch` before the flight: the tablet asks the bridge for the last plan dispatched.");
             }
             Ok(())
         }
