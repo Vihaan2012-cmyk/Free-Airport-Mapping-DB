@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.9 (2026-09-23)
+
+- **Approach charts from the desktop app.** Type an airport, press Find procedures, and
+  the app lists what the navigation data on this computer holds: how many departures and
+  arrivals it has, and every instrument approach, each with the arrivals that feed it —
+  so a crew handed a particular arrival can see which approach it leads to. Pick one,
+  press Draw chart, and it is written to Downloads and opened.
+
+- **The way in to the approach is drawn on the profile.** A plate's profile carries the
+  arrival as well as the final: Madeira's shows the aeroplane leaving the VOR at 4,000 ft,
+  running out to the turn and coming back at 3,000 to join the approach. That upper line
+  is what makes its profile a wedge rather than one slope, and it was the largest thing
+  ours was missing — not detail, a whole second path. Of the transitions that feed the
+  approach, the one drawn is the most direct whose every leg the band can hold; the
+  longer ones are entries from an airway and belong on the arrival chart.
+
 ## 0.5.8 (2026-09-23)
 
 - **The profile is drawn in the direction the approach is flown.** Heathrow's 09L runs

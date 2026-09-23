@@ -26,6 +26,17 @@ const RED: [u8; 3] = [196, 43, 28];
 const GREY: [u8; 3] = [96, 96, 96];
 
 /// State shared with the threads that do slow work and with the log sink.
+/// The command-line tool that ships beside this program, which draws the charts.
+fn amdbgen_exe() -> Option<PathBuf> {
+    let here = std::env::current_exe().ok()?;
+    let dir = here.parent()?;
+    let name = if cfg!(windows) { "amdbgen.exe" } else { "amdbgen" };
+    // Installed, it sits next to the app. Run from a build folder it sits next to the
+    // build of this program, which is the same place.
+    let beside = dir.join(name);
+    beside.is_file().then_some(beside)
+}
+
 #[derive(Default)]
 struct Shared {
     lines: Mutex<Vec<String>>,
@@ -312,6 +323,13 @@ struct Ui {
     remove: nwg::Button,
     refresh: nwg::Button,
 
+    charts_header: nwg::Label,
+    chart_icao_label: nwg::Label,
+    chart_icao: nwg::TextInput,
+    chart_find: nwg::Button,
+    chart_draw: nwg::Button,
+    charts: nwg::ListView,
+
     options_header: nwg::Label,
     opt_start: nwg::CheckBox,
     opt_login: nwg::CheckBox,
@@ -390,7 +408,7 @@ impl App {
 
         nwg::Window::builder()
             .flags(nwg::WindowFlags::WINDOW | nwg::WindowFlags::MINIMIZE_BOX)
-            .size((640, 646))
+            .size((640, 822))
             .center(true)
             .title("AMDB Bridge")
             .icon(Some(&ui.icon))
@@ -434,7 +452,27 @@ impl App {
         nwg::Button::builder().parent(w).text("Refresh").position((520, 292)).size((100, 30)).build(&mut ui.refresh)?;
 
         // Options
-        nwg::Label::builder().parent(w).text("Options").font(Some(&ui.font_header)).position((20, 336)).size((600, 22)).build(&mut ui.options_header)?;
+        // ---- Approach charts -------------------------------------------------------
+        nwg::Label::builder().parent(w).text("Approach charts").font(Some(&ui.font_header)).position((20, 336)).size((600, 22)).build(&mut ui.charts_header)?;
+        nwg::Label::builder().parent(w).text("Airport").position((20, 365)).size((52, 22)).build(&mut ui.chart_icao_label)?;
+        nwg::TextInput::builder().parent(w).limit(4).placeholder_text(Some("ICAO")).position((74, 362)).size((70, 25)).build(&mut ui.chart_icao)?;
+        nwg::Button::builder().parent(w).text("Find procedures").position((156, 361)).size((132, 27)).build(&mut ui.chart_find)?;
+        nwg::Button::builder().parent(w).text("Draw chart").position((296, 361)).size((132, 27)).build(&mut ui.chart_draw)?;
+        nwg::ListView::builder()
+            .parent(w)
+            .list_style(nwg::ListViewStyle::Detailed)
+            .flags(nwg::ListViewFlags::VISIBLE | nwg::ListViewFlags::SINGLE_SELECTION | nwg::ListViewFlags::TAB_STOP)
+            .ex_flags(nwg::ListViewExFlags::FULL_ROW_SELECT)
+            .position((20, 394))
+            .size((600, 104))
+            .build(&mut ui.charts)?;
+        for (i, (name, width)) in [("Approach", 206), ("Runway", 90), ("Arrivals that feed it", 278)].into_iter().enumerate() {
+            ui.charts.insert_column(nwg::InsertListViewColumn { index: Some(i as i32), fmt: None, width: Some(width), text: Some(name.to_string()) });
+        }
+        ui.charts.set_headers_enabled(true);
+        ui.chart_draw.set_enabled(false);
+
+        nwg::Label::builder().parent(w).text("Options").font(Some(&ui.font_header)).position((20, 512)).size((600, 22)).build(&mut ui.options_header)?;
         let opts: [(&mut nwg::CheckBox, &str); 6] = [
             (&mut ui.opt_start, "Start serving as soon as AMDB Bridge opens"),
             (&mut ui.opt_login, "Open AMDB Bridge in the notification area when Windows starts"),
@@ -444,25 +482,25 @@ impl App {
             (&mut ui.opt_cache, "Keep built airports on disk, so they load instantly next time"),
         ];
         for (i, (cb, text)) in opts.into_iter().enumerate() {
-            nwg::CheckBox::builder().parent(w).text(text).position((20, 360 + i as i32 * 23)).size((600, 22)).build(cb)?;
+            nwg::CheckBox::builder().parent(w).text(text).position((20, 536 + i as i32 * 23)).size((600, 22)).build(cb)?;
         }
-        nwg::TextInput::builder().parent(w).readonly(true).position((40, 500)).size((340, 25)).build(&mut ui.folder)?;
-        nwg::Button::builder().parent(w).text("Change…").position((386, 498)).size((90, 29)).build(&mut ui.folder_change)?;
-        nwg::Label::builder().parent(w).text("Limit").h_align(nwg::HTextAlign::Right).position((484, 503)).size((40, 22)).build(&mut ui.limit_label)?;
-        nwg::TextInput::builder().parent(w).align(nwg::HTextAlign::Right).limit(7).placeholder_text(Some("none")).position((530, 500)).size((58, 25)).build(&mut ui.limit)?;
-        nwg::Label::builder().parent(w).text("MB").position((594, 503)).size((26, 22)).build(&mut ui.limit_unit)?;
+        nwg::TextInput::builder().parent(w).readonly(true).position((40, 676)).size((340, 25)).build(&mut ui.folder)?;
+        nwg::Button::builder().parent(w).text("Change…").position((386, 674)).size((90, 29)).build(&mut ui.folder_change)?;
+        nwg::Label::builder().parent(w).text("Limit").h_align(nwg::HTextAlign::Right).position((484, 679)).size((40, 22)).build(&mut ui.limit_label)?;
+        nwg::TextInput::builder().parent(w).align(nwg::HTextAlign::Right).limit(7).placeholder_text(Some("none")).position((530, 676)).size((58, 25)).build(&mut ui.limit)?;
+        nwg::Label::builder().parent(w).text("MB").position((594, 679)).size((26, 22)).build(&mut ui.limit_unit)?;
 
         // Activity
-        nwg::Label::builder().parent(w).text("Activity").font(Some(&ui.font_header)).position((20, 540)).size((200, 22)).build(&mut ui.activity_header)?;
-        nwg::Button::builder().parent(w).text("Aircraft report").font(Some(&ui.font_small)).position((258, 537)).size((124, 26)).build(&mut ui.collect)?;
-        nwg::Button::builder().parent(w).text("Airports folder").font(Some(&ui.font_small)).position((388, 537)).size((124, 26)).build(&mut ui.open_folder)?;
-        nwg::Button::builder().parent(w).text("Save log").font(Some(&ui.font_small)).position((518, 537)).size((102, 26)).build(&mut ui.open_log)?;
+        nwg::Label::builder().parent(w).text("Activity").font(Some(&ui.font_header)).position((20, 716)).size((200, 22)).build(&mut ui.activity_header)?;
+        nwg::Button::builder().parent(w).text("Aircraft report").font(Some(&ui.font_small)).position((258, 713)).size((124, 26)).build(&mut ui.collect)?;
+        nwg::Button::builder().parent(w).text("Airports folder").font(Some(&ui.font_small)).position((388, 713)).size((124, 26)).build(&mut ui.open_folder)?;
+        nwg::Button::builder().parent(w).text("Save log").font(Some(&ui.font_small)).position((518, 713)).size((102, 26)).build(&mut ui.open_log)?;
         nwg::TextBox::builder()
             .parent(w)
             .readonly(true)
             .flags(nwg::TextBoxFlags::VISIBLE | nwg::TextBoxFlags::VSCROLL | nwg::TextBoxFlags::AUTOVSCROLL | nwg::TextBoxFlags::TAB_STOP)
             .font(Some(&ui.font_small))
-            .position((20, 568))
+            .position((20, 744))
             .size((600, 66))
             .build(&mut ui.log)?;
 
@@ -563,6 +601,10 @@ impl App {
                     self.remove_map();
                 } else if handle == ui.refresh.handle {
                     self.refresh_inventory();
+                } else if handle == ui.chart_find.handle {
+                    self.find_procedures();
+                } else if handle == ui.chart_draw.handle {
+                    self.draw_chart();
                 } else if handle == ui.folder_change.handle {
                     self.change_folder();
                 } else if handle == ui.open_folder.handle {
@@ -882,6 +924,117 @@ impl App {
 
     // ----------------------------------------------------------------------------------
     // Simulators and the A220 map
+
+    /// What this airport has, read from the navigation data the simulator already has.
+    ///
+    /// The approaches are what the list shows, because an approach is what a chart is
+    /// drawn of. The arrivals that feed each one are named beside it, so a reader handed
+    /// a particular arrival can see which approach it leads to and ask for that chart.
+    fn find_procedures(&self) {
+        use amdbgen::sources::msfs::procedures::Kind;
+        let icao = self.ui.chart_icao.text().trim().to_uppercase();
+        if icao.len() < 3 {
+            amdbgen::term::warn("Type an airport's ICAO code first, like LPMA or KJFK");
+            self.drain_lines_only();
+            return;
+        }
+        let found = match amdbgen::sources::msfs::procedures::find(&icao) {
+            Ok(Some(a)) => a,
+            Ok(None) => {
+                amdbgen::term::warn(&format!("{icao} is not in the navigation data on this computer"));
+                self.ui.charts.clear();
+                self.ui.chart_draw.set_enabled(false);
+                self.drain_lines_only();
+                return;
+            }
+            Err(e) => {
+                amdbgen::term::error(&format!("Could not read the navigation data: {e:#}"));
+                self.drain_lines_only();
+                return;
+            }
+        };
+        let count = |k: Kind| found.procedures.iter().filter(|p| p.kind == k).count();
+        amdbgen::term::info(&format!(
+            "{icao}: {} departures, {} arrivals, {} approaches",
+            count(Kind::Sid),
+            count(Kind::Star),
+            count(Kind::Approach)
+        ));
+        let lv = &self.ui.charts;
+        lv.set_redraw(false);
+        lv.clear();
+        let mut rows = 0;
+        for p in found.procedures.iter().filter(|p| p.kind == Kind::Approach) {
+            // The ways in to this approach, which is how an arrival hands over to it.
+            let mut feeds: Vec<&str> = p
+                .transitions
+                .iter()
+                .filter(|tr| tr.part.is_empty() && !tr.name.is_empty())
+                .map(|tr| tr.name.as_str())
+                .collect();
+            feeds.dedup();
+            let joined = feeds.join(", ");
+            for (col, text) in [p.name.as_str(), p.runway.as_str(), joined.as_str()].into_iter().enumerate() {
+                lv.insert_item(nwg::InsertListViewItem {
+                    index: Some(rows),
+                    column_index: col as i32,
+                    text: Some(text.to_string()),
+                    image: None,
+                });
+            }
+            rows += 1;
+        }
+        lv.set_redraw(true);
+        self.ui.chart_draw.set_enabled(rows > 0);
+        if rows == 0 {
+            amdbgen::term::warn(&format!("{icao} has no instrument approaches in the navigation data"));
+        }
+        self.drain_lines_only();
+    }
+
+    /// Draw the approach picked in the list, by the command-line tool beside this
+    /// program. It goes to the network for terrain and obstacles, so it runs on its own
+    /// and the window stays answerable while it does.
+    fn draw_chart(&self) {
+        let icao = self.ui.chart_icao.text().trim().to_uppercase();
+        let Some(row) = self.ui.charts.selected_item() else {
+            amdbgen::term::warn("Pick an approach from the list first");
+            self.drain_lines_only();
+            return;
+        };
+        let Some(item) = self.ui.charts.item(row, 0, 260) else { return };
+        let approach = item.text;
+        let Some(exe) = amdbgen_exe() else {
+            amdbgen::term::error("amdbgen.exe is missing from this installation - reinstall AMDB Bridge");
+            self.drain_lines_only();
+            return;
+        };
+        // A chart's name goes in a filename, and an approach is called things like
+        // "RNAV (GPS) Z RWY 05" or "ILS 27L/R".
+        let tidy: String = approach.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+        let name = format!("{icao}-{}.pdf", tidy.trim_matches('-'));
+        let out = desktop::downloads_dir().join(name);
+        amdbgen::term::info(&format!("Drawing {icao} {approach}, which takes a moment the first time..."));
+        self.drain_lines_only();
+        let shared = self.shared.clone();
+        std::thread::spawn(move || {
+            let result = std::process::Command::new(exe)
+                .args(["approach-chart", &icao, "--approach", &approach, "--out"])
+                .arg(&out)
+                .arg("--open")
+                .output();
+            match result {
+                Ok(o) if o.status.success() => amdbgen::term::success(&format!("Chart written to {}", out.display())),
+                Ok(o) => {
+                    let why = String::from_utf8_lossy(&o.stderr);
+                    let last = why.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("no reason given");
+                    amdbgen::term::error(&format!("Could not draw {icao} {approach}: {}", last.trim()));
+                }
+                Err(e) => amdbgen::term::error(&format!("Could not run amdbgen: {e}")),
+            }
+            shared.wake();
+        });
+    }
 
     fn refresh_inventory(&self) {
         let (redirect, serving_redirect, xplane_on) = {
