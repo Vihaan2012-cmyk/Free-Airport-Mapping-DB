@@ -824,6 +824,9 @@ fn fix_roles(finals: &[&Leg]) -> Vec<Option<&'static str>> {
 /// A run of legs as a line on the map, through the fixes that have a position.
 fn draw_track(c: &mut Content, v: &View, legs: &[&Leg], start: Option<(f64, f64)>, weight: f32, dashed: bool, grey: f32) -> Vec<(f32, f32)> {
     let mut pts: Vec<(f32, f32)> = Vec::new();
+    // The same track in latitude and longitude, which is where a turn has to be worked
+    // out: a mile on the page is not a mile at every latitude.
+    let mut ll: Vec<(f64, f64)> = Vec::new();
     let mut last_ll: Option<(f64, f64)> = start;
     if let Some((lat, lon)) = start {
         pts.push(v.at(lat, lon));
@@ -840,7 +843,13 @@ fn draw_track(c: &mut Content, v: &View, legs: &[&Leg], start: Option<(f64, f64)
                 _ => pts.push(v.at(lat, lon)),
             }
             last_ll = Some((lat, lon));
+            ll.push((lat, lon));
         }
+    }
+    // Where the track doubles back, the turn is drawn round rather than as a spike.
+    if ll.len() >= 3 {
+        let rounded = round_turns(ll);
+        pts = start.into_iter().map(|(lat, lon)| v.at(lat, lon)).chain(rounded.into_iter().map(|(lat, lon)| v.at(lat, lon))).collect();
     }
     if pts.len() < 2 {
         return pts;
@@ -861,6 +870,85 @@ fn draw_track(c: &mut Content, v: &View, legs: &[&Leg], start: Option<(f64, f64)
     c.stroke();
     c.restore_state();
     pts
+}
+
+/// Round the corners of a track, because an aircraft does not fly corners.
+///
+/// A procedure is coded as fixes joined by straight legs, and drawn literally that is a
+/// polyline with sharp angles at every fix. No published chart has one. What is flown at
+/// each fix is a turn of about a mile's radius, and where two legs meet at a wide angle
+/// — Madeira goes out on 010°, across on 108° and back down on 206° — rounding those
+/// turns is exactly what turns a squared-off path into the racetrack on the plate.
+///
+/// The arc is the ordinary tangent fillet: it touches each leg the same distance back
+/// from the fix, and that distance is capped at a share of the shorter leg so a turn
+/// never eats the leg it came from.
+fn round_turns(pts: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
+    // A rate-one turn at 210 kt, which is about what a reversal is flown at.
+    const RADIUS_NM: f64 = 1.15;
+    // Below this a turn is a kink in a straight track and rounding it shows nothing.
+    const LEAST_TURN_DEG: f64 = 25.0;
+    if pts.len() < 3 {
+        return pts;
+    }
+    let mut out = vec![pts[0]];
+    for i in 1..pts.len() - 1 {
+        let here = pts[i];
+        let local = Local::at(here);
+        let (ax, ay) = local.to_nm(pts[i - 1].0, pts[i - 1].1);
+        let (bx, by) = local.to_nm(pts[i + 1].0, pts[i + 1].1);
+        let (la, lb) = (ax.hypot(ay), bx.hypot(by));
+        if la < 0.2 || lb < 0.2 {
+            out.push(here);
+            continue;
+        }
+        // Unit vectors from the fix back along each leg.
+        let (ux, uy) = (ax / la, ay / la);
+        let (wx, wy) = (bx / lb, by / lb);
+        // The angle between the two legs at the fix. A straight-through track has the
+        // legs opposite, so the angle is 180° and nothing is turned through.
+        let between = (ux * wx + uy * wy).clamp(-1.0, 1.0).acos();
+        let turned = std::f64::consts::PI - between;
+        if turned.to_degrees() < LEAST_TURN_DEG || between < 1e-3 {
+            out.push(here);
+            continue;
+        }
+        let half = between / 2.0;
+        // How far back along each leg the arc touches, capped so it leaves the legs room.
+        let reach = (RADIUS_NM / half.tan()).min(0.45 * la.min(lb));
+        let r = reach * half.tan();
+        if r < 0.05 {
+            out.push(here);
+            continue;
+        }
+        let (t1x, t1y) = (ux * reach, uy * reach);
+        let (t2x, t2y) = (wx * reach, wy * reach);
+        // The centre lies along the bisector of the two legs.
+        let (bxn, byn) = (ux + wx, uy + wy);
+        let blen = bxn.hypot(byn);
+        if blen < 1e-6 {
+            out.push(here);
+            continue;
+        }
+        let along = r / half.sin();
+        let (cx, cy) = (bxn / blen * along, byn / blen * along);
+        let a1 = (t1y - cy).atan2(t1x - cx);
+        let a2 = (t2y - cy).atan2(t2x - cx);
+        let mut sweep = a2 - a1;
+        while sweep > std::f64::consts::PI {
+            sweep -= std::f64::consts::TAU;
+        }
+        while sweep < -std::f64::consts::PI {
+            sweep += std::f64::consts::TAU;
+        }
+        let steps = ((sweep.abs().to_degrees() / 5.0) as usize).clamp(3, 48);
+        for s in 0..=steps {
+            let a = a1 + sweep * s as f64 / steps as f64;
+            out.push(local.to_ll(cx + r * a.cos(), cy + r * a.sin()));
+        }
+    }
+    out.push(pts[pts.len() - 1]);
+    out
 }
 
 /// An arrowhead at the end of a track, pointing the way it is flown.
@@ -1859,12 +1947,46 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
 /// What the missed approach asks for, in a sentence, read off its legs.
 fn missed_text(legs: &[&Leg]) -> String {
     let mut parts: Vec<String> = Vec::new();
-    for leg in legs {
+    let mut said_hold = false;
+    for (i, leg) in legs.iter().enumerate() {
         let piece = match leg.path.as_str() {
-            "CA" | "VA" | "FA" => leg.altitude_ft.map(|a| format!("climb to {a:.0} ft")),
-            "HM" | "HA" | "HF" => Some(if leg.fix.is_empty() { "hold".to_string() } else { format!("hold at {}", leg.fix) }),
-            "DF" | "TF" | "CF" | "IF" => (!leg.fix.is_empty()).then(|| format!("direct {}", leg.fix)),
-            "CI" | "VI" | "VM" | "FM" => leg.course_deg.map(|c| format!("track {c:03.0}")),
+            // A climb on a heading, with the way round it is turned on to where the
+            // procedure says: "turn LEFT onto heading 137" is an instruction, "track 137"
+            // is a description, and a crew flying it wants the instruction.
+            "CI" | "VI" | "VM" | "FM" | "CD" | "VD" | "VR" | "CR" => {
+                let Some(course) = leg.course_deg else { continue };
+                let turn = match leg.turn {
+                    Some(Turn::Left) => "Turn LEFT onto heading",
+                    Some(Turn::Right) => "Turn RIGHT onto heading",
+                    None => "Track heading",
+                };
+                let mut s = format!("{turn} {course:03.0}\u{b0}");
+                // What that heading is flown to meet, where the next leg says.
+                if let Some(next) = legs.get(i + 1) {
+                    if matches!(next.path.as_str(), "CF" | "CR" | "VR") {
+                        if let Some(radial) = next.theta_deg.or(next.course_deg) {
+                            let from = if next.navaid.is_empty() { String::new() } else { format!("{} ", next.navaid) };
+                            s.push_str(&format!(" to intercept {from}R-{radial:03.0}"));
+                        }
+                    }
+                }
+                Some(s)
+            }
+            "CA" | "VA" | "FA" => leg.altitude_ft.map(|a| format!("climb to {a:.0}'")),
+            "HM" | "HA" | "HF" => {
+                // Where the hold is at the fix just reached, a chart says only "and
+                // hold"; it names the fix when the hold is somewhere else.
+                let same = legs.get(i.wrapping_sub(1)).map_or(false, |p| p.fix == leg.fix);
+                said_hold = true;
+                Some(if leg.fix.is_empty() || same { "hold".to_string() } else { format!("hold at {}", leg.fix) })
+            }
+            "DF" | "TF" | "CF" | "IF" => (!leg.fix.is_empty()).then(|| {
+                let mut s = format!("proceed to {}", leg.fix);
+                if let Some(a) = leg.altitude_ft {
+                    s.push_str(&format!(" climbing to {a:.0}'"));
+                }
+                s
+            }),
             _ => None,
         };
         if let Some(p) = piece {
@@ -1876,7 +1998,13 @@ fn missed_text(legs: &[&Leg]) -> String {
     if parts.is_empty() {
         return "As published.".to_string();
     }
-    let mut s = parts.join(", then ");
+    // "A, B and hold" rather than "A, then B, then hold": the last step of a missed
+    // approach is joined to the one before it, the way a plate joins them.
+    let tail = said_hold.then(|| parts.pop()).flatten();
+    let mut s = parts.join(", ");
+    if let Some(tail) = tail {
+        s.push_str(&format!(" and {tail}"));
+    }
     s.get_mut(0..1).map(|c| c.make_ascii_uppercase());
     format!("{s}.")
 }
@@ -2616,9 +2744,14 @@ fn lights_out(visibility: &str) -> (String, String) {
 /// and with the approach lights out longer still. They are marked as such.
 fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate) {
     box_outline(c, x, y, w, h, 1.2, INK);
-    let straight_w = w * 0.66;
+    // Two thirds of the band is the straight-in and the rest is the circle-to-land.
+    // Where the approach may only be circled there is no straight-in at all, so the whole
+    // width goes to the circling minima rather than to a ruled box with nothing in it.
+    let straight_w = if ch.circling_only { 0.0 } else { w * 0.66 };
     let circle_x = x + straight_w;
-    line(c, circle_x, y, circle_x, y + h, 0.9, INK);
+    if straight_w > 1.0 {
+        line(c, circle_x, y, circle_x, y + h, 0.9, INK);
+    }
 
     let head_h = 12.0;
     let sub_h = 30.0;
@@ -2626,8 +2759,10 @@ fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32
     let sub_y = head_y - sub_h;
     let row_h = (sub_y - y) / 4.0;
     fill_box(c, x, head_y, w, head_h, 0.14);
-    let straight = if ch.circling_only { "CIRCLING APPROACH".to_string() } else { format!("STRAIGHT-IN LANDING RWY {}", ch.procedure.runway) };
-    text_centred(c, bold, 7.0, x + straight_w / 2.0, head_y + 3.5, &straight, 1.0);
+    if straight_w > 1.0 {
+        let straight = format!("STRAIGHT-IN LANDING RWY {}", ch.procedure.runway);
+        text_centred(c, bold, 7.0, x + straight_w / 2.0, head_y + 3.5, &straight, 1.0);
+    }
     text_centred(c, bold, 7.0, circle_x + (w - straight_w) / 2.0, head_y + 3.5, "CIRCLE-TO-LAND", 1.0);
     line(c, x, sub_y, x + w, sub_y, 0.8, INK);
 
@@ -2638,8 +2773,10 @@ fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32
         line(c, x + main_w, y, x + main_w, sub_y + sub_h, 0.6, 0.55);
     }
     let label = if est.approach.has_glidepath() { "DA(H)" } else { "MDA(H)" };
-    text_centred(c, bold, 8.0, x + main_w / 2.0, sub_y + sub_h - 9.0, &est.approach.label().to_uppercase(), INK);
-    text_centred(c, font, 7.5, x + main_w / 2.0, sub_y + sub_h - 19.0, &format!("{label} {:.0}'({:.0}')", est.altitude_ft, est.height_ft), INK);
+    if straight_w > 1.0 {
+        text_centred(c, bold, 8.0, x + main_w / 2.0, sub_y + sub_h - 9.0, &est.approach.label().to_uppercase(), INK);
+        text_centred(c, font, 7.5, x + main_w / 2.0, sub_y + sub_h - 19.0, &format!("{label} {:.0}'({:.0}')", est.altitude_ft, est.height_ft), INK);
+    }
     if let Some((alt, hat)) = ch.published_loc {
         text_centred(c, bold, 8.0, x + main_w + (straight_w - main_w) / 2.0, sub_y + sub_h - 9.0, "LOC (GS out)", INK);
         text_centred(c, font, 7.5, x + main_w + (straight_w - main_w) / 2.0, sub_y + sub_h - 20.0, &format!("MDA(H) {alt:.0}'({hat:.0}')"), INK);
@@ -2652,7 +2789,10 @@ fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32
     text_centred(c, font, 6.5, circle_x + kts_w + (w - straight_w - kts_w) / 2.0, sub_y + 8.0, "MDA(H)", 0.2);
 
     // A row to each category.
-    const KTS: [&str; 4] = ["90", "120", "140", "165"];
+    // The maximum speed each category may circle at, which is not the speed it crosses
+    // the threshold at. A chart's circling table is headed by the first; ours printed the
+    // second, so every figure in the column was thirty knots light.
+    const KTS: [&str; 4] = ["100", "135", "180", "205"];
     let published = ch.published;
     for (i, letter) in ["A", "B", "C", "D"].iter().enumerate() {
         let row_y = sub_y - (i + 1) as f32 * row_h;
@@ -2954,7 +3094,9 @@ mod tests {
     fn a_missed_approach_reads_as_a_sentence() {
         let legs = vec![leg("CA", "", Some(3000.0)), leg("DF", "BOSSI", None), leg("HM", "BOSSI", None)];
         let refs: Vec<&Leg> = legs.iter().collect();
-        assert_eq!(missed_text(&refs), "Climb to 3000 ft, then direct BOSSI, then hold at BOSSI.");
+        // The hold is at the fix just reached, so it is not named a second time, and the
+        // last step is joined to the one before it rather than listed after it.
+        assert_eq!(missed_text(&refs), "Climb to 3000', proceed to BOSSI and hold.");
     }
 
     #[test]
