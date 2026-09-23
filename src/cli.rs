@@ -129,6 +129,14 @@ enum Cmd {
         #[arg(long)]
         open: bool,
     },
+    /// Approach charts on the flight bags built on the Navigraph SDK (iniBuilds A350, PMDG
+    /// 737 and 777): `on` points them at the bridge, `off` gives them their own back,
+    /// `status` says which each is. The same as the bridge's `charts`, without its need for
+    /// administrator rights.
+    TabletCharts {
+        /// on, off or status
+        state: String,
+    },
     /// A departure (SID) or arrival (STAR) chart, from the simulator's navigation data.
     ProcedureChart {
         icao: String,
@@ -1062,6 +1070,34 @@ pub fn run() -> Result<()> {
         Cmd::MinimaAudit { truth, out, jobs } => crate::audit::run(&truth, out.as_deref(), jobs),
         Cmd::PublishedCheck { fixtures } => crate::audit::published_check(&fixtures),
         Cmd::ProcedureChart { icao, name, out, png, scale, open } => procedure_chart_cmd(&icao, name.as_deref(), out, png, scale, open),
+        Cmd::TabletCharts { state } => {
+            use crate::bridge::patcher;
+            let state = state.to_ascii_lowercase();
+            let dirs = patcher::detect_community_dirs();
+            if dirs.is_empty() {
+                return Err(anyhow!("no simulator Community folder found on this computer"));
+            }
+            for d in &dirs {
+                match state.as_str() {
+                    "on" => {
+                        for f in patcher::patch_charts(d, crate::bridge::DEFAULT_PORT)? {
+                            crate::term::success(&format!("Charts from the bridge: {}", f.display()));
+                        }
+                    }
+                    "off" => {
+                        for f in patcher::unpatch_charts(d)? {
+                            crate::term::success(&format!("Own charts restored: {}", f.display()));
+                        }
+                    }
+                    "status" => {}
+                    other => return Err(anyhow!("tablet-charts takes on, off or status, not {other}")),
+                }
+                for (pkg, f, on) in patcher::scan_charts(d) {
+                    println!("  {pkg}  {}: {}", f.file_name().unwrap_or_default().to_string_lossy(), if on { "charts from the bridge" } else { "its own (Navigraph) charts" });
+                }
+            }
+            Ok(())
+        }
         Cmd::ApproachChart { icao, runway, approach, star, list, kind, out, png, scale, open } => {
             approach_chart_cmd(&icao, approach.as_deref().or(runway.as_deref()), star.as_deref(), list, kind.as_deref(), out, png, scale, open)
         }
