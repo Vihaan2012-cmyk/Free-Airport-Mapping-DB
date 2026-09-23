@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.8 (2026-09-23)
+
+- **The profile is drawn in the direction the approach is flown.** Heathrow's 09L runs
+  east, so its plate puts the runway on the right and the aeroplane arrives from the
+  left. Madeira's runs southwest, so its plate puts the runway on the *left* and the
+  aeroplane arrives from the right. Ours always drew the runway on the right, whatever
+  the approach did, which is why Madeira's profile never looked like its plate however
+  much detail went into it. An approach with any westerly component now reads right to
+  left, and everything on the band — the ground line, the runway bar, the threshold
+  elevations, the distance ruler, the arrow on the course — turns with it.
+
+- The beacon column is only drawn where the approach is actually flown over the station.
+  On an ILS it was putting a grey spike through the runway for a VOR that merely
+  happened to sit near the field.
+
 ## 0.5.7 (2026-09-23)
 
 The profile band.
