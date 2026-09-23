@@ -16,6 +16,7 @@
 //! cycles, is what every practical ARINC 424 reader does, this one included.
 
 use crate::dispatch::{bearing_deg, distance_nm, LatLon, PointKind, Waypoint};
+use crate::route::Graph;
 use crate::sources::navdata::{procedure_legs, ProcedureKind, ProcedureLeg};
 use std::collections::BTreeMap;
 
@@ -31,26 +32,39 @@ pub struct Procedure {
 /// The SID published at an airport that starts from a runway and, where it offers more
 /// than one way on to the enroute network, whose last fix best points at the destination:
 /// the transition (or the lack of one) that leaves the flight already headed roughly the
-/// right way, needing the least turn once it reaches the airways.
-pub fn sid_for_runway(icao: &str, runway: &str, destination: LatLon) -> Option<Procedure> {
-    best_sid(&procedure_legs(icao, ProcedureKind::Sid), runway, destination)
+/// right way, needing the least turn once it reaches the airways, with a procedure whose
+/// last fix the airway network also knows by that name winning close calls, since the
+/// route can then join it by identity rather than by a direct leg.
+pub fn sid_for_runway(icao: &str, runway: &str, destination: LatLon, graph: &Graph) -> Option<Procedure> {
+    best_sid(&procedure_legs(icao, ProcedureKind::Sid), runway, destination, &|id, pos| graph.find(id, pos).is_some())
 }
 
 /// The STAR published at an airport that ends on a runway and, where more than one
-/// enroute transition joins it, whose entry fix is best placed coming from the origin.
-pub fn star_for_runway(icao: &str, runway: &str, origin: LatLon) -> Option<Procedure> {
-    best_star(&procedure_legs(icao, ProcedureKind::Star), runway, origin)
+/// enroute transition joins it, whose entry fix is best placed coming from the origin, the
+/// same way [`sid_for_runway`] prefers one the network already knows by name.
+pub fn star_for_runway(icao: &str, runway: &str, origin: LatLon, graph: &Graph) -> Option<Procedure> {
+    best_star(&procedure_legs(icao, ProcedureKind::Star), runway, origin, &|id, pos| graph.find(id, pos).is_some())
 }
+
+/// Worth this many degrees of a worse-aimed turn to a selection score: joining the network
+/// by identity, rather than by a direct leg [`crate::route::join_candidates`] must then go
+/// looking for, is a real saving, but not one so large that a procedure aimed wildly the
+/// wrong way should ever win against one aimed roughly right.
+const NETWORK_JOIN_BONUS_DEG: f64 = 90.0;
 
 /// Whether a transition column names a leg specific to a runway, and if so whether it is
 /// this one: "RW27" serves every parallel runway 27, "RW27B" serves both of a pair,
-/// "RW27L" only the left.
+/// "RW27L" only the left. The runway is compared by its number rather than its digits as
+/// written, so a caller's "9L" still matches a table's two-digit "RW09L".
 fn runway_matches(transition: &str, runway: &str) -> bool {
     let Some(rest) = transition.strip_prefix("RW") else { return false };
-    let rw_digits: String = runway.chars().filter(|c| c.is_ascii_digit()).collect();
-    let t_digits: String = rest.chars().filter(|c| c.is_ascii_digit()).collect();
-    if rw_digits.is_empty() || t_digits != rw_digits {
-        return false;
+    let digits = |s: &str| -> Option<u32> {
+        let d: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+        (!d.is_empty()).then(|| d.parse().ok()).flatten()
+    };
+    match (digits(runway), digits(rest)) {
+        (Some(a), Some(b)) if a == b => {}
+        _ => return false,
     }
     let rw_side = runway.chars().find(|c| c.is_ascii_alphabetic()).map(|c| c.to_ascii_uppercase());
     match rest.chars().find(|c| c.is_ascii_alphabetic()).map(|c| c.to_ascii_uppercase()) {
@@ -121,7 +135,10 @@ fn sequence<'a>(parts: impl IntoIterator<Item = &'a ProcedureLeg>) -> Vec<&'a Pr
 
 /// The pure selection logic, worked entirely from legs already fetched: kept apart from
 /// [`sid_for_runway`] so it can be tested against fixtures rather than a real database.
-pub fn best_sid(legs: &[ProcedureLeg], runway: &str, destination: LatLon) -> Option<Procedure> {
+/// `in_network` answers whether a fix, by its published name and position, is one the
+/// airway graph already has a node for — a real database in the caller, a fixture's own
+/// stand-in in a test.
+pub fn best_sid(legs: &[ProcedureLeg], runway: &str, destination: LatLon, in_network: &dyn Fn(&str, LatLon) -> bool) -> Option<Procedure> {
     let mut best: Option<(f64, Procedure)> = None;
     for (name, all) in group_by_procedure(legs) {
         let runway_legs: Vec<&ProcedureLeg> = all.iter().filter(|l| runway_matches(&l.transition, runway)).copied().collect();
@@ -146,7 +163,10 @@ pub fn best_sid(legs: &[ProcedureLeg], runway: &str, destination: LatLon) -> Opt
             let Some(&last) = seq.last() else { continue };
             let heading_after = if seq.len() >= 2 { bearing_of(seq[seq.len() - 2], last) } else { bearing_deg((last.lat, last.lon), destination) };
             let heading_needed = bearing_deg((last.lat, last.lon), destination);
-            let score = turn(heading_after, heading_needed).abs() + distance_nm((last.lat, last.lon), destination) * 0.002;
+            let mut score = turn(heading_after, heading_needed).abs() + distance_nm((last.lat, last.lon), destination) * 0.002;
+            if in_network(&last.fix, (last.lat, last.lon)) {
+                score -= NETWORK_JOIN_BONUS_DEG;
+            }
             if best.as_ref().is_none_or(|(b, _)| score < *b) {
                 let points = seq.iter().map(|l| to_waypoint(l, name, PointKind::Sid)).collect();
                 best = Some((score, Procedure { ident: name.to_string(), transition: variant.map(str::to_string), points }));
@@ -157,8 +177,10 @@ pub fn best_sid(legs: &[ProcedureLeg], runway: &str, destination: LatLon) -> Opt
 }
 
 /// The pure selection logic for a STAR, mirroring [`best_sid`]: the enroute transition
-/// comes first here, the runway-specific legs last.
-pub fn best_star(legs: &[ProcedureLeg], runway: &str, origin: LatLon) -> Option<Procedure> {
+/// comes first here, the runway-specific legs last. `in_network` is the same test of
+/// whether the *entry* fix — the first point flown, where a STAR joins the airways — is one
+/// the graph already has a node for.
+pub fn best_star(legs: &[ProcedureLeg], runway: &str, origin: LatLon, in_network: &dyn Fn(&str, LatLon) -> bool) -> Option<Procedure> {
     let mut best: Option<(f64, Procedure)> = None;
     for (name, all) in group_by_procedure(legs) {
         let runway_legs: Vec<&ProcedureLeg> = all.iter().filter(|l| runway_matches(&l.transition, runway)).copied().collect();
@@ -184,7 +206,10 @@ pub fn best_star(legs: &[ProcedureLeg], runway: &str, origin: LatLon) -> Option<
             let Some(&first) = seq.first() else { continue };
             let heading_in = bearing_deg(origin, (first.lat, first.lon));
             let heading_of_star = if seq.len() >= 2 { bearing_of(first, seq[1]) } else { bearing_deg(origin, (first.lat, first.lon)) };
-            let score = turn(heading_in, heading_of_star).abs() + distance_nm(origin, (first.lat, first.lon)) * 0.0005;
+            let mut score = turn(heading_in, heading_of_star).abs() + distance_nm(origin, (first.lat, first.lon)) * 0.0005;
+            if in_network(&first.fix, (first.lat, first.lon)) {
+                score -= NETWORK_JOIN_BONUS_DEG;
+            }
             if best.as_ref().is_none_or(|(b, _)| score < *b) {
                 let points = seq.iter().map(|l| to_waypoint(l, name, PointKind::Star)).collect();
                 best = Some((score, Procedure { ident: name.to_string(), transition: variant.map(str::to_string), points }));
@@ -202,6 +227,13 @@ mod tests {
         ProcedureLeg { procedure: proc.into(), transition: transition.into(), seqno: seq, fix: fix.into(), lat, lon, altitude_description: String::new(), altitude1_ft: None, altitude2_ft: None, speed_max_kt: None }
     }
 
+    /// What every test that has no graph of its own to ask uses: nothing is ever in the
+    /// network, so the network-join bonus never enters into it and the heading-only tests
+    /// below keep testing only what they say they test.
+    fn no_network(_id: &str, _pos: LatLon) -> bool {
+        false
+    }
+
     #[test]
     fn runway_matching_understands_shared_and_specific_transitions() {
         assert!(runway_matches("RW27", "27L"));
@@ -210,6 +242,16 @@ mod tests {
         assert!(!runway_matches("RW27L", "27R"));
         assert!(!runway_matches("RW09", "27L"));
         assert!(!runway_matches("KONAN", "27L"));
+    }
+
+    /// The runway ident a caller passes in may or may not be two digits wide — the CLI, a
+    /// wind-based choice and a table read each write it slightly differently — and none of
+    /// that should matter to whether it is the runway a transition was published for.
+    #[test]
+    fn runway_matching_does_not_care_whether_the_leading_zero_is_there() {
+        assert!(runway_matches("RW09L", "9L"));
+        assert!(runway_matches("RW09L", "09L"));
+        assert!(runway_matches("RW04", "4"));
     }
 
     /// Two SIDs off the same runway, one climbing east and one climbing west: the one
@@ -223,7 +265,7 @@ mod tests {
             leg("WEST1A", "", 20, "WEXIT", 0.0, -1.0),
         ];
         let destination = (0.0, 5.0);
-        let sid = best_sid(&legs, "09", destination).expect("a SID");
+        let sid = best_sid(&legs, "09", destination, &no_network).expect("a SID");
         assert_eq!(sid.ident, "EAST1A");
         assert_eq!(sid.points.last().unwrap().ident, "EAXIT");
     }
@@ -231,14 +273,14 @@ mod tests {
     #[test]
     fn a_sid_for_a_different_runway_is_not_offered() {
         let legs = vec![leg("NORTH1A", "RW27", 10, "RW27", 0.0, 0.0), leg("NORTH1A", "", 20, "NEXIT", 0.0, 1.0)];
-        assert!(best_sid(&legs, "09", (0.0, 5.0)).is_none());
+        assert!(best_sid(&legs, "09", (0.0, 5.0), &no_network).is_none());
     }
 
     #[test]
     fn a_sid_with_no_runway_legs_at_all_serves_every_runway() {
         let legs = vec![leg("ANY1A", "", 10, "START", 0.0, 0.0), leg("ANY1A", "", 20, "EXIT", 0.0, 1.0)];
-        assert!(best_sid(&legs, "09", (0.0, 5.0)).is_some());
-        assert!(best_sid(&legs, "27", (0.0, 5.0)).is_some());
+        assert!(best_sid(&legs, "09", (0.0, 5.0), &no_network).is_some());
+        assert!(best_sid(&legs, "27", (0.0, 5.0), &no_network).is_some());
     }
 
     #[test]
@@ -246,9 +288,43 @@ mod tests {
         let mut l = leg("CON1A", "RW09", 10, "FIX1", 0.0, 0.5);
         l.altitude_description = "+".into();
         l.altitude1_ft = Some(4000.0);
-        let sid = best_sid(std::slice::from_ref(&l), "09", (0.0, 5.0)).unwrap();
+        let sid = best_sid(std::slice::from_ref(&l), "09", (0.0, 5.0), &no_network).unwrap();
         assert_eq!(sid.points[0].alt_min_ft, Some(4000.0));
         assert_eq!(sid.points[0].alt_max_ft, None);
+    }
+
+    /// Two SIDs aimed close enough to the destination that heading alone barely tells them
+    /// apart: the one whose last fix the airway network already has under that name should
+    /// win, since the route can then join it by identity rather than a direct leg.
+    #[test]
+    fn a_sid_whose_last_fix_is_in_the_network_is_preferred_on_a_close_call() {
+        let legs = vec![
+            leg("KNOWN1A", "RW09", 10, "RW09", 0.0, 0.0),
+            leg("KNOWN1A", "", 20, "KEXIT", 0.0, 1.0),
+            leg("ORPHN1A", "RW09", 10, "RW09", 0.0, 0.0),
+            leg("ORPHN1A", "", 20, "OEXIT", 0.02, 1.0),
+        ];
+        let destination = (0.0, 5.0);
+        let in_network = |id: &str, _pos: LatLon| id == "KEXIT";
+        let sid = best_sid(&legs, "09", destination, &in_network).expect("a SID");
+        assert_eq!(sid.ident, "KNOWN1A");
+    }
+
+    /// The network-join bonus is a tie-breaker, not a trump card: a SID whose last fix is
+    /// nowhere near the destination still loses to one that is, however well the loser's
+    /// fix happens to be known to the network.
+    #[test]
+    fn the_network_join_bonus_never_beats_a_much_better_heading() {
+        let legs = vec![
+            leg("EAST1A", "RW09", 10, "RW09", 0.0, 0.0),
+            leg("EAST1A", "", 20, "EAXIT", 0.0, 1.0),
+            leg("WEST1A", "RW09", 10, "RW09", 0.0, 0.0),
+            leg("WEST1A", "", 20, "WEXIT", 0.0, -1.0),
+        ];
+        let destination = (0.0, 5.0);
+        let in_network = |id: &str, _pos: LatLon| id == "WEXIT";
+        let sid = best_sid(&legs, "09", destination, &in_network).expect("a SID");
+        assert_eq!(sid.ident, "EAST1A");
     }
 
     /// Two STARs onto the same runway, entered from opposite sides: the one entered from
@@ -264,8 +340,33 @@ mod tests {
             leg("SUD1A", "RW27", 30, "RW27", 0.0, 0.0),
         ];
         let origin = (5.0, 0.0);
-        let star = best_star(&legs, "27", origin).expect("a STAR");
+        let star = best_star(&legs, "27", origin, &no_network).expect("a STAR");
         assert_eq!(star.ident, "NORD1A");
         assert_eq!(star.points.first().unwrap().ident, "NENTRY");
+    }
+
+    /// Real navigation data, read from whatever is installed on this machine — run by hand,
+    /// since a build machine has no PMDG (or equivalent) database to check against. Each of
+    /// these airports is known to publish both, so a `None` back means the reader is broken
+    /// again, not that the airport happens to have nothing today.
+    #[test]
+    #[ignore]
+    fn sids_and_stars_from_the_installed_database() {
+        let graph = Graph::from_navdata();
+        for (icao, runway) in [("EGLL", "27R"), ("LIRF", "16L"), ("KJFK", "04L"), ("VIDP", "11R")] {
+            let legs = procedure_legs(icao, ProcedureKind::Sid);
+            println!("{icao}: {} SID legs", legs.len());
+            assert!(!legs.is_empty(), "{icao} should publish at least one SID");
+            let sid = best_sid(&legs, runway, (0.0, 0.0), &|id, pos| graph.find(id, pos).is_some());
+            println!("{icao}/{runway} SID: {sid:?}");
+            assert!(sid.is_some(), "{icao}/{runway} should choose a SID");
+
+            let legs = procedure_legs(icao, ProcedureKind::Star);
+            println!("{icao}: {} STAR legs", legs.len());
+            assert!(!legs.is_empty(), "{icao} should publish at least one STAR");
+            let star = best_star(&legs, runway, (0.0, 0.0), &|id, pos| graph.find(id, pos).is_some());
+            println!("{icao}/{runway} STAR: {star:?}");
+            assert!(star.is_some(), "{icao}/{runway} should choose a STAR");
+        }
     }
 }
