@@ -112,6 +112,49 @@ fn handle_charts(store: &Store, req: Request, path: &str) -> Option<Request> {
     None
 }
 
+/// SimBrief's `api/xml.fetcher.php`: the last plan `amdbgen dispatch` saved, as JSON when
+/// `json=1` is asked for and as SimBrief's own XML otherwise — exactly as the real
+/// endpoint answers. `userid` and `username` are accepted and ignored: there is only ever
+/// one plan on file, the last one dispatched, whoever it is asked for. Returns the
+/// request back when the path is not this one.
+fn handle_simbrief(req: Request, path: &str, params: &Map<String, Value>) -> Option<Request> {
+    if !path.contains("/api/xml.fetcher.php") {
+        return Some(req);
+    }
+    let json_wanted = params.get("json").and_then(Value::as_str).is_some_and(|v| v != "0" && !v.is_empty());
+    if !super::simbrief::has_plan() {
+        crate::term::warn("SimBrief: a tablet asked for a plan but none has been dispatched yet (run `amdbgen dispatch`)");
+        // Not 200: the FlyByWire parser only reads the body on `res.ok`, and PMDG's
+        // tablet tells its user apart by the status code (400 for no plan on file, among
+        // others) — both match the real SimBrief endpoint's own behaviour on a pilot with
+        // nothing generated yet, which this is standing in for.
+        if json_wanted {
+            respond_json(req, 400, super::simbrief::not_found_json().to_string());
+        } else {
+            respond_bytes(req, 400, "text/xml; charset=utf-8", super::simbrief::not_found_xml().into_bytes());
+        }
+        return None;
+    }
+    if json_wanted {
+        match super::simbrief::json() {
+            Ok(v) => {
+                crate::term::success("SimBrief: served the last dispatched plan (JSON)");
+                respond_json(req, 200, v.to_string());
+            }
+            Err(e) => respond_json(req, 500, json!({ "fetch": { "status": format!("Error: {e:#}") } }).to_string()),
+        }
+    } else {
+        match super::simbrief::xml() {
+            Ok(x) => {
+                crate::term::success("SimBrief: served the last dispatched plan (XML)");
+                respond_bytes(req, 200, "text/xml; charset=utf-8", x.into_bytes());
+            }
+            Err(e) => respond_bytes(req, 500, "text/xml; charset=utf-8", format!("<?xml version=\"1.0\"?><OFP><fetch><status>Error: {e:#}</status></fetch></OFP>").into_bytes()),
+        }
+    }
+    None
+}
+
 fn url_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -358,6 +401,7 @@ fn handle(store: Arc<Store>, req: Request) {
         return;
     }
     let path = path.to_string();
+    let Some(req) = handle_simbrief(req, &path, &params) else { return };
     let Some(req) = handle_charts(&store, req, &path) else { return };
     let Some(pos) = path.find("/v1/") else {
         crate::term::warn(&format!("Unrecognised request {} {}", req.method(), url.chars().take(600).collect::<String>()));
