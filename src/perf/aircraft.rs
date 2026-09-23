@@ -162,11 +162,11 @@ fn row(
 /// `TypeData` and calibrated against publicly reported cruise fuel flows and block fuel.
 fn all() -> Vec<TypeData> {
     vec![
-        row("A20N", "Airbus A320neo", ("LEAP-1A", 2, 27_000.0, 0.53),
+        row("A20N", "Airbus A320neo", ("LEAP-1A", 2, 27_000.0, 0.60),
             (44_300.0, 62_800.0, 79_000.0, 67_400.0, 23_723.0),
             (39_800.0, 0.82, 350.0, 0.78), (None, None),
             (122.6, 35.8, 0.0270, 0.82, 0.79),
-            "Airbus A320 Family Aircraft Characteristics — Airport and Maintenance Planning; CFM LEAP-1A cruise SFC from CFM public data; drag polar estimated, calibrated to reported ~2,300 kg/h cruise burn"),
+            "Airbus A320 Family Aircraft Characteristics — Airport and Maintenance Planning; CFM LEAP-1A cruise SFC from CFM public data; drag polar estimated, TSFC calibrated to a 200 nm trip-fuel reference built from the widely reported ~2,300-2,400 kg/h total cruise burn (theflyingengineer.com, pilotrise.com, September 2026)"),
         row("A21N", "Airbus A321neo", ("LEAP-1A", 2, 33_000.0, 0.53),
             (50_100.0, 74_000.0, 97_000.0, 79_200.0, 23_723.0),
             (39_800.0, 0.82, 350.0, 0.78), (None, None),
@@ -202,7 +202,7 @@ fn all() -> Vec<TypeData> {
             (41_450.0, 0.86, 330.0, 0.82), (Some(285), Some(300.0)),
             (361.6, 64.0, 0.0190, 0.83, 0.83),
             "Airbus A330neo Aircraft Characteristics; Trent 7000 public SFC; drag polar estimated, calibrated to reported ~5,000 kg/h cruise burn"),
-        row("A359", "Airbus A350-900", ("Trent XWB-84", 2, 84_200.0, 0.52),
+        row("A359", "Airbus A350-900", ("Trent XWB-84", 2, 84_200.0, 0.565),
             (142_400.0, 207_000.0, 280_000.0, 205_000.0, 109_000.0),
             (43_100.0, 0.89, 340.0, 0.85), (Some(370), Some(320.0)),
             (443.0, 64.75, 0.0180, 0.84, 0.86),
@@ -212,7 +212,7 @@ fn all() -> Vec<TypeData> {
             (43_100.0, 0.89, 340.0, 0.85), (Some(370), Some(320.0)),
             (443.0, 64.75, 0.0185, 0.84, 0.86),
             "Airbus A350 Aircraft Characteristics; Trent XWB-97 public SFC; drag polar estimated"),
-        row("A388", "Airbus A380-800", ("Trent 970", 4, 70_000.0, 0.58),
+        row("A388", "Airbus A380-800", ("Trent 970", 4, 70_000.0, 0.545),
             (277_000.0, 361_000.0, 575_000.0, 394_000.0, 254_000.0),
             (43_100.0, 0.89, 330.0, 0.85), (None, None),
             (845.0, 79.75, 0.0132, 0.85, 0.85),
@@ -232,11 +232,11 @@ fn all() -> Vec<TypeData> {
             (41_000.0, 0.82, 340.0, 0.78), (None, None),
             (124.6, 34.3, 0.0225, 0.80, 0.79),
             "Boeing 737 Airplane Characteristics for Airport Planning; CFM56-7B public SFC; drag polar estimated"),
-        row("B738", "Boeing 737-800", ("CFM56-7B26", 2, 26_300.0, 0.63),
+        row("B738", "Boeing 737-800", ("CFM56-7B26", 2, 26_300.0, 0.76),
             (41_413.0, 61_688.0, 79_016.0, 66_360.0, 20_894.0),
             (41_000.0, 0.82, 340.0, 0.78), (None, None),
             (124.6, 35.8, 0.0225, 0.80, 0.79),
-            "Boeing 737 Airplane Characteristics for Airport Planning; CFM56-7B public SFC; calibrated to widely reported ~2,500 kg/h cruise burn"),
+            "Boeing 737 Airplane Characteristics for Airport Planning; CFM56-7B public SFC; TSFC raised from an earlier estimate after checking against 850 USG/h (~2,580 kg/h) widely reported for cruise (flyawaysimulation.com, September 2026), which a 1,000 nm trip flown at that rate for roughly 2h30 puts at about 5,800 kg trip fuel"),
         row("B739", "Boeing 737-900ER", ("CFM56-7B27", 2, 27_300.0, 0.63),
             (44_676.0, 64_950.0, 85_139.0, 71_350.0, 20_894.0),
             (41_000.0, 0.82, 340.0, 0.78), (None, None),
@@ -262,11 +262,11 @@ fn all() -> Vec<TypeData> {
             (43_100.0, 0.89, 330.0, 0.84), (Some(330), Some(320.0)),
             (427.8, 64.8, 0.0192, 0.82, 0.85),
             "Boeing 777 Airplane Characteristics for Airport Planning; GE90-110B1 public SFC; drag polar estimated"),
-        row("B77W", "Boeing 777-300ER", ("GE90-115B", 2, 115_300.0, 0.55),
+        row("B77W", "Boeing 777-300ER", ("GE90-115B", 2, 115_300.0, 0.575),
             (167_829.0, 237_683.0, 351_530.0, 251_290.0, 145_150.0),
             (43_100.0, 0.89, 330.0, 0.84), (Some(330), Some(320.0)),
             (427.8, 64.8, 0.0198, 0.82, 0.85),
-            "Boeing 777 Airplane Characteristics for Airport Planning; GE90-115B public SFC; calibrated to widely reported ~7,500-7,900 kg/h cruise burn"),
+            "Boeing 777 Airplane Characteristics for Airport Planning; GE90-115B public SFC; calibrated to widely reported ~7,500-7,900 kg/h cruise burn, cross-checked against the GE90-115B LHR-NRT/NRT-LHR block fuel Aircraft Commerce published from Jeppesen flight plans (Issue 60, Oct/Nov 2008): 26,901-29,468 USG over 5,200-5,471 nm ESAD"),
         row("B788", "Boeing 787-8", ("GEnx-1B64", 2, 64_000.0, 0.51),
             (119_950.0, 161_000.0, 227_930.0, 172_365.0, 126_206.0),
             (43_100.0, 0.90, 365.0, 0.85), (Some(330), Some(320.0)),
@@ -342,6 +342,48 @@ pub fn known_types() -> Vec<&'static str> {
     table().iter().map(|t| t.spec_icao_type).collect()
 }
 
+/// A typical seating count for the type, two-class for a widebody and either two-class or
+/// the common single-class figure for a narrowbody — the number a dispatcher would reach
+/// for if nobody has said how many are travelling, from the manufacturer's own Aircraft
+/// Characteristics documents (the 777-300ER's 368 is the Boeing standard three-class figure
+/// also seen in Aircraft Commerce's published 777 fuel-burn analysis, Issue 60, Oct/Nov
+/// 2008). Never a limit — `perf::weights` still cuts payload against MZFW and MTOW if this
+/// figure, times the standard passenger-and-bag weight, is too much for the route flown.
+pub fn typical_pax(icao_type: &str) -> u32 {
+    match icao_type.to_uppercase().as_str() {
+        "A20N" | "A320" => 150,
+        "A21N" | "A321" => 185,
+        "A319" => 124,
+        "A332" => 247,
+        "A333" => 277,
+        "A339" => 287,
+        "A359" => 325,
+        "A35K" => 369,
+        "A388" => 525,
+        "BCS1" => 120,
+        "BCS3" => 140,
+        "B737" => 126,
+        "B738" | "B38M" => 162,
+        "B739" | "B39M" => 178,
+        "B772" => 313,
+        "B77L" => 301,
+        "B77W" => 368,
+        "B788" => 242,
+        "B789" => 290,
+        "B78X" => 330,
+        "B744" => 416,
+        "B748" => 410,
+        "B763" => 218,
+        "E190" => 100,
+        "E195" => 118,
+        "CRJ9" => 90,
+        "AT76" => 70,
+        "DH8D" => 78,
+        // An unlisted or unknown type: a generic single-aisle figure rather than nothing.
+        _ => 150,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,6 +393,19 @@ mod tests {
         for t in ["A20N", "A21N", "A319", "A320", "A321", "A332", "A333", "A339", "A359", "A35K", "A388", "BCS1", "BCS3", "B737", "B738", "B739", "B38M", "B39M", "B772", "B77L", "B77W", "B788", "B789", "B78X", "B744", "B748", "B763", "E190", "E195", "CRJ9", "AT76", "DH8D"] {
             assert!(lookup(t).is_some(), "missing {t}");
         }
+    }
+
+    #[test]
+    fn typical_pax_is_a_sensible_default_for_every_known_type() {
+        for t in table() {
+            let pax = typical_pax(t.spec_icao_type);
+            assert!(pax > 0, "{}: no default passenger count", t.spec_icao_type);
+            // A default load, at the standard 100 kg a passenger, should fit inside MZFW
+            // without perf::weights having to cut it back before the flight even starts.
+            assert!(t.oew_kg + pax as f64 * 100.0 <= t.mzfw_kg, "{}: {pax} pax at 100 kg overflows MZFW", t.spec_icao_type);
+        }
+        assert_eq!(typical_pax("b77w"), 368, "lookup should be case-insensitive");
+        assert_eq!(typical_pax("ZZZZ"), 150, "an unknown type still gets a sensible default");
     }
 
     #[test]
