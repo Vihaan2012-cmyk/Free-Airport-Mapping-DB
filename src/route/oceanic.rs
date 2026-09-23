@@ -490,12 +490,14 @@ mod tests {
         let mut g = Graph::default();
         add_tracks(&mut g, &tracks);
         let a = tracks.iter().find(|t| t.ident == "A").unwrap();
-        let entry = g.fixes.iter().position(|f| f.id == "ENTRY").expect("ENTRY in the graph");
-        let airways: Vec<&String> = g.edges[entry].iter().map(|e| &e.airway).collect();
-        assert!(airways.contains(&&a.ident));
+        let flat = g.compact();
+        let node = |id: &str| g.fixes().iter().position(|f| f.id == id).map(|i| i as u32);
+        let entry = node("ENTRY").expect("ENTRY in the graph");
+        let airways: Vec<&str> = flat.out(entry).iter().map(|e| g.airway_name(e.airway_id())).collect();
+        assert!(airways.contains(&a.ident.as_str()));
         // ENTRY is the start of the westbound track, so nothing flies back into it on A.
-        let exit = g.fixes.iter().position(|f| f.id == "EXIT").unwrap();
-        assert!(g.edges[exit].iter().all(|e| e.airway != a.ident), "EXIT has no way out on a one-way track");
+        let exit = node("EXIT").unwrap();
+        assert!(flat.out(exit).iter().all(|e| g.airway_name(e.airway_id()) != a.ident), "EXIT has no way out on a one-way track");
     }
 
     #[test]
