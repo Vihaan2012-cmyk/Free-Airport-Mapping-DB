@@ -83,16 +83,19 @@ pub fn build(compact: &Compact, ellipse: Option<&Ellipse>, destination: LatLon, 
         }
     }
 
-    // A fix already carrying a few real edges out of it has no need of a synthetic
-    // shortcut: it is not the sparse spot a direct leg exists for, and giving it one
-    // anyway is what was actually making a long-haul route both slower and worse — see
-    // this module's own doc comment above. `>= 3` is a first cut, not yet swept (see the
-    // TODO in `route::mod`'s `REFINE_MAX_NM`).
-    const WELL_CONNECTED_OUT_DEGREE: usize = 3;
+    // Every fix inside the ellipse is offered direct legs, well-connected ones included.
+    // Only offering them to sparsely connected fixes — on the reasoning that a fix with
+    // three airways out of it is not the sparse spot a direct leg exists for — was tried and
+    // measured: it is about a quarter faster on a long-haul route and worse on every route
+    // it changes at all. London to Rome went from eight per cent over the great circle to
+    // fourteen, Mumbai to Delhi from ten to twenty-three, and London to Dubai — the route
+    // the filter was introduced to improve — from fifteen per cent to twenty-one. A
+    // well-connected fix is often exactly where a route should leave the airways, because
+    // the airways leaving it go somewhere else.
     let mut rows: Vec<Vec<u32>> = vec![Vec::new(); n];
     for node in 0..n as u32 {
         let pos = compact.pos(node);
-        if !inside(pos) || compact.out(node).len() >= WELL_CONNECTED_OUT_DEGREE {
+        if !inside(pos) {
             continue;
         }
         let own_dist = distance_nm(pos, destination);
