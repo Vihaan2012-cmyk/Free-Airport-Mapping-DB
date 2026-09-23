@@ -1059,10 +1059,39 @@ fn limit_ft(s: &str) -> Option<f64> {
 }
 
 /// A flight information region's outline: every part of it, as closed lines of points.
+///
+/// ARINC's `fir_uir` table carries three kinds of row under one identifier: the FIR itself
+/// (indicator `F`), its UIR (`U`), a single boundary that stands for both at once (`B`),
+/// and — read here but never turned into a region of its own — a portion delegated to or
+/// from a neighbour (`C`, and `A` for the delegations an oceanic control area makes). A
+/// delegated portion's boundary overlaps the region it is carved out of and its "name" is
+/// really a note ("DELEGATED BY EGTT TO LFFF"); folding it in as though it were a region
+/// is what used to make a route flicker between two identifiers crossing a border and
+/// print that note as the region's own name.
 #[derive(Debug, Clone)]
 pub struct Region {
     pub ident: String,
+    /// The FIR's name where the region has one, else the UIR's: a single label regardless
+    /// of level, for a caller such as `route::mod`'s "avoid this FIR" that wants the
+    /// region as a whole rather than to read it by altitude.
     pub name: String,
+    /// Every part of the region, its FIR and UIR layers together, floor to ceiling: for
+    /// the same whole-region callers `name` serves.
+    pub parts: Vec<Vec<(f64, f64)>>,
+    /// The FIR and the UIR taken apart, each under its own name and vertical band — these
+    /// do differ (Paris's FIR is named "PARIS", its UIR "FRANCE") — for a route report
+    /// that must say which one a level actually crosses rather than print both.
+    pub layers: Vec<RegionLayer>,
+}
+
+/// One vertical layer of a region: the FIR (surface up to its ceiling), the UIR (from
+/// there up), or, where ARINC gives one boundary for both, the same boundary twice, once
+/// for each band.
+#[derive(Debug, Clone)]
+pub struct RegionLayer {
+    pub name: String,
+    pub floor_ft: f64,
+    pub ceiling_ft: f64,
     pub parts: Vec<Vec<(f64, f64)>>,
 }
 
@@ -1089,60 +1118,118 @@ pub fn restricted_areas(south: f64, north: f64, west: f64, east: f64) -> Vec<Res
     database().map(|db| db.restricted_areas(south, north, west, east)).unwrap_or_default()
 }
 
+/// What is gathered for one real indicator (`F`, `U` or `B`) while a region's rows are
+/// read: its name and vertical limits, taken from whichever row first carries them, and
+/// every boundary chain closed off under it. A delegated portion's rows (`C`, `A`, or any
+/// other indicator) are read past but never fed into one of these.
+#[derive(Default)]
+struct IndicatorGroup {
+    name: Option<String>,
+    fir_upper: Option<String>,
+    uir_lower: Option<String>,
+    uir_upper: Option<String>,
+    parts: Vec<Vec<(f64, f64)>>,
+}
+
 impl Database {
     fn regions(&self, idents: &[String]) -> Vec<Region> {
         let mut out = Vec::new();
         let Some(connection) = read_only(&self.path) else { return out };
         let Some(table) = self.table("fir_uir") else { return out };
         let sql = format!(
-            "select fir_uir_identifier, fir_uir_indicator, fir_uir_name, boundary_via, fir_uir_latitude, fir_uir_longitude, \
-             arc_origin_latitude, arc_origin_longitude, arc_distance from \"{table}\" where fir_uir_identifier = ?1 \
-             order by fir_uir_indicator, seqno"
+            "select fir_uir_indicator, fir_uir_name, boundary_via, fir_uir_latitude, fir_uir_longitude, \
+             arc_origin_latitude, arc_origin_longitude, arc_distance, fir_upper_limit, uir_lower_limit, uir_upper_limit \
+             from \"{table}\" where fir_uir_identifier = ?1 order by fir_uir_indicator, seqno"
         );
         for ident in idents {
             let Ok(mut statement) = connection.prepare(&sql) else { continue };
             #[allow(clippy::type_complexity)]
-            let rows: Vec<(String, Option<String>, BoundaryRow)> = match statement.query_map([ident.to_uppercase()], |row| {
+            let rows: Vec<(String, Option<String>, BoundaryRow, Option<String>, Option<String>, Option<String>)> = match statement.query_map([ident.to_uppercase()], |row| {
                 Ok((
-                    row.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                    row.get::<_, Option<String>>(1)?,
                     BoundaryRow {
-                        via: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                        at: row.get::<_, Option<f64>>(4)?.zip(row.get::<_, Option<f64>>(5)?),
-                        arc_origin: row.get::<_, Option<f64>>(6)?.zip(row.get::<_, Option<f64>>(7)?),
-                        arc_nm: row.get::<_, Option<f64>>(8)?,
+                        via: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                        at: row.get::<_, Option<f64>>(3)?.zip(row.get::<_, Option<f64>>(4)?),
+                        arc_origin: row.get::<_, Option<f64>>(5)?.zip(row.get::<_, Option<f64>>(6)?),
+                        arc_nm: row.get::<_, Option<f64>>(7)?,
                     },
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, Option<String>>(10)?,
                 ))
             }) {
                 Ok(r) => r.flatten().collect(),
                 Err(_) => continue,
             };
-            // A region is written in parts, the lower and upper regions and any piece of
-            // either that is split off: a part ends where its boundary says it does.
-            let name = rows.iter().find_map(|r| r.1.clone()).unwrap_or_default();
-            let mut parts = Vec::new();
+
+            // A region is written in parts, one boundary chain ending where its own via
+            // says it does ("...E"), grouped first by which real indicator it belongs to
+            // (a change of indicator ends a chain too, whether or not it was marked E).
+            let mut groups: std::collections::HashMap<String, IndicatorGroup> = std::collections::HashMap::new();
             let mut current: Vec<BoundaryRow> = Vec::new();
-            let mut last_indicator = String::new();
-            for (indicator, _, row) in rows {
-                if indicator != last_indicator && !current.is_empty() {
-                    parts.push(boundary(&current));
-                    current.clear();
+            let mut current_indicator = String::new();
+            for (indicator, name, row, fir_upper, uir_lower, uir_upper) in rows {
+                if indicator != current_indicator {
+                    if !current.is_empty() {
+                        groups.entry(current_indicator.clone()).or_default().parts.push(boundary(&current));
+                        current.clear();
+                    }
+                    current_indicator = indicator.clone();
                 }
-                last_indicator = indicator;
+                if !matches!(indicator.as_str(), "F" | "U" | "B") {
+                    // A delegated portion: its boundary rows are read (to keep the loop's
+                    // chain-tracking in step) but never accumulated into a group.
+                    continue;
+                }
+                let group = groups.entry(indicator).or_default();
+                group.name = group.name.take().or(name);
+                group.fir_upper = group.fir_upper.take().or(fir_upper);
+                group.uir_lower = group.uir_lower.take().or(uir_lower);
+                group.uir_upper = group.uir_upper.take().or(uir_upper);
                 let ends = row.via.trim().len() > 1 && row.via.trim().ends_with('E');
                 current.push(row);
                 if ends {
-                    parts.push(boundary(&current));
+                    group.parts.push(boundary(&current));
                     current.clear();
                 }
             }
-            if !current.is_empty() {
-                parts.push(boundary(&current));
+            if !current.is_empty() && matches!(current_indicator.as_str(), "F" | "U" | "B") {
+                groups.entry(current_indicator.clone()).or_default().parts.push(boundary(&current));
             }
-            parts.retain(|p| p.len() >= 3);
-            if !parts.is_empty() {
-                out.push(Region { ident: ident.to_uppercase(), name: name.trim().to_string(), parts });
+
+            let mut parts = Vec::new();
+            let mut layers = Vec::new();
+            for key in ["B", "F", "U"] {
+                let Some(g) = groups.get(key) else { continue };
+                let mut group_parts = g.parts.clone();
+                group_parts.retain(|p| p.len() >= 3);
+                if group_parts.is_empty() {
+                    continue;
+                }
+                parts.extend(group_parts.clone());
+                let name = g.name.clone().unwrap_or_default();
+                let sky = 99_999.0;
+                match key {
+                    // One boundary, read as the FIR up to its stated ceiling and again as
+                    // the UIR from there: ARINC gives it once because the two share a line.
+                    "B" => {
+                        layers.push(RegionLayer { name: name.clone(), floor_ft: 0.0, ceiling_ft: g.fir_upper.as_deref().and_then(limit_ft).unwrap_or(sky), parts: group_parts.clone() });
+                        layers.push(RegionLayer { name, floor_ft: g.uir_lower.as_deref().and_then(limit_ft).unwrap_or(0.0), ceiling_ft: g.uir_upper.as_deref().and_then(limit_ft).unwrap_or(sky), parts: group_parts });
+                    }
+                    "F" => layers.push(RegionLayer { name, floor_ft: 0.0, ceiling_ft: g.fir_upper.as_deref().and_then(limit_ft).unwrap_or(sky), parts: group_parts }),
+                    "U" => layers.push(RegionLayer { name, floor_ft: g.uir_lower.as_deref().and_then(limit_ft).unwrap_or(0.0), ceiling_ft: g.uir_upper.as_deref().and_then(limit_ft).unwrap_or(sky), parts: group_parts }),
+                    _ => unreachable!(),
+                }
             }
+            if layers.is_empty() {
+                // Nothing but delegated rows under this identifier, or nothing at all.
+                continue;
+            }
+            // The FIR's own name leads; a region with no FIR of its own (an oceanic
+            // control area, typically) is named after its UIR instead.
+            let name = groups.get("F").and_then(|g| g.name.clone()).or_else(|| groups.get("B").and_then(|g| g.name.clone())).or_else(|| groups.get("U").and_then(|g| g.name.clone())).unwrap_or_default();
+            out.push(Region { ident: ident.to_uppercase(), name: name.trim().to_string(), parts, layers });
         }
         out
     }
