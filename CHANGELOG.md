@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1 (2026-09-23)
+
+- **The GM5 A220 moving map is patched again**, with its author's permission. It was
+  taken out in 0.5.1 because the patcher carries a few lines of that add-on's script as a
+  search anchor. `serve` and `patch` once more give Gunman5's map a token fallback and
+  point its nearest-airport search at the bridge; `status` reports it; `unpatch` puts it
+  back. The Synaptic instrument-page patcher for our own map is unchanged beside it.
+
 ## 0.6.0 (2026-09-23)
 
 - **Charts can be drawn as pictures.** `amdbgen approach-chart LPMA --approach 05 --png`
