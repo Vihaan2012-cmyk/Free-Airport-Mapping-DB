@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.0 (2026-09-23)
+
+- **Charts can be drawn as pictures.** `amdbgen approach-chart LPMA --approach 05 --png`
+  writes a PNG instead of a PDF, at `--scale` pixels to the point (three is about 216 to
+  the inch on A4). This is what an electronic flight bag asks for, and it is the thing
+  that stood between us and answering one.
+
+  Nothing about the drawing differs. A chart is built out of about two dozen operations —
+  move, line, fill, set a grey, write some text — and those are now named rather than
+  written straight into a PDF stream, with two places to send them: the stream as before,
+  and a bitmap. The PDF a chart comes out as is byte-for-byte what it was, which is the
+  proof that the two cannot drift apart: there is only one set of drawing code.
+
+  The letters come from the sans-serif face already installed on the machine — Arial on
+  Windows, which carries Helvetica's metrics exactly, so the width tables the layout is
+  measured with still hold. Nothing of anyone's is shipped.
+
+- **Approach charts from the desktop app.** Type an airport, press Find procedures, and
+  the app lists what the navigation data on this computer holds: how many departures and
+  arrivals it has, and every instrument approach, each with the arrivals that feed it.
+  Pick one, press Draw chart, and it is written to Downloads and opened.
+
+- **The way in to the approach is drawn on the profile.** A plate's profile carries the
+  arrival as well as the final: Madeira's shows the aeroplane leaving the VOR at 4,000 ft,
+  running out to the turn and coming back at 3,000 to join the approach. That upper line
+  is what makes its profile a wedge rather than one slope.
+
 ## 0.5.9 (2026-09-23)
 
 - **Approach charts from the desktop app.** Type an airport, press Find procedures, and

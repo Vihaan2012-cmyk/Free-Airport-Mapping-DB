@@ -14,7 +14,8 @@ use crate::sources::msfs::procedures::{AirportProcedures, FixRole, Kind, Leg, Pr
 use crate::sources::navdata::{Beacon, Ils, Kind as NavaidKind};
 use crate::sources::obstacles::Obstacle;
 use anyhow::{Context, Result};
-use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str};
+use crate::output::canvas::{Canvas, Raster};
+use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref};
 use std::path::Path as FsPath;
 
 const W: f32 = 595.0; // A4 portrait, points
@@ -147,35 +148,24 @@ fn text_width(font: Name, size: f32, s: &str) -> f32 {
     mils as f32 * size / 1000.0
 }
 
-fn text(c: &mut Content, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) {
-    c.begin_text();
-    c.set_fill_gray(grey);
-    c.set_font(font, size);
-    c.next_line(x, y);
-    c.show(Str(&ascii(s)));
-    c.end_text();
+fn text(c: &mut dyn Canvas, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) {
+    c.text(font, size, x, y, s, grey);
 }
 
-/// Text turned on its side, reading upwards, as a chart labels the strip down its edge.
-fn text_up(c: &mut Content, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) {
-    c.begin_text();
-    c.set_fill_gray(grey);
-    c.set_font(font, size);
-    c.set_text_matrix([0.0, 1.0, -1.0, 0.0, x, y]);
-    c.show(Str(&ascii(s)));
-    c.end_text();
+/// The same, turned a quarter turn, for a label written up the side of a band.
+fn text_up(c: &mut dyn Canvas, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) {
+    c.text_turned(font, size, x, y, s, grey);
 }
 
-fn text_right(c: &mut Content, font: Name, size: f32, right: f32, y: f32, s: &str, grey: f32) {
+fn text_right(c: &mut dyn Canvas, font: Name, size: f32, right: f32, y: f32, s: &str, grey: f32) {
     text(c, font, size, right - text_width(font, size, s), y, s, grey);
 }
 
-fn text_centred(c: &mut Content, font: Name, size: f32, centre: f32, y: f32, s: &str, grey: f32) {
+fn text_centred(c: &mut dyn Canvas, font: Name, size: f32, centre: f32, y: f32, s: &str, grey: f32) {
     text(c, font, size, centre - text_width(font, size, s) / 2.0, y, s, grey);
 }
 
-/// A label over the map, on a white patch so it reads over shaded ground.
-fn label(c: &mut Content, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) {
+fn label(c: &mut dyn Canvas, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) {
     c.set_fill_gray(1.0);
     c.rect(x - 1.0, y - 2.0, text_width(font, size, s) + 2.0, size + 1.0);
     c.fill_nonzero();
@@ -208,7 +198,7 @@ impl Taken {
     }
 
     /// Put a label down if there is room, either where asked or a little below.
-    fn label(&mut self, c: &mut Content, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) -> bool {
+    fn label(&mut self, c: &mut dyn Canvas, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) -> bool {
         let (w, h) = (text_width(font, size, s) + 2.0, size + 2.0);
         for drop in [0.0, -h, -2.0 * h, h] {
             if self.free(x, y + drop, w, h) {
@@ -221,7 +211,7 @@ impl Taken {
     }
 }
 
-fn line(c: &mut Content, x1: f32, y1: f32, x2: f32, y2: f32, w: f32, grey: f32) {
+fn line(c: &mut dyn Canvas, x1: f32, y1: f32, x2: f32, y2: f32, w: f32, grey: f32) {
     c.set_stroke_gray(grey);
     c.set_line_width(w);
     c.move_to(x1, y1);
@@ -229,21 +219,21 @@ fn line(c: &mut Content, x1: f32, y1: f32, x2: f32, y2: f32, w: f32, grey: f32) 
     c.stroke();
 }
 
-fn box_outline(c: &mut Content, x: f32, y: f32, w: f32, h: f32, weight: f32, grey: f32) {
+fn box_outline(c: &mut dyn Canvas, x: f32, y: f32, w: f32, h: f32, weight: f32, grey: f32) {
     c.set_stroke_gray(grey);
     c.set_line_width(weight);
     c.rect(x, y, w, h);
     c.stroke();
 }
 
-fn fill_box(c: &mut Content, x: f32, y: f32, w: f32, h: f32, grey: f32) {
+fn fill_box(c: &mut dyn Canvas, x: f32, y: f32, w: f32, h: f32, grey: f32) {
     c.set_fill_gray(grey);
     c.rect(x, y, w, h);
     c.fill_nonzero();
 }
 
 /// A circle, as four Bezier arcs.
-fn circle(c: &mut Content, cx: f32, cy: f32, r: f32) {
+fn circle(c: &mut dyn Canvas, cx: f32, cy: f32, r: f32) {
     let k = r * 0.5523;
     c.move_to(cx + r, cy);
     c.cubic_to(cx + r, cy + k, cx + k, cy + r, cx, cy + r);
@@ -470,7 +460,7 @@ const TERRAIN_BANDS: [(f64, (f32, f32, f32)); 5] = [
 
 /// Heights tinted in bands, as a terrain picture rather than contours: quick to read and
 /// honest about what the model can say.
-fn draw_terrain(c: &mut Content, patch: &Patch, v: &View, field_ft: f64) {
+fn draw_terrain(c: &mut dyn Canvas, patch: &Patch, v: &View, field_ft: f64) {
     // From the top down: each band paints everything below its own ceiling, and the next
     // one paints over the middle of it, so what is left of each is the ring between one
     // height and the next. The ground the airport stands on is painted out again, so that
@@ -504,7 +494,7 @@ fn draw_terrain(c: &mut Content, patch: &Patch, v: &View, field_ft: f64) {
 /// the contour, so each band gets its ceiling written once, in the widest piece of that
 /// band on the page — which is where there is room for it and where it is least likely
 /// to be read as belonging to the band next door.
-fn label_terrain(c: &mut Content, font: Name, patch: &Patch, v: &View, field_ft: f64, taken: &mut Taken) {
+fn label_terrain(c: &mut dyn Canvas, font: Name, patch: &Patch, v: &View, field_ft: f64, taken: &mut Taken) {
     let floor = (field_ft + 250.0).max(TERRAIN_BANDS[0].0);
     for (i, (top, _)) in TERRAIN_BANDS.iter().enumerate() {
         if !top.is_finite() || *top <= floor {
@@ -561,7 +551,7 @@ fn label_terrain(c: &mut Content, font: Name, patch: &Patch, v: &View, field_ft:
 /// elevation model has a reading every thirty metres and a page of them would be a grey
 /// wash — and only where it stands well above the field, because at an airport on a
 /// plain the highest thing within ten miles is a hill nobody needs warning of.
-fn draw_peak(c: &mut Content, font: Name, patch: &Patch, v: &View, field_ft: f64, taken: &mut Taken) {
+fn draw_peak(c: &mut dyn Canvas, font: Name, patch: &Patch, v: &View, field_ft: f64, taken: &mut Taken) {
     let mut best: Option<(f64, f64, f64)> = None; // (ft, lat, lon)
     for row in 0..patch.height {
         for col in 0..patch.width {
@@ -607,7 +597,7 @@ fn draw_peak(c: &mut Content, font: Name, patch: &Patch, v: &View, field_ft: f64
 /// below it is one rectangle, however long the run — which matters, because a picture
 /// holding a quarter of a million readings would otherwise be a quarter of a million
 /// little shapes, and a file nobody can open.
-fn fill_below(c: &mut Content, patch: &Patch, v: &View, height_ft: f64, tint: (f32, f32, f32)) {
+fn fill_below(c: &mut dyn Canvas, patch: &Patch, v: &View, height_ft: f64, tint: (f32, f32, f32)) {
     let metres = height_ft * 0.3048;
     let at = |row: usize, col: usize| -> Option<(f32, f32, f64)> {
         let h = patch.at(row, col);
@@ -681,7 +671,7 @@ fn fill_below(c: &mut Content, patch: &Patch, v: &View, height_ft: f64, tint: (f
 
 /// The airport as we built it: pavement first, then water and buildings, then the
 /// runways on top in a darker grey so they read at chart scale.
-fn draw_airport(c: &mut Content, dir: &FsPath, v: &View) -> bool {
+fn draw_airport(c: &mut dyn Canvas, dir: &FsPath, v: &View) -> bool {
     use geo_types::Geometry;
     let mut drawn = false;
     for (layer, grey) in [("apronelement", 0.84), ("taxiwayelement", 0.78), ("water", 0.90), ("verticalpolygonalstructure", 0.66), ("runwayelement", 0.22)] {
@@ -739,7 +729,7 @@ fn fix_note<'a>(ch: &'a Chart, fix: &str) -> Option<&'a str> {
 
 /// A fix, drawn where it actually is. Charts mark the final approach fix differently
 /// from the rest, so it can be picked out at a glance.
-fn draw_fix(c: &mut Content, font: Name, bold: Name, v: &View, leg: &Leg, role: Option<&str>, floor_ft: f64, taken: &mut Taken, dme: Option<(&str, (f64, f64))>, note: Option<&str>) {
+fn draw_fix(c: &mut dyn Canvas, font: Name, bold: Name, v: &View, leg: &Leg, role: Option<&str>, floor_ft: f64, taken: &mut Taken, dme: Option<(&str, (f64, f64))>, note: Option<&str>) {
     let is_faf = role == Some("FAF");
     // The missed approach point is marked where it falls, which is often the runway.
     let (Some(lat), Some(lon)) = (leg.lat, leg.lon) else { return };
@@ -827,7 +817,7 @@ fn fix_roles(finals: &[&Leg]) -> Vec<Option<&'static str>> {
 }
 
 /// A run of legs as a line on the map, through the fixes that have a position.
-fn draw_track(c: &mut Content, v: &View, legs: &[&Leg], start: Option<(f64, f64)>, weight: f32, dashed: bool, grey: f32) -> Vec<(f32, f32)> {
+fn draw_track(c: &mut dyn Canvas, v: &View, legs: &[&Leg], start: Option<(f64, f64)>, weight: f32, dashed: bool, grey: f32) -> Vec<(f32, f32)> {
     let mut pts: Vec<(f32, f32)> = Vec::new();
     // The same track in latitude and longitude, which is where a turn has to be worked
     // out: a mile on the page is not a mile at every latitude.
@@ -861,7 +851,7 @@ fn draw_track(c: &mut Content, v: &View, legs: &[&Leg], start: Option<(f64, f64)
     }
     c.save_state();
     if dashed {
-        c.set_dash_pattern([5.0, 3.0], 0.0);
+        c.set_dash(&[5.0, 3.0], 0.0);
     }
     c.set_stroke_gray(grey);
     c.set_line_width(weight);
@@ -957,7 +947,7 @@ fn round_turns(pts: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
 }
 
 /// An arrowhead at the end of a track, pointing the way it is flown.
-fn arrow_head(c: &mut Content, from: (f32, f32), to: (f32, f32), grey: f32) {
+fn arrow_head(c: &mut dyn Canvas, from: (f32, f32), to: (f32, f32), grey: f32) {
     let (dx, dy) = (to.0 - from.0, to.1 - from.1);
     let len = (dx * dx + dy * dy).sqrt();
     if len < 1.0 {
@@ -974,7 +964,7 @@ fn arrow_head(c: &mut Content, from: (f32, f32), to: (f32, f32), grey: f32) {
 }
 
 /// The holding patterns a procedure ends in, drawn as the racetrack a chart draws.
-fn draw_holds(c: &mut Content, font: Name, v: &View, legs: &[&Leg]) {
+fn draw_holds(c: &mut dyn Canvas, font: Name, v: &View, legs: &[&Leg]) {
     for leg in legs {
         if !matches!(leg.path.as_str(), "HM" | "HA" | "HF") {
             continue;
@@ -1009,7 +999,7 @@ fn draw_holds(c: &mut Content, font: Name, v: &View, legs: &[&Leg]) {
 /// wait for the approach, so nothing in the coded route mentions it; it lives in the
 /// navigation database's holding table against the fix's own name. A plate draws it all
 /// the same, because a crew told to hold needs to see which way round it goes.
-fn draw_published_holds(c: &mut Content, font: Name, bold: Name, v: &View, holds: &[crate::sources::navdata::Hold], taken: &mut Taken) {
+fn draw_published_holds(c: &mut dyn Canvas, font: Name, bold: Name, v: &View, holds: &[crate::sources::navdata::Hold], taken: &mut Taken) {
     for hold in holds {
         let turn = if hold.right_turns { Turn::Right } else { Turn::Left };
         // A mile a minute is close enough for the leg where only a time is published.
@@ -1138,7 +1128,7 @@ fn recommended_altitudes(ch: &Chart) -> Option<(String, Vec<(f64, f64)>)> {
 }
 
 /// Draw that table, and say how tall it came out so what sits above it can move up.
-fn draw_recommended_altitudes(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32) -> f32 {
+fn draw_recommended_altitudes(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: f32, y: f32) -> f32 {
     let Some((ident, rows)) = recommended_altitudes(ch) else { return 0.0 };
     let (w, row_h, head_h) = (86.0f32, 8.5f32, 20.0f32);
     let h = head_h + rows.len() as f32 * row_h + 3.0;
@@ -1183,7 +1173,7 @@ fn reference_for(ch: &Chart, hold: &crate::sources::navdata::Hold) -> Option<(St
 /// A chart says so plainly — "NOT TO SCALE" — and draws the racetrack with the course
 /// flown towards the fix and the course flown away from it, which is what a crew sets up.
 fn draw_hold_box(
-    c: &mut Content,
+    c: &mut dyn Canvas,
     font: Name,
     bold: Name,
     x: f32,
@@ -1245,7 +1235,7 @@ fn draw_hold_box(
     arrow_head(c, near, far, INK);
     if connected {
         c.save_state();
-        c.set_dash_pattern([3.0, 2.0], 0.0);
+        c.set_dash(&[3.0, 2.0], 0.0);
         line(c, x + 1.0, near.1, near.0 - 1.0, near.1, 1.2, 0.15);
         c.restore_state();
     }
@@ -1289,7 +1279,7 @@ fn draw_hold_box(
 ///
 /// A chart puts this in the briefing strip rather than on the map, because it is read
 /// before the approach is flown rather than during it.
-fn draw_msa_circle(c: &mut Content, font: Name, bold: Name, cx: f32, cy: f32, r: f32, sectors: &[crate::minima::Sector], msa_ft: Option<f64>, caption: &str) {
+fn draw_msa_circle(c: &mut dyn Canvas, font: Name, bold: Name, cx: f32, cy: f32, r: f32, sectors: &[crate::minima::Sector], msa_ft: Option<f64>, caption: &str) {
     c.set_stroke_gray(INK);
     c.set_line_width(0.9);
     circle(c, cx, cy, r);
@@ -1334,7 +1324,7 @@ fn draw_msa_circle(c: &mut Content, font: Name, bold: Name, cx: f32, cy: f32, r:
 /// guidance reaches. The width is the real one — a localiser is held to about two and a
 /// half degrees either side of the centreline — so the wedge is honest about how much
 /// room there is out at ten miles.
-fn draw_feather(c: &mut Content, v: &View, threshold: (f64, f64), track_deg: f64, length_nm: f64) {
+fn draw_feather(c: &mut dyn Canvas, v: &View, threshold: (f64, f64), track_deg: f64, length_nm: f64) {
     const HALF_ANGLE_DEG: f64 = 2.5;
     let back = (track_deg + 180.0).to_radians();
     let cos = threshold.0.to_radians().cos().max(0.05);
@@ -1364,7 +1354,7 @@ fn draw_feather(c: &mut Content, v: &View, threshold: (f64, f64), track_deg: f64
 
 /// The marker beacons on the approach: the oval a chart draws across the course, with the
 /// two letters that say which it is.
-fn draw_markers(c: &mut Content, font: Name, v: &View, markers: &[(crate::sources::navdata::Marker, f64, f64)], track_deg: f64, taken: &mut Taken) {
+fn draw_markers(c: &mut dyn Canvas, font: Name, v: &View, markers: &[(crate::sources::navdata::Marker, f64, f64)], track_deg: f64, taken: &mut Taken) {
     for (kind, lat, lon) in markers {
         let (px, py) = v.at(*lat, *lon);
         if !v.inside((px, py), 6.0) {
@@ -1389,7 +1379,7 @@ fn draw_markers(c: &mut Content, font: Name, v: &View, markers: &[(crate::source
 ///
 /// It is not decoration: a crew identifies a beacon by listening to it, and the dots and
 /// dashes are what they are listening for.
-fn draw_morse(c: &mut Content, x: f32, y: f32, ident: &str, grey: f32) {
+fn draw_morse(c: &mut dyn Canvas, x: f32, y: f32, ident: &str, grey: f32) {
     const CODE: [(char, &str); 36] = [
         ('A', ".-"), ('B', "-..."), ('C', "-.-."), ('D', "-.."), ('E', "."), ('F', "..-."), ('G', "--."), ('H', "...."), ('I', ".."), ('J', ".---"),
         ('K', "-.-"), ('L', ".-.."), ('M', "--"), ('N', "-."), ('O', "---"), ('P', ".--."), ('Q', "--.-"), ('R', ".-."), ('S', "..."), ('T', "-"),
@@ -1416,7 +1406,7 @@ fn draw_morse(c: &mut Content, x: f32, y: f32, ident: &str, grey: f32) {
 /// half the procedures in the world are written against one. A VOR takes the compass
 /// rose's hexagon, an NDB a ring of dots, and each carries its name and its frequency the
 /// way a chart prints them.
-fn draw_navaids(c: &mut Content, font: Name, bold: Name, v: &View, navaids: &[Beacon], wanted: &[String], taken: &mut Taken) {
+fn draw_navaids(c: &mut dyn Canvas, font: Name, bold: Name, v: &View, navaids: &[Beacon], wanted: &[String], taken: &mut Taken) {
     let mut drawn = 0;
     for n in navaids {
         let ident = &n.ident;
@@ -1508,7 +1498,7 @@ fn draw_navaids(c: &mut Content, font: Name, bold: Name, v: &View, navaids: &[Be
 
 /// Obstacles, as the spike a chart uses, with the top above sea level beside it. The one
 /// that set the minimum is drawn heavier.
-fn draw_obstacles(c: &mut Content, font: Name, bold: Name, v: &View, obstacles: &[Obstacle], floor_ft: f64, controlling_top: Option<f64>) {
+fn draw_obstacles(c: &mut dyn Canvas, font: Name, bold: Name, v: &View, obstacles: &[Obstacle], floor_ft: f64, controlling_top: Option<f64>) {
     // Tallest first, one to a square of paper, so a forest of masts does not turn into a
     // wall of numbers. Anything that cannot reach the approach is left off.
     let mut taken: Vec<(f32, f32)> = Vec::new();
@@ -1568,7 +1558,7 @@ fn degrees_minutes(value: f64, is_latitude: bool) -> String {
 /// you how to read the map.
 #[allow(clippy::too_many_arguments)]
 fn draw_furniture(
-    c: &mut Content,
+    c: &mut dyn Canvas,
     font: Name,
     bold: Name,
     v: &View,
@@ -1701,7 +1691,7 @@ fn draw_furniture(
 
 /// The plan view: terrain, the airport, the procedure and what stands up under it.
 #[allow(clippy::too_many_arguments)]
-fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate, track_deg: f64) -> View {
+fn draw_plan(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate, track_deg: f64) -> View {
     // Everything that will be drawn decides how far out the window reaches.
     let finals = final_legs(ch.procedure);
     let missed = part_legs(ch.procedure, "missed");
@@ -1907,7 +1897,7 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
             let previous = pts.get(pts.len().saturating_sub(2)).copied().unwrap_or(last);
             if last.0 > previous.0 && entry.0 > previous.0 {
                 c.save_state();
-                c.set_dash_pattern([3.0, 2.0], 0.0);
+                c.set_dash(&[3.0, 2.0], 0.0);
                 line(c, previous.0, previous.1, entry.0, entry.1, 1.4, 0.15);
                 c.restore_state();
             }
@@ -2077,7 +2067,7 @@ fn fix_distance_nm(leg: &Leg, thr: (f64, f64)) -> Option<f64> {
 
 /// The descent profile: the ladder of altitudes down to the minimum, over the ground.
 #[allow(clippy::too_many_arguments)]
-fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate, track_deg: f64) {
+fn draw_profile(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate, track_deg: f64) {
     box_outline(c, x, y, w, h, 1.2, INK);
     // Everything the profile draws stays inside the profile.
     c.save_state();
@@ -2163,7 +2153,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     // way the plan view tints it, so a reader sees the coast go by.
     let floor_y = ground_y - 13.0;
     let sea_y = at_ft(ch.tdze_ft.min(WATER_FT));
-    let fill_run = |c: &mut Content, run: &[(f32, f32)], tint: (f32, f32, f32)| {
+    let fill_run = |c: &mut dyn Canvas, run: &[(f32, f32)], tint: (f32, f32, f32)| {
         if run.len() < 2 {
             return;
         }
@@ -2327,7 +2317,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     if let Some(from_nm) = faf_nm.filter(|nm| *nm > 1.0) {
         if let Some((_, from_ft, _)) = fixes.iter().find(|(nm, _, _)| (nm - from_nm).abs() < 0.4) {
             c.save_state();
-            c.set_dash_pattern([1.6, 2.2], 0.0);
+            c.set_dash(&[1.6, 2.2], 0.0);
             line(c, at_nm(from_nm), at_ft(*from_ft), at_nm(0.0), tch, 0.8, 0.3);
             c.restore_state();
         }
@@ -2454,7 +2444,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
             row -= 7.0;
         }
         c.save_state();
-        c.set_dash_pattern([2.0, 2.0], 0.0);
+        c.set_dash(&[2.0, 2.0], 0.0);
         line(c, *px, row + 4.0, *px, ground_y - 12.0, 0.4, 0.55);
         c.restore_state();
     }
@@ -2493,7 +2483,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         // The distance runs right to left: nought miles is at the runway, on the right.
         if mx - vx > 20.0 {
             c.save_state();
-            c.set_dash_pattern([3.0, 2.0], 0.0);
+            c.set_dash(&[3.0, 2.0], 0.0);
             line(c, mx, mda_y, vx, mda_y, 0.7, 0.2);
             c.restore_state();
             text_centred(c, bold, 7.0, vx, mda_y - 2.5, "V", INK);
@@ -2509,7 +2499,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
             let mx = at_nm(map_nm);
             let my = at_ft(est.altitude_ft);
             c.save_state();
-            c.set_dash_pattern([2.0, 2.0], 0.0);
+            c.set_dash(&[2.0, 2.0], 0.0);
             line(c, mx, my + 8.0, mx, ground_y, 0.6, 0.35);
             c.restore_state();
             text_centred(c, bold, 9.0, mx, my + 2.0, "M", INK);
@@ -2628,7 +2618,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     // The minimum, across the profile.
     let my = at_ft(est.altitude_ft);
     c.save_state();
-    c.set_dash_pattern([4.0, 2.0], 0.0);
+    c.set_dash(&[4.0, 2.0], 0.0);
     line(c, left - 30.0, my, right, my, 1.0, 0.0);
     c.restore_state();
     label(c, bold, 7.5, x + 4.0, my + 2.0, &format!("{:.0}", est.altitude_ft), 0.0);
@@ -2670,7 +2660,7 @@ fn chart_notes(ch: &Chart, est: &Estimate) -> Vec<String> {
 /// final course, the fix and altitude the descent starts from, the minimum, and the
 /// elevations — then the missed approach in words, then the transition altitudes, then
 /// the notes. The safe altitude ring stands at the right of the whole thing.
-fn draw_briefing_strip(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate, track_deg: f64) {
+fn draw_briefing_strip(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate, track_deg: f64) {
     const TAB: f32 = 11.0;
     let msa_w = 92.0;
     let inner_x = x + TAB;
@@ -2795,7 +2785,7 @@ fn draw_briefing_strip(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f
 /// hold on the glidepath, and the time from the final approach fix to the missed approach
 /// point. Beside them, what the runway offers in the way of lights, and what the missed
 /// approach asks for, in the symbols a chart uses rather than in a sentence.
-fn draw_speed_band(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, segment_nm: f64) {
+fn draw_speed_band(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, segment_nm: f64) {
     const SPEEDS: [f64; 6] = [70.0, 90.0, 100.0, 120.0, 140.0, 160.0];
     box_outline(c, x, y, w, h, 1.2, INK);
     // The table takes the left two thirds; the lights and the missed approach the rest.
@@ -2978,7 +2968,7 @@ fn lights_out(visibility: &str) -> (String, String) {
 /// columns for lights out are the standard allowance rather than a reading: with the
 /// touchdown zone and centreline lights out an ILS needs a longer runway visual range,
 /// and with the approach lights out longer still. They are marked as such.
-fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate) {
+fn draw_minima_table(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate) {
     box_outline(c, x, y, w, h, 1.2, INK);
     // Two thirds of the band is the straight-in and the rest is the circle-to-land.
     // Where the approach may only be circled there is no straight-in at all, so the whole
@@ -3182,30 +3172,57 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
 
     let (f, b) = (Name(b"F"), Name(b"B"));
     let mut c = Content::new();
+    draw(&mut c, ch, est, track, f, b);
+    pdf.stream(content_id, &c.finish());
+    std::fs::write(out, pdf.finish()).with_context(|| format!("write {}", out.display()))?;
+    Ok(())
+}
+
+/// The same chart as a picture, for anything that wants one rather than a page to print.
+///
+/// `scale` is pixels to the point: three puts an A4 page at about 216 to the inch, which
+/// is enough for an electronic flight bag to zoom into without the small print breaking
+/// up. Nothing of the drawing differs — it is the same code, sent somewhere else.
+pub fn write_png(ch: &Chart, est: &Estimate, out: &FsPath, scale: f32) -> Result<()> {
+    let mut r = Raster::new(W, H, scale)?;
+    draw(&mut r, ch, est, ch.track_deg, Name(b"F"), Name(b"B"));
+    r.write_png(out.as_ref())
+}
+
+/// The same again, as the bytes of a picture, for serving one over the network.
+pub fn png_bytes(ch: &Chart, est: &Estimate, scale: f32) -> Result<Vec<u8>> {
+    let mut r = Raster::new(W, H, scale)?;
+    draw(&mut r, ch, est, ch.track_deg, Name(b"F"), Name(b"B"));
+    r.png_bytes()
+}
+
+/// Everything the chart has on it, drawn onto whatever it is being drawn on.
+#[allow(clippy::too_many_arguments)]
+fn draw(c: &mut dyn Canvas, ch: &Chart, est: &Estimate, track: f64, f: Name, b: Name) {
 
     // Header: the name block on the left, the procedure on the right, the way a chart
     // puts its identity where the thumb falls.
     let head_h = 46.0;
     let head_y = H - MARGIN - head_h;
-    fill_box(&mut c, MARGIN, head_y, W - 2.0 * MARGIN, head_h, 0.10);
+    fill_box(c, MARGIN, head_y, W - 2.0 * MARGIN, head_h, 0.10);
     // Left: what the place is called, by its codes and by its name.
     let idents = match ch.airport_iata {
         Some(iata) if !iata.is_empty() => format!("{}/{}", ch.airport.icao, iata),
         _ => ch.airport.icao.clone(),
     };
-    text(&mut c, b, 15.0, MARGIN + 8.0, head_y + head_h - 20.0, &idents, 1.0);
+    text(c, b, 15.0, MARGIN + 8.0, head_y + head_h - 20.0, &idents, 1.0);
     let short_name = shorten(ch.airport_name.unwrap_or(""));
-    text(&mut c, f, 9.0, MARGIN + 8.0, head_y + head_h - 32.0, &short_name, 0.9);
-    text(&mut c, f, 6.0, MARGIN + 8.0, head_y + 5.0, &format!("{:.4}, {:.4}", ch.airport.lat, ch.airport.lon), 0.7);
+    text(c, f, 9.0, MARGIN + 8.0, head_y + head_h - 32.0, &short_name, 0.9);
+    text(c, f, 6.0, MARGIN + 8.0, head_y + 5.0, &format!("{:.4}, {:.4}", ch.airport.lat, ch.airport.lon), 0.7);
 
     // Right: where in the world it is, and which procedure this is.
     let title = ch
         .published
         .map(|p| p.chart.clone())
         .unwrap_or_else(|| title_of(ch.procedure));
-    text_right(&mut c, b, 14.0, W - MARGIN - 8.0, head_y + head_h - 19.0, &title, 1.0);
+    text_right(c, b, 14.0, W - MARGIN - 8.0, head_y + head_h - 19.0, &title, 1.0);
     if let Some(place) = ch.airport_place {
-        text_right(&mut c, f, 9.0, W - MARGIN - 8.0, head_y + head_h - 32.0, &place.to_uppercase(), 0.9);
+        text_right(c, f, 9.0, W - MARGIN - 8.0, head_y + head_h - 32.0, &place.to_uppercase(), 0.9);
     }
     let source = match est.limited_by {
         LimitedBy::Published => "published minimum",
@@ -3214,21 +3231,21 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
     };
     let circling_note = if ch.circling_only { " - CIRCLING ONLY" } else { "" };
     let star_note = ch.star.map(|s| format!(" - VIA {}", s.name)).unwrap_or_default();
-    text_right(&mut c, f, 6.0, W - MARGIN - 8.0, head_y + 5.0, &format!("{}{circling_note} - {source}{star_note}", ch.kind.label().to_uppercase()), 0.7);
+    text_right(c, f, 6.0, W - MARGIN - 8.0, head_y + 5.0, &format!("{}{circling_note} - {source}{star_note}", ch.kind.label().to_uppercase()), 0.7);
 
     // Middle: whose chart it is, and what it was drawn from.
     let middle = MARGIN + (W - 2.0 * MARGIN) / 2.0;
-    text_centred(&mut c, b, 13.0, middle, head_y + head_h - 19.0, "AMDB V1", 1.0);
-    text_centred(&mut c, f, 5.5, middle, head_y + head_h - 28.0, "FREE AIRPORT MAPPING DATABASE", 0.7);
+    text_centred(c, b, 13.0, middle, head_y + head_h - 19.0, "AMDB V1", 1.0);
+    text_centred(c, f, 5.5, middle, head_y + head_h - 28.0, "FREE AIRPORT MAPPING DATABASE", 0.7);
     if let Some((from, to)) = &ch.airac {
-        text_centred(&mut c, f, 6.5, middle, head_y + 5.0, &format!("EFF {from} - {to}"), 0.85);
+        text_centred(c, f, 6.5, middle, head_y + 5.0, &format!("EFF {from} - {to}"), 0.85);
     }
 
     // The bands of the page, in the order a chart has always had them: what to brief,
     // then the picture, then the descent, then the speeds, then the minima.
     let strip_h = 100.0;
     let strip_y = head_y - 3.0 - strip_h;
-    draw_briefing_strip(&mut c, f, b, ch, MARGIN, strip_y, W - 2.0 * MARGIN, strip_h, est, track);
+    draw_briefing_strip(c, f, b, ch, MARGIN, strip_y, W - 2.0 * MARGIN, strip_h, est, track);
 
     let min_h = 88.0;
     let min_y = MARGIN + 16.0;
@@ -3238,43 +3255,43 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
     let prof_y = speed_y + speed_h + 3.0;
     let plan_y = prof_y + prof_h + 3.0;
     let plan_h = strip_y - 3.0 - plan_y;
-    let v = draw_plan(&mut c, f, b, ch, MARGIN, plan_y, W - 2.0 * MARGIN, plan_h, est, track);
+    let v = draw_plan(c, f, b, ch, MARGIN, plan_y, W - 2.0 * MARGIN, plan_h, est, track);
 
     // A caption under the plan, saying what the picture is made of.
     let built = if ch.airport_dir.is_some() { "airport from our own build" } else { "airport not built yet" };
     let caption = format!("{:.0} NM across - terrain tinted by elevation - {built}", v.span_nm());
     let cap_w = text_width(f, 6.0, &caption) + 10.0;
-    fill_box(&mut c, MARGIN + 92.0, plan_y + 1.0, cap_w, 10.0, 1.0);
-    text(&mut c, f, 6.0, MARGIN + 96.0, plan_y + 3.5, &caption, 0.4);
+    fill_box(c, MARGIN + 92.0, plan_y + 1.0, cap_w, 10.0, 1.0);
+    text(c, f, 6.0, MARGIN + 96.0, plan_y + 3.5, &caption, 0.4);
 
-    draw_profile(&mut c, f, b, ch, MARGIN, prof_y, W - 2.0 * MARGIN, prof_h, est, track);
+    draw_profile(c, f, b, ch, MARGIN, prof_y, W - 2.0 * MARGIN, prof_h, est, track);
     let segment = faf_to_map_nm(ch);
-    draw_speed_band(&mut c, f, b, ch, MARGIN, speed_y, W - 2.0 * MARGIN, speed_h, segment);
+    draw_speed_band(c, f, b, ch, MARGIN, speed_y, W - 2.0 * MARGIN, speed_h, segment);
     if let Some((climb, what)) = &ch.missed_climb {
         let note = format!("MISSED APPROACH CLIMB {climb:.0} FT/NM TO CLEAR {}", what.to_uppercase());
-        text(&mut c, f, 5.5, MARGIN + 2.0, min_y + min_h + speed_h + 5.0, &note, 0.3);
+        text(c, f, 5.5, MARGIN + 2.0, min_y + min_h + speed_h + 5.0, &note, 0.3);
     }
 
-    draw_minima_table(&mut c, f, b, ch, MARGIN, min_y, W - 2.0 * MARGIN, min_h, est);
+    draw_minima_table(c, f, b, ch, MARGIN, min_y, W - 2.0 * MARGIN, min_h, est);
 
     // The amendment the procedure is at, stamped down the edge of the page the way a
     // chart stamps it: it is how a crew knows the page in the folder is the current one.
     if let Some(amendment) = ch.published.and_then(|p| p.text.amendment.clone()) {
         let spelt = amendment.to_uppercase().replace("AMDT", "AMDT ").replace("  ", " ");
-        text_up(&mut c, f, 6.0, MARGIN - 5.0, MARGIN + 30.0, &spelt, 0.35);
+        text_up(c, f, 6.0, MARGIN - 5.0, MARGIN + 30.0, &spelt, 0.35);
     }
 
     // Footer.
-    line(&mut c, MARGIN, MARGIN + 18.0, W - MARGIN, MARGIN + 18.0, 0.8, RULE);
+    line(c, MARGIN, MARGIN + 18.0, W - MARGIN, MARGIN + 18.0, 0.8, RULE);
     let printed = chrono::Utc::now().format("%d %b %Y").to_string().to_uppercase();
     let caveat = match est.limited_by {
         LimitedBy::Published => "NOT FOR REAL-WORLD NAVIGATION. The minimum is read from the state's own published chart; everything else here is drawn from free data: fly the published chart.",
         LimitedBy::Coded => "NOT FOR REAL-WORLD NAVIGATION. The minimum is the one coded in the simulator's navigation data: fly the published chart.",
         _ => "NOT FOR REAL-WORLD NAVIGATION. The minimum on this chart is calculated, not published: fly the published chart.",
     };
-    text(&mut c, f, 6.5, MARGIN, MARGIN + 9.0, caveat, 0.25);
+    text(c, f, 6.5, MARGIN, MARGIN + 9.0, caveat, 0.25);
     text(
-        &mut c,
+        c,
         f,
         6.0,
         MARGIN,
@@ -3287,9 +3304,6 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
         0.45,
     );
 
-    pdf.stream(content_id, &c.finish());
-    std::fs::write(out, pdf.finish()).with_context(|| format!("write {}", out.display()))?;
-    Ok(())
 }
 
 /// Every approach an airport has, in the order they are named on the chart.

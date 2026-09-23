@@ -4,6 +4,7 @@ pub mod geobuf;
 pub mod geojson;
 pub mod manifest;
 pub mod approach;
+pub mod canvas;
 pub mod charts_bulk;
 pub mod chart;
 pub mod preview;
