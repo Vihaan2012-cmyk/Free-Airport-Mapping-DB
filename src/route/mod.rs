@@ -441,7 +441,7 @@ impl<'a> Context<'a> {
         let landmarks = landmarks::tables(&compact, LANDMARK_COUNT.min(compact.node_count().max(1)));
 
         let ellipse = ellipse_factor.map(|k| Ellipse::new(req.origin.pos, req.destination.pos, k, ELLIPSE_SLACK_NM));
-        let directs = direct_max_nm.map(|max_nm| directs::build(&compact, &graph.spatial_all(), ellipse.as_ref(), req.origin.pos, req.destination.pos, max_nm));
+        let directs = direct_max_nm.map(|max_nm| directs::build(&compact, ellipse.as_ref(), req.destination.pos, max_nm));
 
         Ok(Context { graph, compact, req, levels_ft, dep_runway, arr_runway, sid, star, entry_pos, exit_pos, entry_candidates, exit_candidates, frozen_when, flown_nm, rate_per_nm, landmarks, ellipse, directs })
     }
@@ -1073,6 +1073,42 @@ mod tests {
     fn smoke_egll_kjfk() {
         smoke("EGLL", (51.4706, -0.4619), "KJFK", (40.6413, -73.7781));
     }
+
+    #[test]
+    #[ignore]
+    fn smoke_egll_omdb() {
+        smoke("EGLL", (51.4706, -0.4619), "OMDB", (25.2528, 55.3644));
+    }
+
+    // TODO(incomplete): the sweep harness the task asks for (all seven flights, per-flight
+    // time/%-over/edges-costed/nodes-expanded, run against the real navigation database) has
+    // not been written yet. While diagnosing the EGLL-OMDB outlier by hand, ad hoc `#[ignore]`
+    // tests here (since removed) found: real airways alone (no ellipse, no direct legs, real
+    // conflict-zone hazards) already reach OMDB in about 70ms at 15.3% over great-circle; the
+    // STAGES ladder was NOT the cause (trying wider rungs only made this route worse and far
+    // slower, so "stop at the first successful rung" was left as it is); the actual cause was
+    // `directs::build` — a candidate pool of ~12,000 fixes on a thin ellipse, each paying its
+    // own ~220 nm grid query, cost roughly a second on its own, and the resulting free-route
+    // legs gave the greedy search enough rope to zig-zag past what `search::refine`'s 220 nm
+    // cap could straighten back out (22% over, 1.5-3.5s). The `WELL_CONNECTED_OUT_DEGREE`
+    // filter in `directs.rs` (skip a fix already carrying a few real edges: it is not the
+    // sparse spot a direct leg exists for) is a first, partial fix, landed here; it alone
+    // brought OMDB to 9.2% over in about 740ms of `Context::build` for one rung. A second half
+    // of the fix — widening `search::refine`'s own straightening cap, since a 220 nm cap
+    // cannot undo a zig-zag bigger than that — was tried (REFINE_MAX_NM = 1500.0) and reverted:
+    // it broke `a_fix_outside_the_ellipse_is_never_on_the_route` and
+    // `the_ellipse_ladder_widens_when_a_thin_one_finds_nothing`, because `search::refine` costs
+    // its candidate shortcut through the raw `CostModel` directly rather than through
+    // `cost::cost_leg`, so it never asks an `EdgeRule` whether the straight line it proposes is
+    // allowed — a forbidden airway can be silently redrawn as a `DCT` covering the same two
+    // points once the cap is wide enough to reach across it. `search::refine` needs the edge
+    // rules threaded through (or its shortcut costed via `cost_leg`) before that cap can safely
+    // widen; until then this is reverted to the original `MAX_DIRECT_NM`. `directs::build` is
+    // still the dominant cost for a long-haul route and has not been brought under a sensible
+    // budget, and none of this has been re-checked against the six shorter flights to confirm
+    // they have not regressed. That confirmation, the refine/EdgeRule fix above, the
+    // graph-caching work in `sources::navdata`/`graph.rs`, `Graph::key`'s numeric key, the
+    // `LANDMARK_COUNT` check, and the final constant sweep are all still to do.
 
     // -----------------------------------------------------------------------------
     // A synthetic worldwide-scale network, for the timings a real one could not be
