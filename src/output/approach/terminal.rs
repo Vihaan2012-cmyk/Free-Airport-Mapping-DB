@@ -1451,7 +1451,7 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
     draw_mora(c, b, &v, &t.mora, &mut taken);
     c.restore_state();
 
-    draw_furniture(c, f, b, &v, t.airport.magnetic_variation_deg, None, has_water, highest_ft, 0.0);
+    draw_furniture(c, f, b, &v, t.airport.magnetic_variation_deg, None, has_water, highest_ft, 0.0, t.field_elev_ft);
     box_outline(c, x, y, w, h, 1.0, INK);
     v
 }

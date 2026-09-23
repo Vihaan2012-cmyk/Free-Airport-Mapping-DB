@@ -43,16 +43,37 @@ pub struct Navaid {
 
 /// Every beacon the simulator knows, by ident. Read once: it is a few megabytes of file
 /// and a moment's work, and every approach after the first wants it.
-pub fn index() -> &'static HashMap<String, Navaid> {
-    static INDEX: OnceLock<HashMap<String, Navaid>> = OnceLock::new();
+///
+/// An ident names more than one beacon in the world: there is a KTM in Nepal and another
+/// on the far side of the Arabian Sea. So each ident keeps all of its beacons, and the one
+/// a procedure means is the one nearest the airport it belongs to.
+pub fn index() -> &'static HashMap<String, Vec<Navaid>> {
+    static INDEX: OnceLock<HashMap<String, Vec<Navaid>>> = OnceLock::new();
     INDEX.get_or_init(load)
 }
 
+/// A beacon by ident alone: the VOR of that name where there is one. Only for where
+/// nothing says where to look; a procedure's beacon is found with `find_near`.
 pub fn find(ident: &str) -> Option<Navaid> {
-    index().get(&ident.to_uppercase()).copied()
+    let all = index().get(&ident.to_uppercase())?;
+    all.iter().find(|n| n.kind == Kind::Vor).or_else(|| all.first()).copied()
 }
 
-fn load() -> HashMap<String, Navaid> {
+/// The beacon of an ident nearest a point, and only if it is near enough to be the one a
+/// procedure there means: two beacons of one name are never within a few hundred miles.
+pub fn find_near(ident: &str, near: (f64, f64)) -> Option<Navaid> {
+    let cos = near.0.to_radians().cos().max(0.05);
+    let nm = |n: &Navaid| ((n.lat - near.0) * 60.0).hypot((n.lon - near.1) * 60.0 * cos);
+    // Nearest first; a VOR before an NDB of the same name at the same place.
+    index()
+        .get(&ident.to_uppercase())?
+        .iter()
+        .filter(|n| nm(n) < 300.0)
+        .min_by(|a, b| (nm(a) + if a.kind == Kind::Vor { 0.0 } else { 0.5 }).total_cmp(&(nm(b) + if b.kind == Kind::Vor { 0.0 } else { 0.5 })))
+        .copied()
+}
+
+fn load() -> HashMap<String, Vec<Navaid>> {
     let mut out = HashMap::new();
     for dir in super::nav_dirs() {
         // The files sit in numbered folders under the scenery directory, so this walks a
@@ -80,7 +101,7 @@ fn load() -> HashMap<String, Navaid> {
     out
 }
 
-fn read_file(d: &[u8], out: &mut HashMap<String, Navaid>) {
+fn read_file(d: &[u8], out: &mut HashMap<String, Vec<Navaid>>) {
     for (section, vor) in [(SECTION_VOR, true), (SECTION_NDB, false)] {
         for rec in bgl::section_records(d, section) {
             if rec.end - rec.start < 0x24 {
@@ -98,14 +119,12 @@ fn read_file(d: &[u8], out: &mut HashMap<String, Navaid>) {
             }
             let raw = bgl::u32le(d, rec.start + freq_at) as f64;
             let frequency = if vor { raw / 1.0e6 } else { raw / 1000.0 };
-            // A beacon can be listed more than once; the first is as good as any, and a
-            // VOR is preferred over an NDB of the same name because procedures are
-            // written against it.
+            // The same beacon can be listed more than once, in neighbouring files; a copy
+            // within a mile of one already kept is the same beacon.
             let kind = if vor { Kind::Vor } else { Kind::Ndb };
-            if vor {
-                out.insert(ident, Navaid { lat, lon, frequency, kind });
-            } else {
-                out.entry(ident).or_insert(Navaid { lat, lon, frequency, kind });
+            let all = out.entry(ident).or_default();
+            if !all.iter().any(|n| n.kind == kind && (n.lat - lat).abs() < 0.02 && (n.lon - lon).abs() < 0.02) {
+                all.push(Navaid { lat, lon, frequency, kind });
             }
         }
     }
@@ -119,6 +138,7 @@ pub fn within(lat: f64, lon: f64, radius_nm: f64) -> Vec<(String, Navaid)> {
     let cos = lat.to_radians().cos().max(0.05);
     let mut out: Vec<(String, Navaid, f64)> = index()
         .iter()
+        .flat_map(|(ident, all)| all.iter().map(move |n| (ident, n)))
         .filter_map(|(ident, n)| {
             let dn = (n.lat - lat) * 60.0;
             let de = (n.lon - lon) * 60.0 * cos;

@@ -576,11 +576,11 @@ fn header_runway(d: &[u8], rec: &Record) -> String {
 /// measured: any fix that does have a position, and is also given as a radial from a
 /// beacon, says what the difference between the two is here. Where no fix says, the
 /// fixes that need one cannot be placed, and are left where they were - unplaced.
-fn place_fixes_on_radials(procedures: &mut [Procedure]) -> Option<f64> {
+fn place_fixes_on_radials(procedures: &mut [Procedure], near: (f64, f64)) -> Option<f64> {
     let mut known: Vec<f64> = Vec::new();
     for leg in procedures.iter().flat_map(|p| p.transitions.iter()).flat_map(|t| t.legs.iter()) {
         let (Some(lat), Some(lon), Some(theta)) = (leg.lat, leg.lon, leg.theta_deg) else { continue };
-        let Some(beacon) = super::navaids::find(&leg.navaid) else { continue };
+        let Some(beacon) = super::navaids::find_near(&leg.navaid, near) else { continue };
         let north = lat - beacon.lat;
         let east = (lon - beacon.lon) * beacon.lat.to_radians().cos().max(0.05);
         if north.hypot(east) * 60.0 < 0.5 {
@@ -601,14 +601,14 @@ fn place_fixes_on_radials(procedures: &mut [Procedure]) -> Option<f64> {
             continue;
         }
         // A leg that ends at the beacon itself ends where the beacon is.
-        if let Some(beacon) = super::navaids::find(&leg.fix) {
+        if let Some(beacon) = super::navaids::find_near(&leg.fix, near) {
             leg.lat = Some(beacon.lat);
             leg.lon = Some(beacon.lon);
             leg.placed_on_radial = true;
             continue;
         }
         let (Some(variation), Some(theta), Some(rho)) = (variation, leg.theta_deg, leg.rho_nm) else { continue };
-        let Some(beacon) = super::navaids::find(&leg.navaid) else { continue };
+        let Some(beacon) = super::navaids::find_near(&leg.navaid, near) else { continue };
         let (lat, lon) = super::navaids::along_radial(beacon, theta, rho, variation);
         leg.lat = Some(lat);
         leg.lon = Some(lon);
@@ -730,8 +730,8 @@ fn airport(d: &[u8], rec: &Record, file: &Path, fixes: &Fixes) -> Option<Airport
     if procedures.is_empty() {
         return None;
     }
-    let variation = place_fixes_on_radials(&mut procedures);
     let (apt_lat, apt_lon) = (bgl::lat(bgl::u32le(d, rec.start + 0x10)), bgl::lon(bgl::u32le(d, rec.start + 0x0C)));
+    let variation = place_fixes_on_radials(&mut procedures, (apt_lat, apt_lon));
     place_remaining_fixes(&icao, (apt_lat, apt_lon), &mut procedures);
     for p in procedures.iter_mut().filter(|p| p.kind == Kind::Approach) {
         if let Some(what) = p.approach_type {
