@@ -558,6 +558,83 @@ impl Database {
     }
 }
 
+/// One segment of an airway: from a fix to the next along it, and what it may be flown
+/// at. `one_way` is true when it may only be flown from `from` to `to`.
+#[derive(Debug, Clone)]
+pub struct AirwaySegment {
+    pub airway: String,
+    pub from: (String, f64, f64),
+    pub to: (String, f64, f64),
+    pub one_way: bool,
+    /// Minimum enroute altitude, feet.
+    pub min_ft: Option<f64>,
+    /// The highest the airway may be flown, feet.
+    pub max_ft: Option<f64>,
+}
+
+/// Every airway segment in the navigation database: the network a route is planned on.
+pub fn airway_segments() -> Vec<AirwaySegment> {
+    database().map(|db| db.airway_segments()).unwrap_or_default()
+}
+
+impl Database {
+    fn airway_segments(&self) -> Vec<AirwaySegment> {
+        let mut out = Vec::new();
+        let Some(connection) = read_only(&self.path) else { return out };
+        let Some(table) = self.table("enroute_airways") else { return out };
+        let sql = format!(
+            "select route_identifier, area_code, seqno, waypoint_identifier, waypoint_latitude, waypoint_longitude, \
+             waypoint_description_code, direction_restriction, minimum_altitude1, maximum_altitude \
+             from \"{table}\" order by route_identifier, area_code, seqno"
+        );
+        let Ok(mut statement) = connection.prepare(&sql) else { return out };
+        #[allow(clippy::type_complexity)]
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                row.get::<_, String>(3)?,
+                row.get::<_, f64>(4)?,
+                row.get::<_, f64>(5)?,
+                row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                row.get::<_, Option<f64>>(8)?,
+                row.get::<_, Option<f64>>(9)?,
+            ))
+        });
+        let Ok(rows) = rows else { return out };
+        let rows: Vec<_> = rows.flatten().collect();
+        for pair in rows.windows(2) {
+            let (a, b) = (&pair[0], &pair[1]);
+            // The same airway in the same part of the world, and not past its end: the
+            // second character of the description marks the last fix of a stretch.
+            if a.0 != b.0 || a.1 != b.1 || a.5.chars().nth(1) == Some('E') {
+                continue;
+            }
+            // A pair of fixes an ocean apart is two stretches of one name, not a segment.
+            let cos = a.3.to_radians().cos().max(0.05);
+            if ((b.3 - a.3) * 60.0).hypot((b.4 - a.4) * 60.0 * cos) > 1200.0 {
+                continue;
+            }
+            // Forward means in the order the airway is listed; backward the other way.
+            let (from, to, one_way) = match b.6.trim() {
+                "F" => ((a.2.clone(), a.3, a.4), (b.2.clone(), b.3, b.4), true),
+                "B" => ((b.2.clone(), b.3, b.4), (a.2.clone(), a.3, a.4), true),
+                _ => ((a.2.clone(), a.3, a.4), (b.2.clone(), b.3, b.4), false),
+            };
+            out.push(AirwaySegment {
+                airway: a.0.clone(),
+                from,
+                to,
+                one_way,
+                min_ft: b.7.filter(|v| *v > 0.0 && *v < 60000.0),
+                max_ft: b.8.filter(|v| *v > 0.0 && *v < 99000.0),
+            });
+        }
+        out
+    }
+}
+
 /// What the database says of an airport as a whole.
 #[derive(Debug, Clone, Default)]
 pub struct AirportInfo {
@@ -778,6 +855,201 @@ fn hold_row(row: &rusqlite::Row, extra: bool) -> rusqlite::Result<Hold> {
     })
 }
 
+/// One row of a boundary as the ARINC tables give it: how it runs on from this point
+/// (great circle, rhumb line, clockwise or anticlockwise arc, whole circle), the point,
+/// and the arc's origin and radius where it is an arc.
+struct BoundaryRow {
+    via: String,
+    at: Option<(f64, f64)>,
+    arc_origin: Option<(f64, f64)>,
+    arc_nm: Option<f64>,
+}
+
+/// A boundary's rows as a closed line of points, the arcs laid out.
+fn boundary(rows: &[BoundaryRow]) -> Vec<(f64, f64)> {
+    let mut out: Vec<(f64, f64)> = Vec::new();
+    for (k, r) in rows.iter().enumerate() {
+        let next = rows.get(k + 1).or(rows.first()).and_then(|n| n.at);
+        match r.via.trim().to_uppercase().chars().next() {
+            Some('C') => {
+                if let (Some(o), Some(radius)) = (r.arc_origin, r.arc_nm) {
+                    out.extend(arc(o, radius, 0.0, 360.0, true));
+                }
+            }
+            Some(turn @ ('R' | 'L')) => {
+                if let (Some(h), Some(n), Some(o), Some(radius)) = (r.at, next, r.arc_origin, r.arc_nm) {
+                    out.extend(arc(o, radius, bearing(o, h), bearing(o, n), turn == 'R'));
+                }
+            }
+            _ => {
+                if let Some(h) = r.at {
+                    out.push(h);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// An airspace limit as the tables write it, in feet: "GND", "UNLTD", "FL275", "06000".
+fn limit_ft(s: &str) -> Option<f64> {
+    let s = s.trim().to_uppercase();
+    match s.as_str() {
+        "" => None,
+        "GND" | "SFC" => Some(0.0),
+        "UNLTD" | "UNL" | "NOTSP" => Some(99_999.0),
+        _ => match s.strip_prefix("FL") {
+            Some(fl) => fl.parse::<f64>().ok().map(|v| v * 100.0),
+            None => s.parse::<f64>().ok(),
+        },
+    }
+}
+
+/// A flight information region's outline: every part of it, as closed lines of points.
+#[derive(Debug, Clone)]
+pub struct Region {
+    pub ident: String,
+    pub name: String,
+    pub parts: Vec<Vec<(f64, f64)>>,
+}
+
+/// An area it is prohibited, restricted or dangerous to fly through, and the band of
+/// altitudes it fills. `kind` is the ARINC letter: P prohibited, R restricted, D danger,
+/// W warning, A alert, M military operations, T training, and so on.
+#[derive(Debug, Clone)]
+pub struct Restricted {
+    pub designation: String,
+    pub name: String,
+    pub kind: char,
+    pub lower_ft: f64,
+    pub upper_ft: f64,
+    pub boundary: Vec<(f64, f64)>,
+}
+
+/// The outlines of the flight information regions named, however many parts each has.
+pub fn regions(idents: &[String]) -> Vec<Region> {
+    database().map(|db| db.regions(idents)).unwrap_or_default()
+}
+
+/// Every restricted area with a corner inside a box (south, north, west, east).
+pub fn restricted_areas(south: f64, north: f64, west: f64, east: f64) -> Vec<Restricted> {
+    database().map(|db| db.restricted_areas(south, north, west, east)).unwrap_or_default()
+}
+
+impl Database {
+    fn regions(&self, idents: &[String]) -> Vec<Region> {
+        let mut out = Vec::new();
+        let Some(connection) = read_only(&self.path) else { return out };
+        let Some(table) = self.table("fir_uir") else { return out };
+        let sql = format!(
+            "select fir_uir_identifier, fir_uir_indicator, fir_uir_name, boundary_via, fir_uir_latitude, fir_uir_longitude, \
+             arc_origin_latitude, arc_origin_longitude, arc_distance from \"{table}\" where fir_uir_identifier = ?1 \
+             order by fir_uir_indicator, seqno"
+        );
+        for ident in idents {
+            let Ok(mut statement) = connection.prepare(&sql) else { continue };
+            #[allow(clippy::type_complexity)]
+            let rows: Vec<(String, Option<String>, BoundaryRow)> = match statement.query_map([ident.to_uppercase()], |row| {
+                Ok((
+                    row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    row.get::<_, Option<String>>(2)?,
+                    BoundaryRow {
+                        via: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                        at: row.get::<_, Option<f64>>(4)?.zip(row.get::<_, Option<f64>>(5)?),
+                        arc_origin: row.get::<_, Option<f64>>(6)?.zip(row.get::<_, Option<f64>>(7)?),
+                        arc_nm: row.get::<_, Option<f64>>(8)?,
+                    },
+                ))
+            }) {
+                Ok(r) => r.flatten().collect(),
+                Err(_) => continue,
+            };
+            // A region is written in parts, the lower and upper regions and any piece of
+            // either that is split off: a part ends where its boundary says it does.
+            let name = rows.iter().find_map(|r| r.1.clone()).unwrap_or_default();
+            let mut parts = Vec::new();
+            let mut current: Vec<BoundaryRow> = Vec::new();
+            let mut last_indicator = String::new();
+            for (indicator, _, row) in rows {
+                if indicator != last_indicator && !current.is_empty() {
+                    parts.push(boundary(&current));
+                    current.clear();
+                }
+                last_indicator = indicator;
+                let ends = row.via.trim().len() > 1 && row.via.trim().ends_with('E');
+                current.push(row);
+                if ends {
+                    parts.push(boundary(&current));
+                    current.clear();
+                }
+            }
+            if !current.is_empty() {
+                parts.push(boundary(&current));
+            }
+            parts.retain(|p| p.len() >= 3);
+            if !parts.is_empty() {
+                out.push(Region { ident: ident.to_uppercase(), name: name.trim().to_string(), parts });
+            }
+        }
+        out
+    }
+
+    fn restricted_areas(&self, south: f64, north: f64, west: f64, east: f64) -> Vec<Restricted> {
+        let mut out = Vec::new();
+        let Some(connection) = read_only(&self.path) else { return out };
+        let Some(table) = self.table("restrictive_airspace") else { return out };
+        // The areas with any point in the box, then every row of each of them.
+        let find = format!(
+            "select distinct restrictive_airspace_designation, icao_code, multiple_code from \"{table}\" \
+             where latitude between ?1 and ?2 and longitude between ?3 and ?4"
+        );
+        let Ok(mut statement) = connection.prepare(&find) else { return out };
+        let Ok(found) = statement.query_map(rusqlite::params![south, north, west, east], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?.unwrap_or_default(), row.get::<_, Option<String>>(2)?.unwrap_or_default()))
+        }) else {
+            return out;
+        };
+        let found: Vec<(String, String, String)> = found.flatten().collect();
+        let rows_sql = format!(
+            "select restrictive_airspace_name, restrictive_type, boundary_via, latitude, longitude, arc_origin_latitude, \
+             arc_origin_longitude, arc_distance, lower_limit, upper_limit from \"{table}\" \
+             where restrictive_airspace_designation = ?1 and ifnull(icao_code, '') = ?2 and ifnull(multiple_code, '') = ?3 order by seqno"
+        );
+        let Ok(mut statement) = connection.prepare(&rows_sql) else { return out };
+        for (designation, region, multiple) in found {
+            #[allow(clippy::type_complexity)]
+            let rows: Vec<(Option<String>, Option<String>, BoundaryRow, Option<String>, Option<String>)> = match statement.query_map([&designation, &region, &multiple], |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    BoundaryRow {
+                        via: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                        at: row.get::<_, Option<f64>>(3)?.zip(row.get::<_, Option<f64>>(4)?),
+                        arc_origin: row.get::<_, Option<f64>>(5)?.zip(row.get::<_, Option<f64>>(6)?),
+                        arc_nm: row.get::<_, Option<f64>>(7)?,
+                    },
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                ))
+            }) {
+                Ok(r) => r.flatten().collect(),
+                Err(_) => continue,
+            };
+            let Some(first) = rows.first() else { continue };
+            let kind = first.1.clone().and_then(|k| k.trim().chars().next()).unwrap_or('R');
+            let name = rows.iter().find_map(|r| r.0.clone()).unwrap_or_default();
+            let lower_ft = rows.iter().find_map(|r| r.3.as_deref().and_then(limit_ft)).unwrap_or(0.0);
+            let upper_ft = rows.iter().find_map(|r| r.4.as_deref().and_then(limit_ft)).unwrap_or(99_999.0);
+            let rows: Vec<BoundaryRow> = rows.into_iter().map(|r| r.2).collect();
+            let outline = boundary(&rows);
+            if outline.len() >= 3 {
+                out.push(Restricted { designation, name: name.trim().to_string(), kind, lower_ft, upper_ft, boundary: outline });
+            }
+        }
+        out
+    }
+}
+
 /// True bearing from one point to another, degrees.
 fn bearing(from: (f64, f64), to: (f64, f64)) -> f64 {
     let cos = from.0.to_radians().cos().max(0.05);
@@ -822,8 +1094,11 @@ const WANTED: &[&str] = &[
     "enroute_waypoints",
     "terminal_waypoints",
     "airports",
+    "enroute_airways",
     "grid_mora",
     "controlled_airspace",
+    "restrictive_airspace",
+    "fir_uir",
     "airport_communication",
     "localizers_glideslopes",
     "localizer_marker",
