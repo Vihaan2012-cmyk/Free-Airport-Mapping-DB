@@ -1,17 +1,29 @@
 //! A flight plan served the way SimBrief serves one, so the tablets that import from
 //! SimBrief import ours.
 //!
-//! Every tablet this crate could check reaches one fixed address:
+//! Every tablet reaches one fixed address:
 //! `https://www.simbrief.com/api/xml.fetcher.php`, with `userid=` or `username=` naming
-//! the pilot and `json=1` asking for JSON rather than SimBrief's native XML. That address
-//! is confirmed straight out of the Synaptic A220 EFB's own script, the one flight bag on
-//! the machine this was written on with SimBrief support built in
-//! (`'https://www.simbrief.com/api/xml.fetcher.php?json=1'`, found in its string table
-//! alongside the field names `plan_ramp`, `plan_takeoff`, `icao_code` and `plan_rwy` this
-//! module also serves). The FlyByWire A32NX/A380X, the PMDG 737/777 and the iniBuilds
-//! A350 were not installed to check directly, so for them this rests on the endpoint and
-//! field names being SimBrief's own public contract, the same for every consumer of it —
-//! not on having read their code.
+//! the pilot and `json=1` asking for JSON rather than SimBrief's native XML. That is what
+//! makes this worth doing at all: unlike the chart endpoints, whose names differ from one
+//! build to the next and have to be found by anchoring on the surrounding script, this one
+//! address is the same literal in every flight bag, so pointing it here is a plain and
+//! exactly reversible substitution.
+//!
+//! It was read out of the scripts of every aircraft installed on the machine this was
+//! written on, in both of that machine's community folders: the FlyByWire A380X
+//! (`A380X/EFB/efb.js`), the PMDG 737-800 and 777-300ER (`PMDGTablet.js`), the iniBuilds
+//! A350 (`ini-efb-a350.js`) and the Synaptic A220 (`a22x/DisplayUnits/instrument.js`),
+//! whose string table also carries the field names `plan_ramp`, `plan_takeoff`,
+//! `icao_code` and `plan_rwy` this module serves. Two flight bags on the same machine
+//! reach no such address at all and so cannot be served this way: the Fenix A320 and the
+//! iFly 737 MAX.
+//!
+//! The fields are what those scripts read, and the FlyByWire A380X's parser is the
+//! strictest of them: it takes `general`, `navlog`, `origin`, `aircraft`, `destination`,
+//! `times`, `weights`, `fuel`, `params`, `files`, `text`, `weather`, `atc` and `alternate`
+//! apart without checking any of them for null, so a reply that left out `files.pdf.link`
+//! or `text.plan_html` would not merely look wrong to it — it would throw. Everything it
+//! touches is therefore filled, and a test pins each one.
 //!
 //! `patcher::patch_simbrief_text` points the literal address at this bridge; this module
 //! answers whatever it is asked with the one plan `amdbgen dispatch` last saved,
