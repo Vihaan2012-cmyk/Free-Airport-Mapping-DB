@@ -129,6 +129,21 @@ fn one(
     // names an alternate. Both are entered from the airport's side, which is how the
     // right one is picked out of the several a fix can carry.
     let at = (setup.procedures.lat, setup.procedures.lon);
+    // The holds published at this approach's fixes. The procedure's legs do not carry
+    // them, so each fix is asked about by name; the one the missed approach ends in has
+    // its own box on the chart and is left out of the map.
+    let missed_fix = crate::output::approach::missed_hold_fix(procedure).unwrap_or_default();
+    let mut seen: Vec<String> = Vec::new();
+    let mut holds: Vec<crate::sources::navdata::Hold> = Vec::new();
+    for leg in procedure.transitions.iter().flat_map(|t| t.legs.iter()) {
+        if leg.fix.is_empty() || leg.fix == missed_fix || seen.contains(&leg.fix) {
+            continue;
+        }
+        seen.push(leg.fix.clone());
+        if let Some(h) = crate::sources::navdata::hold_at(&leg.fix) {
+            holds.push(h);
+        }
+    }
     let missed_hold = crate::output::approach::missed_hold_fix(procedure).and_then(|fix| crate::sources::navdata::hold_towards(&fix, at));
     let alternate_hold = published
         .as_ref()
@@ -156,6 +171,7 @@ fn one(
         threshold_crossing_ft: runway_record.and_then(|r| r.threshold_crossing_ft),
         alternate_hold: alternate_hold.as_ref(),
         missed_hold: missed_hold.as_ref(),
+        holds: &holds,
         published_loc_visibility: localiser.as_ref().map(|l| l.visibility.clone()),
         published_loc: localiser.as_ref().map(|l| (l.altitude_ft, l.height_ft)),
         published_loc_columns: localiser.as_ref().map(|l| l.categories.as_slice()).unwrap_or(&[]),

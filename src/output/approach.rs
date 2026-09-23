@@ -95,6 +95,11 @@ pub struct Chart<'a> {
     pub alternate_hold: Option<&'a crate::sources::navdata::Hold>,
     /// The hold the missed approach ends in, where one is published for it.
     pub missed_hold: Option<&'a crate::sources::navdata::Hold>,
+    /// Holds published at the fixes this approach is flown through. A procedure's legs
+    /// do not carry them — a hold at an initial approach fix is a place to wait, not a
+    /// leg to fly — so they come from the navigation database's own holding table, and
+    /// a chart draws each one where it is flown.
+    pub holds: &'a [crate::sources::navdata::Hold],
     /// What is flown to the localiser minimum, where the chart publishes one.
     pub published_loc_visibility: Option<String>,
     /// The glidepath angle, where the approach is flown down one.
@@ -994,6 +999,46 @@ fn draw_holds(c: &mut Content, font: Name, v: &View, legs: &[&Leg]) {
         if let Some(alt) = leg.altitude_ft {
             let p = v.at(lat, lon);
             label(c, font, 6.5, p.0 + 6.0, p.1 - 14.0, &format!("{alt:.0}"), 0.3);
+        }
+    }
+}
+
+/// The holds published at the fixes on this chart, drawn as the racetrack a chart draws.
+///
+/// These are not legs of the procedure. A hold at an initial approach fix is somewhere to
+/// wait for the approach, so nothing in the coded route mentions it; it lives in the
+/// navigation database's holding table against the fix's own name. A plate draws it all
+/// the same, because a crew told to hold needs to see which way round it goes.
+fn draw_published_holds(c: &mut Content, font: Name, bold: Name, v: &View, holds: &[crate::sources::navdata::Hold], taken: &mut Taken) {
+    for hold in holds {
+        let turn = if hold.right_turns { Turn::Right } else { Turn::Left };
+        // A mile a minute is close enough for the leg where only a time is published.
+        let leg_nm = hold.leg_nm.or_else(|| hold.leg_time_min.map(|m| m * 4.0)).filter(|nm| (0.5..12.0).contains(nm)).unwrap_or(4.0);
+        let pts: Vec<(f32, f32)> = hold_points((hold.lat, hold.lon), hold.inbound_deg, Some(turn), leg_nm)
+            .into_iter()
+            .map(|p| v.at(p.0, p.1))
+            .collect();
+        if pts.len() < 2 || pts.iter().all(|p| !v.inside(*p, 10.0)) {
+            continue;
+        }
+        c.set_stroke_gray(INK);
+        c.set_line_width(1.3);
+        for (i, (px, py)) in pts.iter().enumerate() {
+            if i == 0 {
+                c.move_to(*px, *py);
+            } else {
+                c.line_to(*px, *py);
+            }
+        }
+        c.stroke();
+        let at = v.at(hold.lat, hold.lon);
+        // The way round it goes and how high it may be held at, which is what a chart
+        // writes beside one.
+        let mut row = at.1 - 9.0;
+        taken.label(c, bold, 5.8, at.0 + 7.0, row, &format!("{:03.0}\u{b0}", hold.inbound_deg), 0.2);
+        row -= 6.0;
+        if let Some(alt) = hold.max_altitude_ft {
+            taken.label(c, font, 5.5, at.0 + 7.0, row, &format!("MHA {alt:.0}'"), 0.3);
         }
     }
 }
@@ -1907,6 +1952,8 @@ fn draw_plan(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32
         draw_markers(c, font, &v, &ils.markers, track_deg, &mut taken);
     }
     draw_holds(c, font, &v, &holds);
+    // The published holds, which the procedure's own legs say nothing about.
+    draw_published_holds(c, font, bold, &v, ch.holds, &mut taken);
 
     draw_obstacles(c, font, bold, &v, ch.obstacles, ch.tdze_ft + 150.0, est.obstacle_top_ft.filter(|_| est.limited_by == LimitedBy::Obstacle));
     c.restore_state();
@@ -2594,16 +2641,20 @@ fn draw_speed_band(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, 
     let label_w = 74.0;
     let cw = (table_w - label_w) / SPEEDS.len() as f32;
     let rows = 3.0;
-    let rh = h / rows;
+    let rh = (h - 9.0) / rows;
+    let table_y = y + 9.0;
     for i in 1..3 {
-        line(c, x, y + i as f32 * rh, x + table_w, y + i as f32 * rh, 0.5, 0.55);
+        line(c, x, table_y + i as f32 * rh, x + table_w, table_y + i as f32 * rh, 0.5, 0.55);
     }
-    line(c, x + label_w, y, x + label_w, y + h, 0.5, 0.55);
+    line(c, x, table_y, x + table_w, table_y, 0.5, 0.55);
+    line(c, x + label_w, table_y, x + label_w, y + h, 0.5, 0.55);
     for i in 1..SPEEDS.len() {
         let cx = x + label_w + i as f32 * cw;
-        line(c, cx, y, cx, y + h, 0.4, 0.6);
+        line(c, cx, table_y, cx, y + h, 0.4, 0.6);
     }
     let row_y = |n: f32| y + h - (n + 1.0) * rh + rh / 2.0 - 2.5;
+    // The rules stop above that sliver.
+    let _ = &row_y;
     text(c, font, 5.8, x + 4.0, row_y(0.0), "Gnd speed-Kts", 0.3);
     let slope = descent_angle_deg(ch);
     // A glidepath is a glidepath; without one the figure is a descent angle, and a chart
@@ -2694,6 +2745,18 @@ fn draw_speed_band(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, 
     if let Some(to) = to {
         text_centred(c, bold, 8.0, cells.0 + cells.1 * 2.5, y + 5.0, &to, INK);
     }
+    // Where the approach ends, as the distance it is read at. A crew flying a
+    // non-precision approach goes missed at a DME, and the chart says which.
+    if let (Some(beacon), false) = (dme_reference(ch), ch.glidepath_deg.is_some()) {
+        let map = final_legs(ch.procedure)
+            .iter()
+            .rev()
+            .find_map(|l| l.lat.zip(l.lon))
+            .map(|(lat, lon)| dme_nm(beacon, lat, lon));
+        if let Some(nm) = map.filter(|nm| *nm > 0.2) {
+            text(c, font, 5.8, x + 4.0, y + 3.0, &format!("MAP at D{nm:.1} {}", beacon.ident), 0.3);
+        }
+    }
 }
 
 /// A height a little above or below another, which keeps an arrow head symmetrical.
@@ -2782,8 +2845,16 @@ fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32
         text_centred(c, font, 7.5, x + main_w + (straight_w - main_w) / 2.0, sub_y + sub_h - 20.0, &format!("MDA(H) {alt:.0}'({hat:.0}')"), INK);
     }
     // The circling half: how fast each category may fly, and how low it may go.
+    let published = ch.published;
     let kts_w = 34.0;
     line(c, circle_x + kts_w, y, circle_x + kts_w, sub_y + sub_h, 0.6, 0.55);
+    if published.is_none() {
+        let rest = w - straight_w - kts_w;
+        let split = circle_x + kts_w + rest * 0.62;
+        line(c, split, y, split, sub_y + sub_h, 0.6, 0.55);
+        text_centred(c, font, 5.5, split + (x + w - split) / 2.0, sub_y + sub_h - 16.0, "VIS", 0.35);
+        text_centred(c, font, 5.0, split + (x + w - split) / 2.0, sub_y + sub_h - 23.0, "PANS-OPS standard", 0.45);
+    }
     text_centred(c, font, 5.5, circle_x + kts_w / 2.0, sub_y + sub_h - 9.0, "Max", 0.35);
     text_centred(c, font, 5.5, circle_x + kts_w / 2.0, sub_y + sub_h - 16.0, "Kts", 0.35);
     text_centred(c, font, 6.5, circle_x + kts_w + (w - straight_w - kts_w) / 2.0, sub_y + 8.0, "MDA(H)", 0.2);
@@ -2793,7 +2864,12 @@ fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32
     // the threshold at. A chart's circling table is headed by the first; ours printed the
     // second, so every figure in the column was thirty knots light.
     const KTS: [&str; 4] = ["100", "135", "180", "205"];
-    let published = ch.published;
+    // The visibility a circling approach is flown to, from the table in PANS-OPS. It is
+    // not a figure any particular state published for this runway — where the state's own
+    // chart was read, that number is used instead and this one is not printed — but it is
+    // the standard the state's own is derived from, and a minimum with no visibility
+    // beside it is only half a minimum.
+    const CIRCLING_VIS_M: [u32; 4] = [1500, 1600, 2400, 3600];
     for (i, letter) in ["A", "B", "C", "D"].iter().enumerate() {
         let row_y = sub_y - (i + 1) as f32 * row_h;
         if i > 0 {
@@ -2826,7 +2902,14 @@ fn draw_minima_table(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32
         text_centred(c, font, 6.5, circle_x + kts_w / 2.0, middle, KTS[i], 0.35);
         if let Some((_, ft)) = ch.circling.get(i) {
             let height = ft - ch.field_elev_ft;
-            text_centred(c, bold, 7.5, circle_x + kts_w + (w - straight_w - kts_w) / 2.0, middle, &format!("{ft:.0}'({height:.0}')"), INK);
+            let rest = w - straight_w - kts_w;
+            // Where a state's own visibility was read it is printed; otherwise the
+            // standard one, in its own column so the two are never confused.
+            let mda_w = if published.is_some() { rest } else { rest * 0.62 };
+            text_centred(c, bold, 7.5, circle_x + kts_w + mda_w / 2.0, middle, &format!("{ft:.0}'({height:.0}')"), INK);
+            if published.is_none() {
+                text_centred(c, font, 7.0, circle_x + kts_w + mda_w + (rest - mda_w) / 2.0, middle, &format!("{} m", CIRCLING_VIS_M[i]), 0.15);
+            }
         }
     }
     // The column headings for the straight-in, which say what is out of service. Only
