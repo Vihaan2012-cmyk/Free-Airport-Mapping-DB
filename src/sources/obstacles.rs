@@ -193,6 +193,12 @@ nwr[\"building\"~\"^(tower|skyscraper)$\"]({s:.5},{w:.5},{n:.5},{e:.5});\
 nwr[\"generator:source\"=\"wind\"]({s:.5},{w:.5},{n:.5},{e:.5});\
 );out center tags;"
     );
+    // Masts and towers go up over years, not days: a month-old answer is as good as a new
+    // one, and asking again means a public server that can take minutes to answer, while
+    // a flight bag waits for the chart.
+    let mut long_lived = cache.clone();
+    long_lived.max_age = cache.max_age.map(|a| a.max(std::time::Duration::from_secs(30 * 24 * 3600)));
+    let cache = &long_lived;
     let text = cache.get_or_fetch_text(&key, || {
         let mut last = None;
         for m in mirrors {
