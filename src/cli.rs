@@ -116,9 +116,15 @@ enum Cmd {
         /// Override what sort of approach it is. Left out, the navigation data says.
         #[arg(long)]
         kind: Option<String>,
-        /// Where to write the PDF.
+        /// Where to write it.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Write a picture rather than a page: what an electronic flight bag asks for.
+        #[arg(long)]
+        png: bool,
+        /// Pixels to the point for `--png`. Three is about 216 to the inch on A4.
+        #[arg(long, default_value_t = 3.0)]
+        scale: f32,
         /// Open it when it is written.
         #[arg(long)]
         open: bool,
@@ -1038,8 +1044,8 @@ pub fn run() -> Result<()> {
         }
         Cmd::MinimaAudit { truth, out, jobs } => crate::audit::run(&truth, out.as_deref(), jobs),
         Cmd::PublishedCheck { fixtures } => crate::audit::published_check(&fixtures),
-        Cmd::ApproachChart { icao, runway, approach, star, list, kind, out, open } => {
-            approach_chart_cmd(&icao, approach.as_deref().or(runway.as_deref()), star.as_deref(), list, kind.as_deref(), out, open)
+        Cmd::ApproachChart { icao, runway, approach, star, list, kind, out, png, scale, open } => {
+            approach_chart_cmd(&icao, approach.as_deref().or(runway.as_deref()), star.as_deref(), list, kind.as_deref(), out, png, scale, open)
         }
         Cmd::Layers => {
             layers_cmd();
@@ -1054,7 +1060,8 @@ pub fn run() -> Result<()> {
 
 /// An approach chart: airport, terrain, obstacles, the procedure and an estimated minimum.
 #[allow(clippy::too_many_arguments)]
-fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, list: bool, kind: Option<&str>, out: Option<PathBuf>, open: bool) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, list: bool, kind: Option<&str>, out: Option<PathBuf>, png: bool, scale: f32, open: bool) -> Result<()> {
     let icao = icao.to_uppercase();
     let asked = kind.map(approach_kind).transpose()?;
     crate::term::start(&format!("Approach chart for {icao}"));
@@ -1187,7 +1194,13 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
         coded_ft: crate::minima::coded_minimum(&setup.final_legs(), setup.tdze_ft),
         circling_only: setup.is_circling_only(),
     };
-    crate::output::approach::write(&chart, &est, &out)?;
+    // A page to print, or a picture to show. The drawing is the same either way.
+    let out = if png && out.extension().map_or(true, |e| e.eq_ignore_ascii_case("pdf")) { out.with_extension("png") } else { out };
+    if png {
+        crate::output::approach::write_png(&chart, &est, &out, scale.clamp(1.0, 8.0))?;
+    } else {
+        crate::output::approach::write(&chart, &est, &out)?;
+    }
     crate::term::success(&format!(
         "{:.0} ft ({:.0} ft above touchdown), set by {}",
         est.altitude_ft,
