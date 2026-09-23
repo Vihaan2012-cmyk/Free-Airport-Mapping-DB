@@ -226,12 +226,15 @@ struct Inventory {
     rows: Vec<[String; 3]>,
     can_install: bool,
     can_remove: bool,
+    /// Whether the flight bags' charts come from the bridge: None where there are none.
+    tablets_on: Option<bool>,
 }
 
 /// Build the list. `redirect` is the A350/A380X option, `serving_redirect` whether the
 /// redirect is in place right now.
 fn take_inventory(redirect: bool, serving_redirect: bool, xplane_on: bool) -> Inventory {
     let mut rows: Vec<[String; 3]> = Vec::new();
+    let mut tablets: Vec<bool> = Vec::new();
     let sims = desktop::detect_sims();
     let ready = redirect && desktop::navigraph_ready();
     for sim in &sims {
@@ -259,6 +262,10 @@ fn take_inventory(redirect: bool, serving_redirect: bool, xplane_on: bool) -> In
         if desktop::a380x_in_community(&sim.community) {
             rows.push([sim.name.clone(), "FlyByWire A380X OANS".into(), navigraph("Ready")]);
         }
+        for (pkg, _, on) in amdbgen::bridge::patcher::scan_charts(&sim.community) {
+            tablets.push(on);
+            rows.push([sim.name.clone(), format!("Tablet charts: {}", tablet_name(&pkg)), if on { "From the bridge".into() } else { "Its own (Navigraph)".into() }]);
+        }
     }
     if let Some((_, state)) = desktop::xplane_state() {
         let s = match state {
@@ -276,7 +283,28 @@ fn take_inventory(redirect: bool, serving_redirect: bool, xplane_on: bool) -> In
         can_install: !sims.is_empty() && desktop::bundled_a220_map().is_some(),
         can_remove: sims.iter().any(|s| desktop::a220_map_state(&s.community) != MapState::NotInstalled),
         rows,
+        // On when any is: the button then turns them all off, which is the safe way round.
+        tablets_on: (!tablets.is_empty()).then(|| tablets.iter().any(|on| *on)),
     }
+}
+
+/// An aircraft package's folder, as the list names it.
+fn tablet_name(package: &str) -> String {
+    let p = package.to_ascii_lowercase();
+    let name = if p.contains("a350") {
+        "iniBuilds A350"
+    } else if p.contains("738") || p.contains("737") {
+        "PMDG 737"
+    } else if p.contains("77er") {
+        "PMDG 777-200ER"
+    } else if p.contains("77f") {
+        "PMDG 777F"
+    } else if p.contains("77w") {
+        "PMDG 777-300ER"
+    } else {
+        return package.to_string();
+    };
+    name.to_string()
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -328,6 +356,7 @@ struct Ui {
     chart_icao: nwg::TextInput,
     chart_find: nwg::Button,
     chart_draw: nwg::Button,
+    chart_tablets: nwg::Button,
     charts: nwg::ListView,
 
     options_header: nwg::Label,
@@ -458,6 +487,10 @@ impl App {
         nwg::TextInput::builder().parent(w).limit(4).placeholder_text(Some("ICAO")).position((74, 362)).size((70, 25)).build(&mut ui.chart_icao)?;
         nwg::Button::builder().parent(w).text("Find procedures").position((156, 361)).size((132, 27)).build(&mut ui.chart_find)?;
         nwg::Button::builder().parent(w).text("Draw chart").position((296, 361)).size((132, 27)).build(&mut ui.chart_draw)?;
+        // The A350 and PMDG tablets, which can take their charts from here. Labelled once
+        // the aircraft have been looked through.
+        nwg::Button::builder().parent(w).text("Tablet charts…").position((436, 361)).size((184, 27)).build(&mut ui.chart_tablets)?;
+        ui.chart_tablets.set_enabled(false);
         nwg::ListView::builder()
             .parent(w)
             .list_style(nwg::ListViewStyle::Detailed)
@@ -605,6 +638,8 @@ impl App {
                     self.find_procedures();
                 } else if handle == ui.chart_draw.handle {
                     self.draw_chart();
+                } else if handle == ui.chart_tablets.handle {
+                    self.toggle_tablet_charts();
                 } else if handle == ui.folder_change.handle {
                     self.change_folder();
                 } else if handle == ui.open_folder.handle {
@@ -992,6 +1027,29 @@ impl App {
         self.drain_lines_only();
     }
 
+    /// Point the A350 and PMDG tablets' charts at the bridge, or give them back their own.
+    /// On when any of them is on, so a click from a mixed state turns them all off.
+    fn toggle_tablet_charts(&self) {
+        let sims = desktop::detect_sims();
+        let on = sims.iter().any(|s| amdbgen::bridge::patcher::scan_charts(&s.community).iter().any(|(_, _, on)| *on));
+        let port = amdbgen::bridge::DEFAULT_PORT;
+        let mut changed = 0;
+        for sim in &sims {
+            let done = if on { amdbgen::bridge::patcher::unpatch_charts(&sim.community) } else { amdbgen::bridge::patcher::patch_charts(&sim.community, port) };
+            match done {
+                Ok(files) => changed += files.len(),
+                Err(e) => amdbgen::term::error(&format!("Could not change the tablets in {}: {e:#}", sim.community.display())),
+            }
+        }
+        if on {
+            amdbgen::term::success(&format!("Tablet charts off: {changed} tablet(s) back on their own Navigraph charts"));
+        } else {
+            amdbgen::term::success(&format!("Tablet charts on: {changed} tablet(s) now take approach charts from the bridge. Keep it serving while you fly; restart the flight if the aircraft is already loaded."));
+        }
+        self.drain_lines_only();
+        self.refresh_inventory();
+    }
+
     /// Draw the approach picked in the list, by the command-line tool beside this
     /// program. It goes to the network for terrain and obstacles, so it runs on its own
     /// and the window stays answerable while it does.
@@ -1066,6 +1124,16 @@ impl App {
         }
         lv.set_redraw(true);
         self.ui.install.set_enabled(inv.can_install);
+        match inv.tablets_on {
+            Some(on) => {
+                self.ui.chart_tablets.set_text(if on { "Tablet charts: ON" } else { "Tablet charts: OFF" });
+                self.ui.chart_tablets.set_enabled(true);
+            }
+            None => {
+                self.ui.chart_tablets.set_text("No chart tablets found");
+                self.ui.chart_tablets.set_enabled(false);
+            }
+        }
         self.ui.remove.set_enabled(inv.can_remove);
         self.ui.refresh.set_enabled(true);
     }

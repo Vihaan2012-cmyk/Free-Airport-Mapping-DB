@@ -3,6 +3,7 @@
 //! same API), fed by amdbgen data; plus a patcher that points installed aircraft
 //! packages at it.
 
+pub mod charts;
 pub mod cli;
 pub mod compat;
 pub mod desktop;

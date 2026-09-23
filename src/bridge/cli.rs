@@ -367,6 +367,18 @@ enum Cmd {
         #[arg(long = "community")]
         community: Vec<PathBuf>,
     },
+    /// Approach charts on the flight bags built on the Navigraph SDK (iniBuilds A350, PMDG
+    /// 737 and 777): `on` points their charts at this bridge, `off` gives them back their
+    /// own, `status` says which each is. No administrator rights needed. While on, the
+    /// tablet's charts come only from the bridge, which has to be running.
+    Charts {
+        /// on, off or status
+        state: String,
+        #[arg(long = "community")]
+        community: Vec<PathBuf>,
+        #[arg(long, default_value_t = super::DEFAULT_PORT)]
+        port: u16,
+    },
 }
 
 /// Saved settings (asking on the first run), with this run's overrides applied.
@@ -644,6 +656,9 @@ pub fn run() -> Result<()> {
                 for (pkg, f, patched) in patcher::scan_a220_page(&d) {
                     println!("  {}  A220 instrument page {}: {}", pkg, if patched { "PATCHED (loads the AMDB moving map)" } else if patcher::a220_map_installed(&d) { "not patched (run `serve` or `patch`)" } else { "not patched (the map package is not installed here)" }, f.file_name().unwrap_or_default().to_string_lossy());
                 }
+                for (pkg, f, patched) in patcher::scan_charts(&d) {
+                    println!("  {}  flight bag charts {}: {}", pkg, if patched { "FROM THE BRIDGE" } else { "its own (run `charts on`)" }, f.file_name().unwrap_or_default().to_string_lossy());
+                }
                 for f in patcher::load_record(&d).files {
                     println!("  PATCHED {}", f.path.display());
                 }
@@ -714,6 +729,37 @@ pub fn run() -> Result<()> {
                 total += patcher::unpatch(&d)?;
             }
             println!("{total} file(s) restored");
+            Ok(())
+        }
+        Cmd::Charts { state, community, port } => {
+            let state = state.to_ascii_lowercase();
+            let dirs = communities(&community);
+            let mut found = 0;
+            for d in &dirs {
+                match state.as_str() {
+                    "on" => {
+                        for f in patcher::patch_charts(d, port)? {
+                            crate::term::success(&format!("Charts from the bridge: {}", f.display()));
+                        }
+                    }
+                    "off" => {
+                        for f in patcher::unpatch_charts(d)? {
+                            crate::term::success(&format!("Own charts restored: {}", f.display()));
+                        }
+                    }
+                    "status" => {}
+                    other => return Err(anyhow!("charts takes on, off or status, not {other}")),
+                }
+                for (pkg, f, patched) in patcher::scan_charts(d) {
+                    found += 1;
+                    println!("  {pkg}  {}: {}", f.file_name().unwrap_or_default().to_string_lossy(), if patched { "charts from the bridge" } else { "its own (Navigraph) charts" });
+                }
+            }
+            if found == 0 {
+                crate::term::warn("no flight bag built on the Navigraph SDK found (iniBuilds A350, PMDG 737/777)");
+            } else if state == "on" {
+                crate::term::info("Start the bridge before the flight: the tablet asks it for every chart.");
+            }
             Ok(())
         }
     }
