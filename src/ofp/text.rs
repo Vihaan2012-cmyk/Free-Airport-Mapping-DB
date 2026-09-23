@@ -7,7 +7,7 @@
 //! `pdf::write` typesets exactly this text, monospaced, across as many A4 pages as it
 //! takes: there is one source of the plan's content, and only one place it is laid out.
 
-use crate::dispatch::{Dispatch, PointKind, TafChange};
+use crate::dispatch::{Dispatch, PointKind, TafChange, Waypoint};
 use crate::ofp::DispatchOptions;
 use crate::route::airspace::fir_crossings;
 use chrono::{DateTime, Utc};
@@ -86,14 +86,32 @@ fn route_lines(s: &mut String, d: &Dispatch) {
     let _ = writeln!(s);
 }
 
-/// The way ATC reads the route back: departure, every enroute fix at its level, arrival.
+/// The way ATC reads the route back: the departure airport and the runway in use, the SID
+/// where one was flown, every enroute fix at its level, the STAR, then the arrival airport
+/// and its runway — the shape a filed route is read back in, not merely item 15's shorter
+/// notation.
 fn atc_route(d: &Dispatch) -> String {
-    let mut parts = vec![d.route.origin.icao.clone()];
+    let mut parts = vec![airport_and_runway(&d.route.origin.icao, d.route.dep_runway.as_deref())];
+    if let Some(sid) = &d.route.sid {
+        parts.push(sid.clone());
+    }
     for w in d.route.points.iter().filter(|w| matches!(w.kind, PointKind::Enroute | PointKind::Track)) {
         parts.push(w.ident.clone());
     }
-    parts.push(d.route.destination.icao.clone());
+    if let Some(star) = &d.route.star {
+        parts.push(star.clone());
+    }
+    parts.push(airport_and_runway(&d.route.destination.icao, d.route.arr_runway.as_deref()));
     parts.join(" ")
+}
+
+/// An airport with the runway in use, the way a chart or a filed route names it: "EGLL/27R",
+/// or just the airport where no runway was settled on.
+fn airport_and_runway(icao: &str, runway: Option<&str>) -> String {
+    match runway {
+        Some(rw) if !rw.is_empty() => format!("{icao}/{rw}"),
+        _ => icao.to_string(),
+    }
 }
 
 fn nav_log(s: &mut String, d: &Dispatch) {
@@ -102,6 +120,10 @@ fn nav_log(s: &mut String, d: &Dispatch) {
     if d.perf.profile.is_empty() {
         let _ = writeln!(s, "  (no navigation log: the performance model did not run)");
     }
+    // The performance profile carries none of a SID or STAR's own published constraints —
+    // it is built to fly the route, not to say what was filed — so they are looked up here,
+    // by the identifier a procedure fix and its profile point share, from the route itself.
+    let constraints = procedure_constraints(d);
     let mut prev_dist = 0.0;
     let mut prev_time = 0.0;
     for p in &d.perf.profile {
@@ -110,9 +132,10 @@ fn nav_log(s: &mut String, d: &Dispatch) {
         prev_dist = p.dist_nm;
         prev_time = p.time_min;
         let isa_dev = p.air.isa_dev(p.alt_ft);
+        let cons = constraints.get(p.ident.as_str()).map(|w| constraint_note(w)).unwrap_or_default();
         let _ = writeln!(
             s,
-            "  {:<8} {:<8} {} FL{:03.0} {:03.0}/{:02.0}KT {:+4.0} {:+3.0}  {:3.0} {:3.0} {:5.0} {:5.0} {} {}   {:6.0}  {:6.0}  {}",
+            "  {:<8} {:<8} {} FL{:03.0} {:03.0}/{:02.0}KT {:+4.0} {:+3.0}  {:3.0} {:3.0} {:5.0} {:5.0} {} {}   {:6.0}  {:6.0}  {}{cons}",
             p.ident,
             p.via,
             hdg(p.track_true_deg),
@@ -133,6 +156,36 @@ fn nav_log(s: &mut String, d: &Dispatch) {
         );
     }
     let _ = writeln!(s);
+}
+
+/// Every SID or STAR fix that carries a published constraint, by identifier: what
+/// [`nav_log`] annotates each matching profile line with.
+fn procedure_constraints(d: &Dispatch) -> std::collections::HashMap<&str, &Waypoint> {
+    d.route
+        .points
+        .iter()
+        .filter(|w| matches!(w.kind, PointKind::Sid | PointKind::Star))
+        .filter(|w| w.alt_min_ft.is_some() || w.alt_max_ft.is_some() || w.speed_max_kt.is_some())
+        .map(|w| (w.ident.as_str(), w))
+        .collect()
+}
+
+/// A published constraint the way a chart prints it against a procedure fix: "AT OR ABOVE
+/// 4000FT", "AT OR BELOW FL100", "4000-6000FT", "250KT MAX" — whichever of altitude and
+/// speed the database actually gave.
+fn constraint_note(w: &Waypoint) -> String {
+    let mut parts = Vec::new();
+    match (w.alt_min_ft, w.alt_max_ft) {
+        (Some(min), Some(max)) if (min - max).abs() < 1.0 => parts.push(format!("{min:.0}FT")),
+        (Some(min), Some(max)) => parts.push(format!("{min:.0}-{max:.0}FT")),
+        (Some(min), None) => parts.push(format!("{min:.0}FT+")),
+        (None, Some(max)) => parts.push(format!("{max:.0}FT-")),
+        (None, None) => {}
+    }
+    if let Some(kt) = w.speed_max_kt {
+        parts.push(format!("{kt:.0}KT MAX"));
+    }
+    if parts.is_empty() { String::new() } else { format!("  [{}]", parts.join(" ")) }
 }
 
 fn step_climbs(s: &mut String, d: &Dispatch) {
@@ -314,5 +367,80 @@ mod tests {
     fn minutes_print_as_hours_and_minutes() {
         assert_eq!(fmt_hm(90.0), "0130");
         assert_eq!(fmt_hm(5.0), "0005");
+    }
+
+    #[test]
+    fn the_atc_route_names_the_runway_and_the_procedure_at_each_end() {
+        let mut d = fixtures::sample();
+        d.route.dep_runway = Some("27R".to_string());
+        d.route.arr_runway = Some("16L".to_string());
+        d.route.sid = Some("DVR3J".to_string());
+        d.route.star = Some("RITE3B".to_string());
+        let line = atc_route(&d);
+        assert!(line.starts_with(&format!("{}/27R DVR3J ", d.route.origin.icao)), "{line}");
+        assert!(line.ends_with(&format!(" RITE3B {}/16L", d.route.destination.icao)), "{line}");
+    }
+
+    /// Item 15's route string is `FiledRoute::route_string`'s own job (it is defined in
+    /// `dispatch.rs`, frozen); what belongs here is only that the ATC line never names a
+    /// procedure that was not flown.
+    #[test]
+    fn the_atc_route_names_no_procedure_where_there_is_none() {
+        let mut d = fixtures::sample();
+        d.route.dep_runway = None;
+        d.route.sid = None;
+        d.route.star = None;
+        let line = atc_route(&d);
+        assert!(!line.contains('/'));
+        assert!(line.starts_with(&format!("{} ", d.route.origin.icao)));
+    }
+
+    #[test]
+    fn constraint_note_formats_each_shape_of_constraint() {
+        use crate::dispatch::{PointKind, Waypoint};
+        let mut w = Waypoint::new("X", (0.0, 0.0), "", PointKind::Sid);
+        w.alt_min_ft = Some(3000.0);
+        assert_eq!(constraint_note(&w), "  [3000FT+]");
+        w.alt_min_ft = None;
+        w.alt_max_ft = Some(6000.0);
+        assert_eq!(constraint_note(&w), "  [6000FT-]");
+        w.alt_min_ft = Some(4000.0);
+        w.alt_max_ft = Some(4000.0);
+        assert_eq!(constraint_note(&w), "  [4000FT]");
+        w.alt_min_ft = Some(3000.0);
+        w.alt_max_ft = Some(6000.0);
+        w.speed_max_kt = Some(250.0);
+        assert_eq!(constraint_note(&w), "  [3000-6000FT 250KT MAX]");
+    }
+
+    #[test]
+    fn nav_log_prints_a_procedures_published_constraint_at_its_fix() {
+        use crate::dispatch::{Air, PointKind, ProfileKind, ProfilePoint, Waypoint};
+        let mut d = fixtures::sample();
+        let mut w = Waypoint::new("BPK", (51.75, -0.11), "BPK5K", PointKind::Sid);
+        w.alt_min_ft = Some(4000.0);
+        d.route.points.push(w);
+        d.perf.profile.push(ProfilePoint {
+            ident: "BPK".to_string(),
+            kind: ProfileKind::Waypoint,
+            pos: (51.75, -0.11),
+            via: "BPK5K".to_string(),
+            alt_ft: 4000.0,
+            dist_nm: 10.0,
+            time_min: 3.0,
+            fuel_used_kg: 100.0,
+            fuel_remaining_kg: 9000.0,
+            gross_kg: 60000.0,
+            track_true_deg: 90.0,
+            tas_kt: 250.0,
+            gs_kt: 240.0,
+            mach: 0.4,
+            air: Air::standard(4000.0),
+            mora_ft: None,
+        });
+        let mut s = String::new();
+        nav_log(&mut s, &d);
+        assert!(s.contains("BPK"));
+        assert!(s.contains("4000FT+"));
     }
 }
