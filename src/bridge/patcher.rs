@@ -366,10 +366,19 @@ const CHARTS_MARK: &str = "/*amdb-charts:";
 /// sent to.
 const CHARTS_ROOTS: [(&str, &str); 3] = [("getIdentityApiRoot", "/identity"), ("getChartsApiRoot", "/v2/charts"), ("getAirportApiRoot", "/v2/airport")];
 
+/// Flight bags with their own Navigraph client rather than the SDK, which name the two
+/// hosts outright: the Synaptic A220's. Each quoted address is swapped for the bridge's.
+const CHARTS_LITERALS: [(&str, &str); 2] = [("'https://identity.api.navigraph.com'", "/identity"), ("'https://api.navigraph.com'", "")];
+
 /// The flight bag scripts, by file name.
 fn is_efb_script(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
-    name.starts_with("ini-efb") || name == "pmdgtablet.js"
+    name.starts_with("ini-efb") || name == "pmdgtablet.js" || name.starts_with("efb-a220")
+}
+
+/// Whether a script is one the charts patch knows: built on the SDK, or naming the hosts.
+fn knows_charts(text: &str) -> bool {
+    CHARTS_ROOTS.iter().all(|(n, _)| text.contains(n)) || CHARTS_LITERALS.iter().all(|(l, _)| text.contains(l))
 }
 
 /// Where the body of `name = () => BODY` is in the text, the body ending at the first
@@ -428,9 +437,30 @@ pub fn patch_charts_text(text: &str, port: u16) -> Option<String> {
         return None;
     }
     let mut spans = Vec::new();
-    for (name, path) in CHARTS_ROOTS {
-        let (s, e) = arrow_body(text, name)?;
-        spans.push((s, e, path));
+    if CHARTS_ROOTS.iter().all(|(n, _)| text.contains(n)) {
+        for (name, path) in CHARTS_ROOTS {
+            let (s, e) = arrow_body(text, name)?;
+            spans.push((s, e, path));
+        }
+    } else {
+        // Each quoted host, wherever it stands; the identity host first, since it is the
+        // longer and the plain API host must not be found inside it.
+        for (literal, path) in CHARTS_LITERALS {
+            let mut from = 0;
+            let mut found = false;
+            while let Some(at) = text[from..].find(literal) {
+                let s = from + at;
+                let e = s + literal.len();
+                if !spans.iter().any(|(a, b, _)| s < *b && *a < e) {
+                    spans.push((s, e, path));
+                    found = true;
+                }
+                from = e;
+            }
+            if !found {
+                return None;
+            }
+        }
     }
     spans.sort_by_key(|s| s.0);
     let mut out = String::with_capacity(text.len() + 600);
@@ -485,7 +515,7 @@ pub fn scan_charts(community: &Path) -> Vec<(String, PathBuf, bool)> {
                 continue;
             }
             let Ok(text) = fs::read_to_string(&f) else { continue };
-            if text.contains(CHARTS_MARK) || CHARTS_ROOTS.iter().all(|(n, _)| text.contains(n)) {
+            if text.contains(CHARTS_MARK) || knows_charts(&text) {
                 out.push((pkg.file_name().to_string_lossy().to_string(), f, text.contains(CHARTS_MARK)));
             }
         }
@@ -871,6 +901,13 @@ mod tests {
             assert!(patch_charts_text(&patched, 8770).is_none(), "idempotent");
             assert_eq!(unpatch_charts_text(&patched).unwrap(), original);
         }
+        // The A220's own client, which names both hosts in its string table.
+        let a220 = "var _0x=['https://',\'https://api.navigraph.com\',\'/v2/charts\',\'https://identity.api.navigraph.com\',\'/connect/token\'];";
+        let patched = patch_charts_text(a220, 8770).unwrap();
+        assert!(patched.contains("'http://127.0.0.1:8770'"));
+        assert!(patched.contains("'http://127.0.0.1:8770/identity'"));
+        assert!(!patched.contains("navigraph.com'"));
+        assert_eq!(unpatch_charts_text(&patched).unwrap(), a220);
         // Not a flight bag, or one missing a root: left alone.
         assert!(patch_charts_text("var getChartsApiRoot = () => 'x';", 8770).is_none());
         assert!(unpatch_charts_text(a350).is_none());
