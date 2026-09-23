@@ -1475,7 +1475,10 @@ pub fn all_runways() -> Vec<RunwayRow> {
 fn runway_row(row: &rusqlite::Row) -> rusqlite::Result<RunwayRow> {
     Ok(RunwayRow {
         icao: row.get::<_, String>(0)?.trim().to_uppercase(),
-        ident: row.get::<_, String>(1)?.trim().trim_start_matches("RW").trim_start_matches('0').to_string(),
+        // Only the "RW" comes off. A trailing `trim_start_matches('0')` used to run after
+        // it too, turning "RW09L" into "9L" — losing the digit a SID or STAR transition
+        // ("RW09L") is matched against, which is always written two digits wide.
+        ident: row.get::<_, String>(1)?.trim().trim_start_matches("RW").to_string(),
         length_ft: row.get::<_, Option<f64>>(2)?.unwrap_or(0.0),
         bearing_true_deg: row.get::<_, Option<f64>>(3).ok().flatten(),
         lat: row.get::<_, f64>(4)?,
@@ -1534,6 +1537,11 @@ pub struct ProcedureLeg {
 /// flown. `route::procedures` groups these into named procedures — a runway-specific start,
 /// a common middle, an enroute transition at the far end for a SID and the other way about
 /// for a STAR — and picks the one that fits the runway and the rest of the flight.
+///
+/// The sequence column is `seqno`, not the `sequence_number` an earlier reading of this
+/// table assumed: every add-on's copy of `tbl_sids`/`tbl_stars` uses the short name, and the
+/// long one was never in the wild, so the query used to fail to prepare at all and every
+/// airport answered with no procedures whatever the runway.
 pub fn procedure_legs(icao: &str, kind: ProcedureKind) -> Vec<ProcedureLeg> {
     let suffix = match kind {
         ProcedureKind::Sid => "sids",
@@ -1541,9 +1549,10 @@ pub fn procedure_legs(icao: &str, kind: ProcedureKind) -> Vec<ProcedureLeg> {
     };
     let Some((connection, table)) = open_table(suffix) else { return Vec::new() };
     let sql = format!(
-        "select procedure_identifier, transition_identifier, sequence_number, waypoint_identifier, waypoint_latitude, waypoint_longitude, \
-         altitude_description, altitude1, altitude2, speed_limit \
-         from \"{table}\" where airport_identifier = ?1 order by procedure_identifier, transition_identifier, sequence_number"
+        "select procedure_identifier, transition_identifier, seqno, waypoint_identifier, waypoint_latitude, waypoint_longitude, \
+         altitude_description, altitude1, altitude2, \
+         case when trim(speed_limit_description) = '+' then null else speed_limit end \
+         from \"{table}\" where airport_identifier = ?1 order by procedure_identifier, transition_identifier, seqno"
     );
     let Ok(mut statement) = connection.prepare(&sql) else { return Vec::new() };
     let rows = statement.query_map([icao.to_uppercase()], |row| {
@@ -1557,6 +1566,9 @@ pub fn procedure_legs(icao: &str, kind: ProcedureKind) -> Vec<ProcedureLeg> {
             altitude_description: row.get::<_, Option<String>>(6)?.unwrap_or_default().trim().to_string(),
             altitude1_ft: row.get::<_, Option<f64>>(7).ok().flatten(),
             altitude2_ft: row.get::<_, Option<f64>>(8).ok().flatten(),
+            // A '+' speed limit is a minimum ("at or above"), which nothing here models;
+            // carrying it as `speed_max_kt` would print a cap that is really a floor, so
+            // the query itself leaves it out rather than every caller having to know why.
             speed_max_kt: row.get::<_, Option<f64>>(9).ok().flatten(),
         })
     });
