@@ -249,6 +249,26 @@ fn database() -> Option<&'static Database> {
     .as_ref()
 }
 
+/// A read-only connection to the navigation database in use, and the real name of the
+/// table whose name ends with `wanted` ("airports", "runways", "fir_uir"), for a part of
+/// the crate that has a question of its own to ask it.
+pub(crate) fn open_table(wanted: &str) -> Option<(rusqlite::Connection, String)> {
+    let db = database()?;
+    let connection = read_only(&db.path)?;
+    let name = {
+        let mut statement = connection.prepare("select name from sqlite_master where type = 'table'").ok()?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0)).ok()?;
+        let found = rows.flatten().find(|n| n.to_lowercase().ends_with(&wanted.to_lowercase()));
+        found?
+    };
+    Some((connection, name))
+}
+
+/// The AIRAC cycle of the navigation database in use.
+pub(crate) fn airac() -> Option<String> {
+    database()?.airac.clone()
+}
+
 /// An ARINC 424 database in the shape the add-ons ship it.
 ///
 /// Two spellings of the same thing are in the wild: the plain one PMDG uses
