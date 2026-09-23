@@ -18,6 +18,8 @@ use crate::output::canvas::{Canvas, Raster};
 use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref};
 use std::path::Path as FsPath;
 
+pub mod terminal;
+
 const W: f32 = 595.0; // A4 portrait, points
 const H: f32 = 842.0;
 const MARGIN: f32 = 28.0;
@@ -278,21 +280,29 @@ impl View {
     /// printed chart.
     fn around(airport: (f64, f64), track_deg: f64, points: &[(f64, f64)], x: f32, y: f32, w: f32, h: f32) -> View {
         let _ = track_deg;
+        View::around_within(airport, points, x, y, w, h, PLAN_MIN_NM, PLAN_MAX_NM, 0.75)
+    }
+
+    /// The same, for a map whose smallest and largest reach, and the room left round
+    /// each point, are the caller's: a departure runs out a hundred miles to the airways
+    /// where an approach stays within twenty.
+    #[allow(clippy::too_many_arguments)]
+    fn around_within(airport: (f64, f64), points: &[(f64, f64)], x: f32, y: f32, w: f32, h: f32, min_nm: f64, max_nm: f64, margin_nm: f64) -> View {
         let cos = airport.0.to_radians().cos().max(0.05);
         let nm_from_airport = |(lat, lon): (f64, f64)| ((lat - airport.0) * 60.0, (lon - airport.1) * 60.0 * cos);
         // Everything that must be on the paper, with the room it needs around it. A fix
         // needs enough for its name; the airport needs a good deal more, because the
         // runway is drawn there, the missed approach leaves from there, and the labels
         // for both are written around it.
-        const MARGIN_NM: f64 = 0.75;
+        let margin = margin_nm;
         const AIRPORT_MARGIN_NM: f64 = 2.5;
         let (mut n0, mut n1, mut e0, mut e1) = (-AIRPORT_MARGIN_NM, AIRPORT_MARGIN_NM, -AIRPORT_MARGIN_NM, AIRPORT_MARGIN_NM);
         for point in points {
             let (dn, de) = nm_from_airport(*point);
-            n0 = n0.min(dn - MARGIN_NM);
-            n1 = n1.max(dn + MARGIN_NM);
-            e0 = e0.min(de - MARGIN_NM);
-            e1 = e1.max(de + MARGIN_NM);
+            n0 = n0.min(dn - margin);
+            n1 = n1.max(dn + margin);
+            e0 = e0.min(de - margin);
+            e1 = e1.max(de + margin);
         }
         // The window is that box, centred on itself. Sizing it by how far the approach
         // reaches and then shifting it part of the way back is a rule that holds until
@@ -301,7 +311,7 @@ impl View {
         let centre = (airport.0 + (n0 + n1) / 2.0 / 60.0, airport.1 + (e0 + e1) / 2.0 / 60.0 / cos);
         let (half_n, half_e) = ((n1 - n0) / 2.0, (e1 - e0) / 2.0);
         let aspect = (w / h) as f64;
-        let half_h_nm = (half_n.max(half_e / aspect)).clamp(PLAN_MIN_NM / 2.0, PLAN_MAX_NM / 2.0);
+        let half_h_nm = (half_n.max(half_e / aspect)).clamp(min_nm / 2.0, max_nm / 2.0);
         let half_w_nm = half_h_nm * aspect;
         let deg_h = half_h_nm * 2.0 / 60.0;
         let deg_w = half_w_nm * 2.0 / 60.0 / cos;
@@ -445,7 +455,7 @@ fn hold_points(fix: (f64, f64), inbound_deg: f64, turn: Option<Turn>, leg_nm: f6
 /// sea is only drawn where the airport stands clear of it — but only just clear is
 /// enough, and has to be, because a coastal airport is the one whose chart most needs its
 /// water. Kennedy stands at 13 ft with Jamaica Bay on three sides.
-const WATER_TINT: (f32, f32, f32) = (0.80, 0.90, 0.95);
+const WATER_TINT: (f32, f32, f32) = (0.80, 0.81, 0.97);
 const WATER_FT: f64 = 1.0;
 const WATER_NEEDS_FIELD_FT: f64 = 5.0;
 
@@ -471,10 +481,12 @@ fn draw_terrain(c: &mut dyn Canvas, patch: &Patch, v: &View, field_ft: f64) {
         .filter(|h| h.is_finite())
         .fold(f64::NEG_INFINITY, |m, h| m.max(h as f64 / 0.3048));
     let floor = (field_ft + 250.0).max(TERRAIN_BANDS[0].0);
-    for (top, (r, g, b)) in TERRAIN_BANDS.iter().rev() {
-        // A band with nothing standing above it would cover the whole picture and then be
-        // covered again by the one below: there is no need to draw it at all.
-        if *top <= floor || highest_ft <= *top {
+    for (i, (top, (r, g, b))) in TERRAIN_BANDS.iter().enumerate().rev() {
+        // A band the ground never reaches into is not drawn. Its floor is the top of the
+        // band under it; the highest band has no top of its own, and is drawn wherever
+        // the ground rises above the one under it.
+        let bottom = if i == 0 { 0.0 } else { TERRAIN_BANDS[i - 1].0 };
+        if *top <= floor || highest_ft <= bottom {
             continue;
         }
         fill_below(c, patch, v, *top, (*r, *g, *b));
@@ -1631,49 +1643,42 @@ fn draw_furniture(
     let bands = TERRAIN_BANDS.iter().take_while(|(top, _)| *top < highest_ft).count();
     let bands = if highest_ft > TERRAIN_BANDS[0].0 { (bands + 1).min(TERRAIN_BANDS.len()) } else { 0 };
     let rows = bands + usize::from(has_water);
-    if rows == 0 {
-        return;
-    }
-    let key_h = rows as f32 * swatch + 12.0;
-    let (kx, ky) = (v.x + 10.0, v.y + 30.0 + key_lift);
-    fill_box(c, kx - 4.0, ky - 4.0, 54.0, key_h, 1.0);
-    text(c, font, 5.5, kx, ky + key_h - 12.0, "ELEVATION", 0.4);
-    if has_water {
-        let (r, g, b) = WATER_TINT;
-        c.set_fill_rgb(r, g, b);
-        c.rect(kx, ky, 13.0, swatch - 1.5);
-        c.fill_nonzero();
-        box_outline(c, kx, ky, 13.0, swatch - 1.5, 0.3, 0.6);
-        text(c, font, 5.5, kx + 16.0, ky + 1.0, "WATER", 0.35);
-    }
-    let ky = ky + if has_water { swatch } else { 0.0 };
-    for (i, (top, (r, g, b))) in TERRAIN_BANDS.iter().take(bands).enumerate() {
-        let row = ky + (bands - 1 - i) as f32 * swatch;
-        c.set_fill_rgb(*r, *g, *b);
-        c.rect(kx, row, 13.0, swatch - 1.5);
-        c.fill_nonzero();
-        box_outline(c, kx, row, 13.0, swatch - 1.5, 0.3, 0.6);
-        let label = if *top == f64::MAX || i + 1 == bands { format!("{:.0}+", if i == 0 { 0.0 } else { TERRAIN_BANDS[i - 1].0 }) } else { format!("{top:.0}") };
-        text(c, font, 5.5, kx + 16.0, row + 1.0, &label, 0.35);
+    if rows > 0 {
+        let key_h = rows as f32 * swatch + 12.0;
+        let (kx, ky) = (v.x + 10.0, v.y + 30.0 + key_lift);
+        fill_box(c, kx - 4.0, ky - 4.0, 54.0, key_h, 1.0);
+        text(c, font, 5.5, kx, ky + key_h - 12.0, "ELEVATION", 0.4);
+        if has_water {
+            let (r, g, b) = WATER_TINT;
+            c.set_fill_rgb(r, g, b);
+            c.rect(kx, ky, 13.0, swatch - 1.5);
+            c.fill_nonzero();
+            box_outline(c, kx, ky, 13.0, swatch - 1.5, 0.3, 0.6);
+            text(c, font, 5.5, kx + 16.0, ky + 1.0, "WATER", 0.35);
+        }
+        let ky = ky + if has_water { swatch } else { 0.0 };
+        for (i, (top, (r, g, b))) in TERRAIN_BANDS.iter().take(bands).enumerate() {
+            let row = ky + (bands - 1 - i) as f32 * swatch;
+            c.set_fill_rgb(*r, *g, *b);
+            c.rect(kx, row, 13.0, swatch - 1.5);
+            c.fill_nonzero();
+            box_outline(c, kx, row, 13.0, swatch - 1.5, 0.3, 0.6);
+            let label = if *top == f64::MAX || i + 1 == bands { format!("{:.0}+", if i == 0 { 0.0 } else { TERRAIN_BANDS[i - 1].0 }) } else { format!("{top:.0}") };
+            text(c, font, 5.5, kx + 16.0, row + 1.0, &label, 0.35);
+        }
     }
 
-    // Scale bar, bottom left.
+    // Scale bar, bottom left: on every map, whether or not it has a key above it. A
+    // round number of miles that fills a fair part of the width, whatever the scale.
     let px_nm = v.px_per_nm();
-    let step_nm = if v.span_nm() > 16.0 { 5.0 } else { 2.0 };
-    let bar = step_nm as f32 * px_nm;
-    let (bx, by) = (v.x + 12.0, v.y + 16.0);
-    fill_box(c, bx - 4.0, by - 4.0, bar + 30.0, 16.0, 1.0);
-    line(c, bx, by, bx + bar, by, 1.2, INK);
-    for i in 0..=1 {
-        let x = bx + i as f32 * bar;
-        line(c, x, by - 3.0, x, by + 3.0, 1.2, INK);
-    }
-    text(c, font, 6.5, bx + bar + 3.0, by - 2.0, &format!("{step_nm:.0} NM"), INK);
-
-
-    // Scale bar, bottom left.
-    let px_nm = v.px_per_nm();
-    let step_nm = if v.span_nm() > 16.0 { 5.0 } else { 2.0 };
+    let span = v.span_nm();
+    let step_nm = if span <= 16.0 {
+        2.0
+    } else if span <= 32.0 {
+        5.0
+    } else {
+        [10.0, 20.0, 50.0].into_iter().find(|s| s * 5.0 >= span).unwrap_or(100.0)
+    };
     let bar = step_nm as f32 * px_nm;
     let (bx, by) = (v.x + 12.0, v.y + 16.0);
     fill_box(c, bx - 4.0, by - 4.0, bar + 30.0, 16.0, 1.0);
@@ -3155,6 +3160,14 @@ pub fn title_of(p: &Procedure) -> String {
 /// Write the chart for a minimum that has already been worked out.
 pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
     let track = ch.track_deg;
+    write_page(out, |c, f, b| {
+        let _ = draw(c, ch, est, track, f, b);
+    })
+}
+
+/// One A4 page as a PDF, drawn by `paint` in Helvetica and Helvetica-Bold (named `f`
+/// and `b`).
+fn write_page(out: &FsPath, paint: impl FnOnce(&mut dyn Canvas, Name, Name)) -> Result<()> {
     let mut pdf = Pdf::new();
     let (cat, tree, page_id, content_id, font_id, bold_id) = (Ref::new(1), Ref::new(2), Ref::new(3), Ref::new(4), Ref::new(5), Ref::new(6));
     pdf.catalog(cat).pages(tree);
@@ -3172,7 +3185,7 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
 
     let (f, b) = (Name(b"F"), Name(b"B"));
     let mut c = Content::new();
-    let _ = draw(&mut c, ch, est, track, f, b);
+    paint(&mut c, f, b);
     pdf.stream(content_id, &c.finish());
     std::fs::write(out, pdf.finish()).with_context(|| format!("write {}", out.display()))?;
     Ok(())
@@ -3219,8 +3232,14 @@ pub struct Georef {
 /// The chart as a picture. It is drawn once and turned to its night side after, since the
 /// drawing is the slow part.
 pub fn picture(ch: &Chart, est: &Estimate, scale: f32) -> Result<Picture> {
+    picture_of(scale, |c, f, b| draw(c, ch, est, ch.track_deg, f, b))
+}
+
+/// Any page as a picture, by day and by night, from what `paint` draws; it returns the
+/// window its map shows, which is how the picture is put on the ground.
+fn picture_of(scale: f32, paint: impl FnOnce(&mut dyn Canvas, Name, Name) -> View) -> Result<Picture> {
     let mut r = Raster::new(W, H, scale)?;
-    let v = draw(&mut r, ch, est, ch.track_deg, Name(b"F"), Name(b"B"));
+    let v = paint(&mut r, Name(b"F"), Name(b"B"));
     let day = r.png_bytes()?;
     r.to_night();
     let night = r.png_bytes()?;

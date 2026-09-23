@@ -521,11 +521,296 @@ impl Database {
     }
 }
 
+impl Database {
+    /// Where each of a list of fixes is, taking the one nearest a point where a name is
+    /// used more than once in the world, as five-letter names are.
+    fn fixes_near(&self, idents: &[String], near: (f64, f64)) -> std::collections::HashMap<String, (f64, f64)> {
+        let mut out = std::collections::HashMap::new();
+        let Some(connection) = read_only(&self.path) else { return out };
+        let cos = near.0.to_radians().cos().max(0.05);
+        let far = |lat: f64, lon: f64| ((lat - near.0) * 60.0).hypot((lon - near.1) * 60.0 * cos);
+        let sources = [
+            ("terminal_waypoints", "waypoint_identifier", "waypoint_latitude", "waypoint_longitude"),
+            ("enroute_waypoints", "waypoint_identifier", "waypoint_latitude", "waypoint_longitude"),
+            ("vhfnavaids", "vor_identifier", "vor_latitude", "vor_longitude"),
+            ("enroute_ndbnavaids", "ndb_identifier", "ndb_latitude", "ndb_longitude"),
+            ("terminal_ndbnavaids", "ndb_identifier", "ndb_latitude", "ndb_longitude"),
+        ];
+        for ident in idents {
+            let mut best: Option<(f64, (f64, f64))> = None;
+            for (wanted, id_col, lat_col, lon_col) in sources {
+                let Some(table) = self.table(wanted) else { continue };
+                let sql = format!("select {lat_col}, {lon_col} from \"{table}\" where {id_col} = ?1");
+                let Ok(mut statement) = connection.prepare_cached(&sql) else { continue };
+                let Ok(rows) = statement.query_map([ident.as_str()], |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?))) else { continue };
+                for (lat, lon) in rows.flatten() {
+                    let d = far(lat, lon);
+                    if best.map_or(true, |(b, _)| d < b) {
+                        best = Some((d, (lat, lon)));
+                    }
+                }
+            }
+            // Further than a procedure reaches is a different fix of the same name.
+            if let Some((_, at)) = best.filter(|(d, _)| *d < 400.0) {
+                out.insert(ident.clone(), at);
+            }
+        }
+        out
+    }
+
+    fn runway_threshold(&self, icao: &str, runway: &str) -> Option<(f64, f64)> {
+        let connection = read_only(&self.path)?;
+        let table = self.table("runways")?;
+        let wanted = format!("RW{}", runway.trim().trim_start_matches("RW").to_uppercase());
+        let sql = format!("select runway_latitude, runway_longitude from \"{table}\" where airport_identifier = ?1 and runway_identifier = ?2 limit 1");
+        connection.query_row(&sql, [icao.to_uppercase().as_str(), wanted.as_str()], |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?))).ok()
+    }
+}
+
+/// What the database says of an airport as a whole.
+#[derive(Debug, Clone, Default)]
+pub struct AirportInfo {
+    pub transition_altitude_ft: Option<f64>,
+    pub transition_level_ft: Option<f64>,
+    /// The speed limit below an altitude: 250 KT below 10,000 FT, most places.
+    pub speed_limit: Option<(f64, f64)>,
+}
+
+/// One piece of controlled airspace: its class, name and limits, and its boundary as a
+/// closed line of points with the arcs worked out.
+#[derive(Debug, Clone)]
+pub struct Airspace {
+    pub class: String,
+    pub name: String,
+    pub lower: String,
+    pub upper: String,
+    pub boundary: Vec<(f64, f64)>,
+}
+
+/// A frequency the way a chart prints it: what it is, the name it is called by, and the
+/// frequency.
+#[derive(Debug, Clone)]
+pub struct Communication {
+    pub kind: String,
+    pub callsign: String,
+    pub mhz: f64,
+}
+
+pub fn airport_info(icao: &str) -> Option<AirportInfo> {
+    database()?.airport_info(icao)
+}
+
+/// The grid minimum off-route altitudes over an area: (south edge, west edge, feet) for
+/// each one-degree square.
+pub fn grid_mora(south: f64, north: f64, west: f64, east: f64) -> Vec<(f64, f64, f64)> {
+    database().map(|db| db.grid_mora(south, north, west, east)).unwrap_or_default()
+}
+
+/// The controlled airspace an airport sits in.
+pub fn airspace(icao: &str) -> Vec<Airspace> {
+    database().map(|db| db.airspace(icao)).unwrap_or_default()
+}
+
+/// Every frequency an airport publishes.
+pub fn communications(icao: &str) -> Vec<Communication> {
+    database().map(|db| db.communications(icao)).unwrap_or_default()
+}
+
+impl Database {
+    fn airport_info(&self, icao: &str) -> Option<AirportInfo> {
+        let connection = read_only(&self.path)?;
+        let table = self.table("airports")?;
+        let sql = format!("select transition_altitude, transition_level, speed_limit, speed_limit_altitude from \"{table}\" where airport_identifier = ?1 limit 1");
+        connection
+            .query_row(&sql, [icao.to_uppercase()], |row| {
+                let limit: Option<f64> = row.get(2).ok();
+                let below: Option<f64> = row.get(3).ok().or_else(|| row.get::<_, String>(3).ok().and_then(|s| s.trim().trim_start_matches("FL").parse::<f64>().ok().map(|v| if v < 1000.0 { v * 100.0 } else { v })));
+                Ok(AirportInfo {
+                    transition_altitude_ft: row.get::<_, f64>(0).ok().filter(|v| *v > 0.0),
+                    transition_level_ft: row.get::<_, f64>(1).ok().filter(|v| *v > 0.0),
+                    speed_limit: limit.zip(below).filter(|(s, a)| *s > 0.0 && *a > 0.0),
+                })
+            })
+            .ok()
+    }
+
+    fn grid_mora(&self, south: f64, north: f64, west: f64, east: f64) -> Vec<(f64, f64, f64)> {
+        let mut out = Vec::new();
+        let Some(connection) = read_only(&self.path) else { return out };
+        let Some(table) = self.table("grid_mora") else { return out };
+        let columns: String = (1..=30).map(|i| format!("mora{i:02}")).collect::<Vec<_>>().join(", ");
+        let sql = format!("select starting_latitude, starting_longitude, {columns} from \"{table}\" where starting_latitude between ?1 and ?2");
+        let Ok(mut statement) = connection.prepare(&sql) else { return out };
+        let rows = statement.query_map([south.floor() - 1.0, north.ceil()], |row| {
+            let lat: f64 = row.get(0)?;
+            let lon: f64 = row.get(1)?;
+            let values: Vec<Option<String>> = (0..30).map(|i| row.get::<_, Option<String>>(2 + i).ok().flatten()).collect();
+            Ok((lat, lon, values))
+        });
+        let Ok(rows) = rows else { return out };
+        for (lat, lon0, values) in rows.flatten() {
+            if lat + 1.0 < south || lat > north {
+                continue;
+            }
+            for (i, v) in values.into_iter().enumerate() {
+                let lon = lon0 + i as f64;
+                if lon + 1.0 < west || lon > east {
+                    continue;
+                }
+                // Hundreds of feet; "UNK" and blanks are squares nobody has surveyed.
+                if let Some(ft) = v.and_then(|s| s.trim().parse::<f64>().ok()).filter(|h| *h > 0.0) {
+                    out.push((lat, lon, ft * 100.0));
+                }
+            }
+        }
+        // West of 90° W the tables in the wild carry each band of squares several times
+        // over with different figures, and nothing says which is meant. The highest is
+        // taken: an altitude that is meant to clear everything is never made unsafe by
+        // being too high.
+        out.sort_by(|a, b| (a.0, a.1).partial_cmp(&(b.0, b.1)).unwrap_or(std::cmp::Ordering::Equal).then(b.2.total_cmp(&a.2)));
+        out.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+        out
+    }
+
+    fn airspace(&self, icao: &str) -> Vec<Airspace> {
+        let mut out = Vec::new();
+        let Some(connection) = read_only(&self.path) else { return out };
+        let Some(table) = self.table("controlled_airspace") else { return out };
+        let sql = format!(
+            "select multiple_code, airspace_classification, controlled_airspace_name, boundary_via, latitude, longitude, \
+             arc_origin_latitude, arc_origin_longitude, arc_distance, lower_limit, upper_limit \
+             from \"{table}\" where airspace_center = ?1 order by multiple_code, seqno"
+        );
+        let Ok(mut statement) = connection.prepare(&sql) else { return out };
+        #[allow(clippy::type_complexity)]
+        let rows = statement.query_map([icao.to_uppercase()], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                row.get::<_, Option<f64>>(4)?,
+                row.get::<_, Option<f64>>(5)?,
+                row.get::<_, Option<f64>>(6)?,
+                row.get::<_, Option<f64>>(7)?,
+                row.get::<_, Option<f64>>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<String>>(10)?,
+            ))
+        });
+        let Ok(rows) = rows else { return out };
+        let rows: Vec<_> = rows.flatten().collect();
+        let mut i = 0;
+        while i < rows.len() {
+            let group = rows[i].0.clone();
+            let mut part = Vec::new();
+            while i < rows.len() && rows[i].0 == group {
+                part.push(rows[i].clone());
+                i += 1;
+            }
+            let first = &part[0];
+            let mut boundary: Vec<(f64, f64)> = Vec::new();
+            for (k, r) in part.iter().enumerate() {
+                let via = r.3.trim().to_uppercase();
+                let next = part.get(k + 1).or(part.first()).and_then(|n| n.4.zip(n.5));
+                let here = r.4.zip(r.5);
+                match via.chars().next() {
+                    // A whole circle about a point.
+                    Some('C') => {
+                        if let (Some(o), Some(radius)) = (r.6.zip(r.7), r.8) {
+                            boundary.extend(arc(o, radius, 0.0, 360.0, true));
+                        }
+                    }
+                    // An arc from here to the next point, one way or the other about its origin.
+                    Some(turn @ ('R' | 'L')) => {
+                        if let (Some(h), Some(n), Some(o), Some(radius)) = (here, next, r.6.zip(r.7), r.8) {
+                            let (from, to) = (bearing(o, h), bearing(o, n));
+                            boundary.extend(arc(o, radius, from, to, turn == 'R'));
+                        }
+                    }
+                    _ => {
+                        if let Some(h) = here {
+                            boundary.push(h);
+                        }
+                    }
+                }
+            }
+            if boundary.len() >= 3 {
+                out.push(Airspace {
+                    class: first.1.trim().to_string(),
+                    name: first.2.clone().unwrap_or_default().trim().to_string(),
+                    lower: first.9.clone().unwrap_or_default(),
+                    upper: first.10.clone().unwrap_or_default(),
+                    boundary,
+                });
+            }
+        }
+        out
+    }
+
+    fn communications(&self, icao: &str) -> Vec<Communication> {
+        let Some(connection) = read_only(&self.path) else { return Vec::new() };
+        let Some(table) = self.table("airport_communication") else { return Vec::new() };
+        let sql = format!("select communication_type, callsign, communication_frequency from \"{table}\" where airport_identifier = ?1");
+        let Ok(mut statement) = connection.prepare(&sql) else { return Vec::new() };
+        let rows = statement.query_map([icao.to_uppercase()], |row| {
+            Ok(Communication {
+                kind: row.get::<_, Option<String>>(0)?.unwrap_or_default().trim().to_string(),
+                callsign: row.get::<_, Option<String>>(1)?.unwrap_or_default().trim().to_string(),
+                mhz: row.get::<_, f64>(2)?,
+            })
+        });
+        rows.map(|r| r.flatten().collect()).unwrap_or_default()
+    }
+}
+
+/// True bearing from one point to another, degrees.
+fn bearing(from: (f64, f64), to: (f64, f64)) -> f64 {
+    let cos = from.0.to_radians().cos().max(0.05);
+    let (dn, de) = (to.0 - from.0, (to.1 - from.1) * cos);
+    (de.atan2(dn).to_degrees() + 360.0) % 360.0
+}
+
+/// Points round an arc about an origin at a radius in miles, from one bearing to another,
+/// clockwise or not.
+fn arc(origin: (f64, f64), radius_nm: f64, from_deg: f64, to_deg: f64, clockwise: bool) -> Vec<(f64, f64)> {
+    let cos = origin.0.to_radians().cos().max(0.05);
+    let mut sweep = if clockwise { (to_deg - from_deg + 360.0) % 360.0 } else { -((from_deg - to_deg + 360.0) % 360.0) };
+    if sweep.abs() < 1e-6 {
+        sweep = if clockwise { 360.0 } else { -360.0 };
+    }
+    let steps = ((sweep.abs() / 4.0).ceil() as usize).max(2);
+    (0..=steps)
+        .map(|i| {
+            let b = (from_deg + sweep * i as f64 / steps as f64).to_radians();
+            (origin.0 + radius_nm * b.cos() / 60.0, origin.1 + radius_nm * b.sin() / 60.0 / cos)
+        })
+        .collect()
+}
+
+/// Where each named fix is, the nearest of that name to a point. Fixes the navigation
+/// database does not know are left out.
+pub fn fixes_near(idents: &[String], near: (f64, f64)) -> std::collections::HashMap<String, (f64, f64)> {
+    database().map(|db| db.fixes_near(idents, near)).unwrap_or_default()
+}
+
+/// Where a runway's landing threshold is.
+pub fn runway_threshold(icao: &str, runway: &str) -> Option<(f64, f64)> {
+    database()?.runway_threshold(icao, runway)
+}
+
 /// The tables worth finding, by what their names end with.
 const WANTED: &[&str] = &[
     "runways",
     "vhfnavaids",
     "enroute_ndbnavaids",
+    "terminal_ndbnavaids",
+    "enroute_waypoints",
+    "terminal_waypoints",
+    "airports",
+    "grid_mora",
+    "controlled_airspace",
+    "airport_communication",
     "localizers_glideslopes",
     "localizer_marker",
     "airport_msa",
@@ -597,6 +882,15 @@ fn category(code: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the database on this machine says round Kennedy. Run by hand.
+    #[test]
+    #[ignore]
+    fn kennedy_from_the_installed_database() {
+        println!("mora {:?}", grid_mora(40.0, 41.0, -74.5, -73.0));
+        println!("info {:?}", airport_info("KJFK"));
+        println!("airspace {}", airspace("KJFK").len());
+    }
 
     #[test]
     fn a_beacon_keeps_its_name_and_loses_its_type() {

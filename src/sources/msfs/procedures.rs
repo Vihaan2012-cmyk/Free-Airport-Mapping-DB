@@ -24,7 +24,7 @@
 //! +0x02 turn direction, 1 left and 2 right      +0x20 the leg's own length, metres
 //! +0x04 the fix it ends at                      +0x24 altitude, metres
 //! +0x08 that fix's region                       +0x28 second altitude, metres
-//! +0x0C the navaid it is measured from          +0x2C -1 where there is no constraint
+//! +0x0C the navaid it is measured from          +0x2C speed limit, knots; -1 for none
 //! +0x10 that navaid's region                    +0x30 always 357.9; not a height
 //! +0x14 radial from that navaid, degrees          +0x44 what part the fix plays
 //! ```
@@ -124,6 +124,7 @@ impl Default for Leg {
             turn: None,
             role: None,
             placed_on_radial: false,
+            speed_kt: None,
             lat: None,
             lon: None,
         }
@@ -267,6 +268,9 @@ pub struct Leg {
     /// read from the waypoint table.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub placed_on_radial: bool,
+    /// The most the aircraft may fly at the fix, knots: the MAX 210 KT a chart prints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_kt: Option<f64>,
     /// Where the fix is, when the waypoint records name it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lat: Option<f64>,
@@ -422,6 +426,10 @@ fn legs(d: &[u8], rec: &Record, fixes: &Fixes) -> Vec<Leg> {
             },
             role: FixRole::from(bgl::u32le(d, b + 0x44)),
             placed_on_radial: false,
+            speed_kt: {
+                let v = bgl::f32le(d, b + 0x2C);
+                (v.is_finite() && v > 0.0 && v < 600.0).then_some(v as f64)
+            },
             lat,
             lon,
         });
@@ -463,6 +471,55 @@ fn transitions(d: &[u8], proc_rec: &Record, children_at: usize, fixes: &Fixes) -
                 };
                 out.push(Transition { name: name.clone(), part: part.to_string(), legs: legs(d, &legrec, fixes) });
             }
+        }
+    }
+    out
+}
+
+/// The transitions of a departure or an arrival.
+///
+/// Their layout is not the approach's, and was worked out from the files: LPMA, EGLL and
+/// KJFK read the same way.
+///
+/// ```text
+/// SID/STAR 0x42/0x48, children at +0x14:
+///   runway transition  0x46  legs count +0x06, runway number +0x07, L/R/C +0x08,
+///                            legs 0xF7 at +0x0C
+///   common route       0xF8  a leg list itself
+///   enroute transition 0x4A  legs count +0x06, name +0x08 (8 bytes), legs 0xF9 at +0x10
+/// ```
+///
+/// Each is given its part: "runway", "common" or "enroute", and the runway ones are named
+/// the way the runway fix is ("RW09L"), the enroute ones by the fix they start or end at.
+fn terminal_transitions(d: &[u8], proc_rec: &Record, fixes: &Fixes) -> Vec<Transition> {
+    const RUNWAY: u16 = 0x46;
+    const COMMON: u16 = 0xF8;
+    const ENROUTE: u16 = 0x4A;
+    let mut out = Vec::new();
+    for rec in bgl::records(d, proc_rec.start + 0x14, proc_rec.end) {
+        match rec.id {
+            COMMON => out.push(Transition { name: String::new(), part: "common".into(), legs: legs(d, &rec, fixes) }),
+            RUNWAY if rec.end - rec.start > 0x0C => {
+                let number = d[rec.start + 0x07];
+                let side = match d[rec.start + 0x08] {
+                    1 => "L",
+                    2 => "R",
+                    3 => "C",
+                    _ => "",
+                };
+                // A number of none is a transition from every runway.
+                let name = if number == 0 || number > 36 { "ALL".to_string() } else { format!("RW{number:02}{side}") };
+                for legrec in bgl::records(d, rec.start + 0x0C, rec.end) {
+                    out.push(Transition { name: name.clone(), part: "runway".into(), legs: legs(d, &legrec, fixes) });
+                }
+            }
+            ENROUTE if rec.end - rec.start > 0x10 => {
+                let name = name_at(d, &rec, 0x08);
+                for legrec in bgl::records(d, rec.start + 0x10, rec.end) {
+                    out.push(Transition { name: name.clone(), part: "enroute".into(), legs: legs(d, &legrec, fixes) });
+                }
+            }
+            _ => {}
         }
     }
     out
@@ -577,6 +634,37 @@ fn place_fixes_on_radials(procedures: &mut [Procedure]) -> Option<f64> {
     variation
 }
 
+/// Put the fixes that are still without a position where a navigation database says.
+///
+/// A departure runs out to the airways and an arrival comes in from them, so most of their
+/// fixes are enroute waypoints, which live in the files for the country they are in and
+/// not in the airport's. The runway fix is not a waypoint at all but the threshold. An
+/// aircraft's navigation database has both.
+fn place_remaining_fixes(icao: &str, near: (f64, f64), procedures: &mut [Procedure]) {
+    let mut wanted: Vec<String> = Vec::new();
+    for leg in procedures.iter().flat_map(|p| p.transitions.iter()).flat_map(|t| t.legs.iter()) {
+        if leg.lat.is_none() && !leg.fix.is_empty() && !leg.fix.starts_with("RW") && !wanted.contains(&leg.fix) {
+            wanted.push(leg.fix.clone());
+        }
+    }
+    let found = crate::sources::navdata::fixes_near(&wanted, near);
+    let mut thresholds: std::collections::HashMap<String, Option<(f64, f64)>> = std::collections::HashMap::new();
+    for leg in procedures.iter_mut().flat_map(|p| p.transitions.iter_mut()).flat_map(|t| t.legs.iter_mut()) {
+        if leg.lat.is_some() || leg.fix.is_empty() {
+            continue;
+        }
+        let at = if let Some(runway) = leg.fix.strip_prefix("RW") {
+            *thresholds.entry(runway.to_string()).or_insert_with(|| crate::sources::navdata::runway_threshold(icao, runway))
+        } else {
+            found.get(&leg.fix).copied()
+        };
+        if let Some((lat, lon)) = at {
+            leg.lat = Some(lat);
+            leg.lon = Some(lon);
+        }
+    }
+}
+
 /// Fix positions, by ident.
 pub type Fixes = std::collections::HashMap<String, (f64, f64)>;
 
@@ -618,8 +706,7 @@ fn airport(d: &[u8], rec: &Record, file: &Path, fixes: &Fixes) -> Option<Airport
             REC_APPROACH => Kind::Approach,
             _ => continue,
         };
-        let children_at = if kind == Kind::Approach { 0x24 } else { 0x14 };
-        let trans = transitions(d, &child, children_at, fixes);
+        let trans = if kind == Kind::Approach { transitions(d, &child, 0x24, fixes) } else { terminal_transitions(d, &child, fixes) };
         let runway = if kind == Kind::Approach {
             let from_legs = runway_of(&trans);
             if from_legs.is_empty() { header_runway(d, &child) } else { from_legs }
@@ -644,6 +731,8 @@ fn airport(d: &[u8], rec: &Record, file: &Path, fixes: &Fixes) -> Option<Airport
         return None;
     }
     let variation = place_fixes_on_radials(&mut procedures);
+    let (apt_lat, apt_lon) = (bgl::lat(bgl::u32le(d, rec.start + 0x10)), bgl::lon(bgl::u32le(d, rec.start + 0x0C)));
+    place_remaining_fixes(&icao, (apt_lat, apt_lon), &mut procedures);
     for p in procedures.iter_mut().filter(|p| p.kind == Kind::Approach) {
         if let Some(what) = p.approach_type {
             let suffix = p.suffix.map(|c| format!(" {c}")).unwrap_or_default();
@@ -763,6 +852,82 @@ mod tests {
         assert_eq!(feet(914.4), Some(3000.0));
         assert_eq!(feet(-1.0), None);
         assert_eq!(feet(0.0), None);
+    }
+
+    /// Working out the departure and arrival records: dumps LPMA's first SID and STAR.
+    #[test]
+    #[ignore]
+    fn dump_sid_star_records() {
+        for dir in super::super::nav_dirs() {
+            for file in walk_nax(&dir) {
+                let d = std::fs::read(&file).unwrap();
+                for rec in bgl::section_records(&d, bgl::SECTION_AIRPORT) {
+                    let want = std::env::var("DUMP_ICAO").unwrap_or_else(|_| "LPMA".into());
+                    if rec.id != bgl::REC_AIRPORT || rec.end - rec.start < 0x44 || bgl::ident(bgl::u32le(&d, rec.start + 0x28)) != want {
+                        continue;
+                    }
+                    for child in bgl::records(&d, rec.start + 0x44, rec.end) {
+                        if !matches!(child.id, REC_SID | REC_STAR) {
+                            continue;
+                        }
+                        let mut line = format!("{} {:<7}", if child.id == REC_SID { "SID " } else { "STAR" }, name_at(&d, &child, 0x0C));
+                        for t in bgl::records(&d, child.start + 0x14, child.end) {
+                            let hdr: Vec<String> = d[t.start + 6..(t.start + 0x14).min(t.end)].iter().map(|b| format!("{b:02x}")).collect();
+                            let mut kids = String::new();
+                            for at in [0x0C, 0x10, 0x14] {
+                                let k = bgl::records(&d, t.start + at, t.end);
+                                if !k.is_empty() && k.iter().all(|k| (0xF0..=0xFF).contains(&k.id)) {
+                                    kids = format!("@{at:#x}:{}", k.iter().map(|k| format!("{:#x}x{}", k.id, bgl::u32le(&d, k.start + 6) & 0xFFFF)).collect::<Vec<_>>().join(","));
+                                    break;
+                                }
+                            }
+                            line.push_str(&format!(" | {:#x}[{}] {}", t.id, hdr.join(" "), kids));
+                        }
+                        println!("{line}");
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    /// The raw legs of one procedure, for finding what the known offsets leave out.
+    #[test]
+    #[ignore]
+    fn dump_legs() {
+        let (want_icao, want_proc) = (std::env::var("DUMP_ICAO").unwrap_or_else(|_| "KJFK".into()), std::env::var("DUMP_PROC").unwrap_or_else(|_| "SKORR6".into()));
+        for dir in super::super::nav_dirs() {
+            for file in walk_nax(&dir) {
+                let d = std::fs::read(&file).unwrap();
+                for rec in bgl::section_records(&d, bgl::SECTION_AIRPORT) {
+                    if rec.id != bgl::REC_AIRPORT || rec.end - rec.start < 0x44 || bgl::ident(bgl::u32le(&d, rec.start + 0x28)) != want_icao {
+                        continue;
+                    }
+                    for child in bgl::records(&d, rec.start + 0x44, rec.end) {
+                        if !matches!(child.id, REC_SID | REC_STAR) || name_at(&d, &child, 0x0C) != want_proc {
+                            continue;
+                        }
+                        let mut stack = vec![child];
+                        while let Some(r) = stack.pop() {
+                            for k in bgl::records(&d, r.start + 0x0C, r.end).into_iter().chain(bgl::records(&d, r.start + 0x10, r.end)).chain(bgl::records(&d, r.start + 0x14, r.end)) {
+                                if matches!(k.id, 0xF7 | 0xF8 | 0xF9) {
+                                    let count = u16::from_le_bytes([d[k.start + 6], d[k.start + 7]]) as usize;
+                                    println!("list {:#x}", k.id);
+                                    for i in 0..count {
+                                        let b = k.start + 8 + i * LEG_SIZE;
+                                        let row: Vec<String> = d[b..b + LEG_SIZE].chunks(4).map(|w| w.iter().map(|x| format!("{x:02x}")).collect::<String>()).collect();
+                                        println!("  {:<6} {}", bgl::ident(bgl::u32le(&d, b + 4)), row.join(" "));
+                                    }
+                                } else if matches!(k.id, 0x46 | 0x4A) {
+                                    stack.push(k);
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
+        }
     }
 
     #[test]

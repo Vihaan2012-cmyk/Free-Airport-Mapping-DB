@@ -129,6 +129,23 @@ enum Cmd {
         #[arg(long)]
         open: bool,
     },
+    /// A departure (SID) or arrival (STAR) chart, from the simulator's navigation data.
+    ProcedureChart {
+        icao: String,
+        /// The procedure's name as the data codes it, e.g. DEGU1E or NIDU2X. Leave out to
+        /// list them.
+        name: Option<String>,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Write a picture rather than a page.
+        #[arg(long)]
+        png: bool,
+        #[arg(long, default_value_t = 3.0)]
+        scale: f32,
+        /// Open it when it is written.
+        #[arg(long)]
+        open: bool,
+    },
     /// Approach charts for a list of airports, in one pass.
     ApproachCharts {
         /// ICAO codes. A list file can be given instead, or as well.
@@ -1044,6 +1061,7 @@ pub fn run() -> Result<()> {
         }
         Cmd::MinimaAudit { truth, out, jobs } => crate::audit::run(&truth, out.as_deref(), jobs),
         Cmd::PublishedCheck { fixtures } => crate::audit::published_check(&fixtures),
+        Cmd::ProcedureChart { icao, name, out, png, scale, open } => procedure_chart_cmd(&icao, name.as_deref(), out, png, scale, open),
         Cmd::ApproachChart { icao, runway, approach, star, list, kind, out, png, scale, open } => {
             approach_chart_cmd(&icao, approach.as_deref().or(runway.as_deref()), star.as_deref(), list, kind.as_deref(), out, png, scale, open)
         }
@@ -1092,6 +1110,36 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
         Ok(out)
     })?;
     crate::term::file(Some(&icao), &out.display().to_string(), "approach chart");
+    if open {
+        let _ = std::process::Command::new("cmd").args(["/C", "start", "", &out.display().to_string()]).spawn();
+    }
+    Ok(())
+}
+
+/// A departure or arrival chart, or the list of them.
+fn procedure_chart_cmd(icao: &str, name: Option<&str>, out: Option<PathBuf>, png: bool, scale: f32, open: bool) -> Result<()> {
+    use crate::output::approach::terminal;
+    use crate::sources::msfs::procedures::Kind;
+    let icao = icao.to_uppercase();
+    crate::term::start(&format!("Departure or arrival chart for {icao}"));
+    let Some(name) = name else {
+        let found = crate::sources::msfs::procedures::find(&icao)?.ok_or_else(|| anyhow!("{icao} is not in the simulator's navigation data"))?;
+        for (kind, label) in [(Kind::Sid, "departures"), (Kind::Star, "arrivals")] {
+            let names: Vec<String> = found.procedures.iter().filter(|p| p.kind == kind).map(|p| format!("{} ({}, RWY {})", p.name, terminal::title(p), terminal::runways_of(p).join("/"))).collect();
+            println!("{icao} {label}: {}", if names.is_empty() { "none".to_string() } else { names.join(", ") });
+        }
+        return Ok(());
+    };
+    let out = terminal::with_terminal(&icao, name, |t| {
+        let out = out.unwrap_or_else(|| PathBuf::from(format!("{icao}-{}.{}", t.procedure.name, if png { "png" } else { "pdf" })));
+        if png {
+            std::fs::write(&out, terminal::picture(t, scale.clamp(1.0, 8.0))?.day)?;
+        } else {
+            terminal::write(t, &out)?;
+        }
+        Ok(out)
+    })?;
+    crate::term::file(Some(&icao), &out.display().to_string(), "procedure chart");
     if open {
         let _ = std::process::Command::new("cmd").args(["/C", "start", "", &out.display().to_string()]).spawn();
     }
