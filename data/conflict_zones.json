@@ -1,0 +1,167 @@
+{
+  "reviewed": "2026-09-23",
+  "notes": "Kept by hand from EASA's Conflict Zone Information Bulletins (easa.europa.eu/en/domains/air-operations/czibs), the FAA's prohibited-airspace advisories, and the EU's sanctions on Belarusian overflight. This is a snapshot, not a feed: it goes stale the moment any of those is revised, and needs rereading against the source on or after the review date above. Where the current CZIB gives no altitude band, the whole of the sky is avoided (floor 0, ceiling 999 standing for unlimited).",
+  "zones": [
+    {
+      "reference": "CZIB-2022-01R14",
+      "authority": "EASA",
+      "name": "Ukraine",
+      "firs": ["UKBV", "UKLV", "UKOV", "UKDV", "UKFV"],
+      "floor_fl": 0,
+      "ceiling_fl": 999,
+      "severity": "prohibition",
+      "valid_from": "2022-02-24T00:00:00Z"
+    },
+    {
+      "reference": "(EU) 2022/335",
+      "authority": "EU",
+      "name": "Belarus",
+      "firs": ["UMMV"],
+      "floor_fl": 0,
+      "ceiling_fl": 999,
+      "severity": "prohibition",
+      "valid_from": "2022-03-02T00:00:00Z"
+    },
+    {
+      "reference": "2025-01 R3",
+      "authority": "EASA",
+      "name": "Russian Federation, west of 60 degrees east (the FIRs nearest Europe; the bulletin's own line, not a boundary the navigation database can draw)",
+      "firs": ["ULLL", "UUWV", "URRV"],
+      "floor_fl": 0,
+      "ceiling_fl": 999,
+      "severity": "prohibition",
+      "valid_from": "2022-02-27T00:00:00Z"
+    },
+    {
+      "reference": "CZIB-2023-01R8",
+      "authority": "EASA",
+      "name": "Sudan",
+      "firs": ["HSSS"],
+      "floor_fl": 0,
+      "ceiling_fl": 999,
+      "severity": "prohibition",
+      "valid_from": "2023-04-19T00:00:00Z"
+    },
+    {
+      "reference": "CZIB-2017-02R20",
+      "authority": "EASA",
+      "name": "Libya, below FL320 (above it, coastal airports reached by a sea approach are excepted by the bulletin, which this file does not model)",
+      "firs": ["HLLL"],
+      "floor_fl": 0,
+      "ceiling_fl": 320,
+      "severity": "prohibition",
+      "valid_from": "2017-01-01T00:00:00Z"
+    },
+    {
+      "reference": "CZIB-2026-05-R1",
+      "authority": "EASA",
+      "name": "Iraq",
+      "firs": ["ORBB"],
+      "floor_fl": 0,
+      "ceiling_fl": 999,
+      "severity": "prohibition",
+      "valid_from": "2026-01-01T00:00:00Z"
+    },
+    {
+      "reference": "CZIB-2026-04-R1",
+      "authority": "EASA",
+      "name": "Iran",
+      "firs": ["OIIX"],
+      "floor_fl": 0,
+      "ceiling_fl": 999,
+      "severity": "prohibition",
+      "valid_from": "2026-01-01T00:00:00Z"
+    },
+    {
+      "reference": "CZIB-2026-06-R1",
+      "authority": "EASA",
+      "name": "Lebanon",
+      "firs": ["OLBB"],
+      "floor_fl": 0,
+      "ceiling_fl": 999,
+      "severity": "prohibition",
+      "valid_from": "2026-01-01T00:00:00Z"
+    },
+    {
+      "reference": "CZIB-2026-08-R1",
+      "authority": "EASA",
+      "name": "Jordan (Amman FIR)",
+      "firs": ["OJAC"],
+      "floor_fl": 0,
+      "ceiling_fl": 999,
+      "severity": "prohibition",
+      "valid_from": "2026-07-22T00:00:00Z"
+    },
+    {
+      "reference": "CZIB-2026-07R2",
+      "authority": "EASA",
+      "name": "Persian Gulf and Gulf of Oman: residual risk, not a closure",
+      "firs": ["OBBB", "OKAC", "OMAE", "OOMM"],
+      "floor_fl": 0,
+      "ceiling_fl": 999,
+      "severity": "advisory",
+      "penalise": 1.1,
+      "valid_from": "2026-07-08T00:00:00Z"
+    },
+    {
+      "reference": "CZIB-2017-07R19",
+      "authority": "EASA",
+      "name": "Yemen (Sana'a FIR), below FL260",
+      "firs": ["OYSC"],
+      "floor_fl": 0,
+      "ceiling_fl": 260,
+      "severity": "prohibition",
+      "valid_from": "2017-01-01T00:00:00Z"
+    },
+    {
+      "reference": "CZIB-2017-01R20",
+      "authority": "EASA",
+      "name": "Mali, below FL240",
+      "firs": ["GABS"],
+      "floor_fl": 0,
+      "ceiling_fl": 240,
+      "severity": "prohibition",
+      "valid_from": "2017-01-01T00:00:00Z"
+    },
+    {
+      "reference": "CZIB-2017-03R19",
+      "authority": "EASA",
+      "name": "Syria",
+      "firs": ["OSTT"],
+      "floor_fl": 0,
+      "ceiling_fl": 999,
+      "severity": "prohibition",
+      "valid_from": "2017-01-01T00:00:00Z"
+    },
+    {
+      "reference": "CZIB-2017-05R19",
+      "authority": "EASA",
+      "name": "Somalia, below FL260",
+      "firs": ["HCSM"],
+      "floor_fl": 0,
+      "ceiling_fl": 260,
+      "severity": "prohibition",
+      "valid_from": "2017-01-01T00:00:00Z"
+    },
+    {
+      "reference": "CZIB-2017-08R19",
+      "authority": "EASA",
+      "name": "Afghanistan",
+      "firs": ["OAKX"],
+      "floor_fl": 0,
+      "ceiling_fl": 999,
+      "severity": "prohibition",
+      "valid_from": "2017-01-01T00:00:00Z"
+    },
+    {
+      "reference": "14 CFR 91.1607",
+      "authority": "FAA",
+      "name": "North Korea",
+      "firs": ["ZKKP"],
+      "floor_fl": 0,
+      "ceiling_fl": 999,
+      "severity": "prohibition",
+      "valid_from": "2017-12-15T00:00:00Z"
+    }
+  ]
+}
