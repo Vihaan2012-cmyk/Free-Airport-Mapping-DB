@@ -129,13 +129,23 @@ fn pack(fix: u32, level_idx: u8, n_levels: usize) -> usize {
 }
 
 /// A distance-based lower bound on the cost still to fly from a fix to a target, admissible
-/// at any level: the landmark bound on the great-circle distance, at the cheapest rate any
-/// level in play could possibly offer. `None` landmarks fall back to the straight line,
-/// which is always safe, just a much looser bound.
+/// at any level: the greater of the straight line and what the landmarks can say, at the
+/// cheapest rate any level in play could possibly offer.
+///
+/// Both figures are lower bounds on the distance still to fly, so the larger of the two is
+/// a lower bound as well, and it is the larger that must be taken. A landmark that cannot
+/// speak about a pair contributes nothing to `lower_bound_nm`, which then returns zero — and
+/// on a real worldwide network, where no landmark reaches every corner, that is a great many
+/// fixes. Under a search that orders on this estimate alone, a zero does not merely make the
+/// bound loose: it says the fix *is* the destination. Every such fix is then expanded before
+/// any honest one, the beam fills with them, and a destination the network plainly connects
+/// is never reached. The straight line is never zero for a fix that is not already there,
+/// which is what makes it the floor.
 fn heuristic_one(compact: &Compact, landmarks: Option<&Landmarks>, rate_per_nm: f32, from: u32, to: u32) -> f32 {
+    let straight = super::landmarks::fast_distance_nm(compact.pos(from), compact.cos_lat[from as usize] as f64, compact.pos(to)) as f32;
     let nm = match landmarks {
-        Some(lm) if !lm.is_empty() => lm.lower_bound_nm(from, to),
-        _ => super::landmarks::fast_distance_nm(compact.pos(from), compact.cos_lat[from as usize] as f64, compact.pos(to)) as f32,
+        Some(lm) if !lm.is_empty() => straight.max(lm.lower_bound_nm(from, to)),
+        _ => straight,
     };
     nm * rate_per_nm
 }

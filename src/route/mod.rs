@@ -79,6 +79,10 @@ const MAX_CANDIDATE_LEVELS: usize = 12;
 const LEVEL_FLOOR_FT: f64 = 10_000.0;
 const TAXI_MINUTES: i64 = 15;
 const RULE_RETRIES: usize = 3;
+/// How many of the nearest fixes are considered when looking for ones a route may join the
+/// network at: wide, because the nearest are usually terminal fixes on the low-level network
+/// and the first usable one can be a long way down the list.
+const JOIN_POOL: usize = 512;
 
 // ---------------------------------------------------------------------------------
 // Cruise levels and runways.
@@ -229,25 +233,54 @@ impl EdgeRule for Nudge {
 /// How many fixes each end of the route may join the airways at: a SID or an airport
 /// rarely has only one within reach, and giving the search a single, forced choice is what
 /// leaves a rule or a retry with nowhere else to send it.
-const ENTRY_CANDIDATES: usize = 4;
+const ENTRY_CANDIDATES: usize = 8;
+/// The widths of join the search tries in turn, narrowest first: a narrow join gives the
+/// better route where it works, a wide one finds a route where a narrow one finds none.
+const JOIN_WIDTHS: [usize; 3] = [ENTRY_CANDIDATES, 24, 64];
 
 /// The fixes a SID's last point (or an airport with none) may join the network at: the
 /// fix already in the network at exactly this identifier and place, if there is one —
 /// preferred so a SID that ends on a named airway fix joins it by identity — followed by
 /// the nearest fixes with a segment out of them, within reach of a direct leg.
-fn join_candidates(graph: &Graph, ident: Option<&str>, pos: LatLon) -> Vec<u32> {
-    let mut out = Vec::with_capacity(ENTRY_CANDIDATES);
+/// The fixes a route may join the airway network at, or leave it at: the procedure's own
+/// end if the network has it, then the nearest fixes to it.
+///
+/// `usable` is what keeps this honest. Ten thousand of the airway segments in a navigation
+/// database top out below eighteen thousand feet: they are the low-level network, and at a
+/// cruise level they are rightly refused. A fix whose every airway is one of those is no use
+/// as a place to join the network at a cruise level — a search starting there is stranded on
+/// the low network with no way up to the one it means to fly, and a destination the network
+/// plainly connects is never reached. So a fix is taken only if at least one airway out of it
+/// (or into it, at the arrival end) may be flown at one of the levels in play, and the search
+/// widens its net until it finds enough of them. Only if nothing at all qualifies does it
+/// fall back to the nearest fixes regardless, since a poor join beats no route.
+fn join_candidates(graph: &Graph, ident: Option<&str>, pos: LatLon, want: usize, usable: &dyn Fn(u32) -> bool) -> Vec<u32> {
+    let mut out = Vec::with_capacity(want);
     if let Some(id) = ident {
         if let Some(node) = graph.find(id, pos) {
+            if usable(node) {
+                out.push(node);
+            }
+        }
+    }
+    // A wide pool, because near a busy airport the nearest fixes are all terminal ones on
+    // the low-level network: at Rome the nearest fix usable at a cruise level is
+    // eighty-eight miles out, well inside the direct leg allowed but a long way down a list
+    // ordered by distance. Sorting a few hundred candidates once a plan costs nothing
+    // against failing to find a route at all.
+    for (node, _) in graph.nearest(pos, JOIN_POOL, MAX_DIRECT_NM) {
+        if out.len() >= want {
+            break;
+        }
+        if usable(node) && !out.contains(&node) {
             out.push(node);
         }
     }
-    for (node, _) in graph.nearest(pos, ENTRY_CANDIDATES, MAX_DIRECT_NM) {
-        if !out.contains(&node) {
-            out.push(node);
-        }
-        if out.len() >= ENTRY_CANDIDATES {
-            break;
+    if out.is_empty() {
+        for (node, _) in graph.nearest(pos, want, MAX_DIRECT_NM) {
+            if !out.contains(&node) {
+                out.push(node);
+            }
         }
     }
     out
@@ -301,7 +334,7 @@ struct Context<'a> {
 impl<'a> Context<'a> {
     /// The real pipeline: runways and procedures asked of the navigation database on this
     /// machine.
-    fn build(graph: &'a Graph, req: &'a RouteRequest<'a>) -> anyhow::Result<Context<'a>> {
+    fn build(graph: &'a Graph, req: &'a RouteRequest<'a>, join_width: usize) -> anyhow::Result<Context<'a>> {
         let dep_runway = {
             let runways = crate::sources::navdata::runways(&req.origin.icao);
             choose_runway(req.dep_runway.as_deref(), req.origin_wind, &runways)
@@ -312,14 +345,14 @@ impl<'a> Context<'a> {
         };
         let sid = dep_runway.as_deref().and_then(|rw| procedures::sid_for_runway(&req.origin.icao, rw, req.destination.pos));
         let star = arr_runway.as_deref().and_then(|rw| procedures::star_for_runway(&req.destination.icao, rw, req.origin.pos));
-        Context::build_with(graph, req, dep_runway, arr_runway, sid, star)
+        Context::build_with(graph, req, dep_runway, arr_runway, sid, star, join_width)
     }
 
     /// The pipeline from a runway and a procedure already in hand: what the real
     /// [`Context::build`] delegates to once it has asked the navigation database, and what
     /// a test that has no database to ask, and no business waiting on one, calls directly
     /// with fixtures of its own.
-    fn build_with(graph: &'a Graph, req: &'a RouteRequest<'a>, dep_runway: Option<String>, arr_runway: Option<String>, sid: Option<procedures::Procedure>, star: Option<procedures::Procedure>) -> anyhow::Result<Context<'a>> {
+    fn build_with(graph: &'a Graph, req: &'a RouteRequest<'a>, dep_runway: Option<String>, arr_runway: Option<String>, sid: Option<procedures::Procedure>, star: Option<procedures::Procedure>, join_width: usize) -> anyhow::Result<Context<'a>> {
         let compact = graph.compact();
         let levels_ft = candidate_levels(req);
         if levels_ft.is_empty() {
@@ -331,8 +364,13 @@ impl<'a> Context<'a> {
         let exit_pos = star.as_ref().and_then(|s| s.points.first()).map(|w| w.pos).unwrap_or(req.destination.pos);
         let exit_ident = star.as_ref().and_then(|s| s.points.first()).map(|w| w.ident.clone());
 
-        let entry_candidates = join_candidates(graph, entry_ident.as_deref(), entry_pos);
-        let exit_candidates = join_candidates(graph, exit_ident.as_deref(), exit_pos);
+        // A fix is worth joining the network at only if something can be flown out of it
+        // (or into it) at one of the levels this route is being planned for.
+        let ceiling = req.cost.ceiling_ft();
+        let out_usable = |node: u32| compact.out(node).iter().any(|e| levels_ft.iter().any(|&l| e.allowed_at(l, ceiling)));
+        let in_usable = |node: u32| compact.r#in(node).iter().any(|e| levels_ft.iter().any(|&l| e.allowed_at(l, ceiling)));
+        let entry_candidates = join_candidates(graph, entry_ident.as_deref(), entry_pos, join_width, &out_usable);
+        let exit_candidates = join_candidates(graph, exit_ident.as_deref(), exit_pos, join_width, &in_usable);
         if entry_candidates.is_empty() {
             anyhow::bail!("no airway network within reach of the departure");
         }
@@ -505,8 +543,22 @@ pub fn plan_routes(graph: &Graph, req: &RouteRequest, most: usize) -> anyhow::Re
     if most == 0 {
         return Ok(Vec::new());
     }
-    let ctx = Context::build(graph, req)?;
-    plan_from_context(&ctx, req, most)
+    // A narrow join first, widening only if nothing connects. Near a busy airport the
+    // nearest fixes are terminal ones on the low-level network, and the first fix usable at
+    // a cruise level — and in the same part of the upper network as the other end — can be
+    // eighty miles out and a long way down a list ordered by distance. Widening always
+    // would find those routes, but at a cost: every extra candidate seeds the search with
+    // another start state, diluting the beam and making the ordinary short flight's route
+    // worse. So the width escalates only when the narrow join fails outright.
+    let mut last: anyhow::Error = anyhow::anyhow!("no route");
+    for width in JOIN_WIDTHS {
+        match Context::build(graph, req, width).and_then(|ctx| plan_from_context(&ctx, req, most)) {
+            Ok(found) if !found.is_empty() => return Ok(found),
+            Ok(_) => last = anyhow::anyhow!("no route"),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
 }
 
 /// [`plan_routes`] from a runway and a procedure already resolved: the seam a test with a
@@ -518,7 +570,7 @@ fn plan_routes_with(graph: &Graph, req: &RouteRequest, most: usize, dep_runway: 
     if most == 0 {
         return Ok(Vec::new());
     }
-    let ctx = Context::build_with(graph, req, dep_runway, arr_runway, sid, star)?;
+    let ctx = Context::build_with(graph, req, dep_runway, arr_runway, sid, star, ENTRY_CANDIDATES)?;
     plan_from_context(&ctx, req, most)
 }
 
@@ -986,7 +1038,7 @@ mod tests {
             let d = airport("DEST", b);
             let mut req = base_request(&o, &d, &cost, &air);
             req.levels_ft = &levels_ft;
-            let Ok(ctx) = Context::build_with(&g, &req, None, None, None, None) else {
+            let Ok(ctx) = Context::build_with(&g, &req, None, None, None, None, ENTRY_CANDIDATES) else {
                 println!("{label}: no network within reach");
                 continue;
             };
@@ -1020,6 +1072,89 @@ mod tests {
                 }
                 _ => println!("{label}: no route found"),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod reachability {
+    use super::*;
+    use crate::dispatch::{Airport, SimpleCost, StillAir};
+
+    /// Whether the network itself connects two airports at a level, worked out with a plain
+    /// breadth-first walk over the edges the level allows: the question of whether a route
+    /// exists at all, kept apart from whether the greedy search finds it.
+    #[test]
+    #[ignore]
+    fn what_the_network_connects() {
+        let graph = Graph::shared();
+        let compact = graph.compact();
+        let air = StillAir;
+        let cost = SimpleCost { tas_kt: 450.0, kg_per_hour: 2500.0, ceiling_ft: 41000.0, air: &air, max_tailwind_kt: 150.0 };
+        for (o, op, d, dp) in [
+            ("EGLL", (51.4706, -0.4619), "LFPG", (49.0097, 2.5479)),
+            ("EGLL", (51.4706, -0.4619), "LIRF", (41.8003, 12.2389)),
+            ("EGLL", (51.4706, -0.4619), "KJFK", (40.6413, -73.7781)),
+        ] {
+            let origin = Airport { icao: o.into(), name: String::new(), pos: op, elevation_ft: 0.0 };
+            let destination = Airport { icao: d.into(), name: String::new(), pos: dp, elevation_ft: 0.0 };
+            let req = RouteRequest { origin: &origin, destination: &destination, cruise_ft: 35000.0, levels_ft: &[35000.0], cost: &cost, cost_index: 20.0, off_block: chrono::Utc::now(), air: &air, hazards: &[], edge_rules: &[], route_rules: &[], dep_runway: None, arr_runway: None, origin_wind: None, destination_wind: None, rvsm: true, avoid_firs: &[], free_route: true };
+            let ctx = Context::build(graph, &req, ENTRY_CANDIDATES).expect("a context");
+            // Every node reachable from any entry candidate, ignoring cost entirely.
+            let mut seen = vec![false; compact.node_count()];
+            let mut queue: std::collections::VecDeque<u32> = ctx.entry_candidates.iter().copied().collect();
+            for &n in &ctx.entry_candidates {
+                seen[n as usize] = true;
+            }
+            let mut count = 0usize;
+            while let Some(u) = queue.pop_front() {
+                count += 1;
+                for e in compact.out(u) {
+                    if !seen[e.to as usize] {
+                        seen[e.to as usize] = true;
+                        queue.push_back(e.to);
+                    }
+                }
+            }
+            let exits_reached = ctx.exit_candidates.iter().filter(|&&n| seen[n as usize]).count();
+            println!("{o}->{d}: {count} of {} fixes reachable ignoring cost; {exits_reached} of {} arrival candidates", compact.node_count(), ctx.exit_candidates.len());
+
+            // The same walk, but only over edges the level and its rules actually allow.
+            let frozen = cost::Frozen { cost: &cost, cost_index: 20.0, when: ctx.frozen_when, hazards: &[], edge_rules: &[], origin: o, destination: d, flown_nm: ctx.flown_nm };
+            let lazy = cost::LazyLevel::new(graph, &compact, 35000.0, frozen);
+            use crate::route::cost::EdgeCost;
+            let mut seen2 = vec![false; compact.node_count()];
+            let mut q2: std::collections::VecDeque<u32> = ctx.entry_candidates.iter().copied().collect();
+            for &n in &ctx.entry_candidates {
+                seen2[n as usize] = true;
+            }
+            let (mut c2, mut cut) = (0usize, 0usize);
+            while let Some(u) = q2.pop_front() {
+                c2 += 1;
+                for (p, e) in compact.out(u).iter().enumerate() {
+                    if !lazy.forward(&compact, u, p).is_finite() {
+                        cut += 1;
+                        continue;
+                    }
+                    if !seen2[e.to as usize] {
+                        seen2[e.to as usize] = true;
+                        q2.push_back(e.to);
+                    }
+                }
+            }
+            let e2 = ctx.exit_candidates.iter().filter(|&&n| seen2[n as usize]).count();
+            println!("   at FL350: {c2} fixes reachable, {cut} edges refused; {e2} of {} arrival candidates", ctx.exit_candidates.len());
+            // How near the destination the reachable part of the upper network actually gets.
+            let mut best = (f64::MAX, String::new());
+            for n in 0..compact.node_count() as u32 {
+                if seen2[n as usize] {
+                    let nm = distance_nm(compact.pos(n), dp);
+                    if nm < best.0 {
+                        best = (nm, graph.fix_id(n).to_string());
+                    }
+                }
+            }
+            println!("   nearest reachable fix to {d}: {} at {:.0} nm", best.1, best.0);
         }
     }
 }
