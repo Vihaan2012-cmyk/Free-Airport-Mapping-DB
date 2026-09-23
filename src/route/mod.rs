@@ -41,6 +41,8 @@ use std::sync::Arc;
 pub mod airports;
 pub mod airspace;
 pub mod cost;
+pub mod directs;
+pub mod ellipse;
 pub mod etops;
 pub mod graph;
 pub mod hazard;
@@ -52,6 +54,7 @@ pub mod rad;
 pub mod search;
 pub mod spatial;
 
+pub use ellipse::Ellipse;
 pub use graph::{Edge, Fix, Graph};
 pub use hazard::{crosses, midpoint};
 
@@ -61,8 +64,18 @@ pub use hazard::{crosses, midpoint};
 // ---------------------------------------------------------------------------------
 
 /// The longest a direct leg onto or off the airways may be: from the SID's last fix to the
-/// network, and from the network to the STAR's first fix.
+/// network, and from the network to the STAR's first fix. Also the longest a free-route
+/// direct leg between two enroute fixes may be over land, where free-route airspace is
+/// generally good for a few hundred miles at a time.
 const MAX_DIRECT_NM: f64 = 220.0;
+/// The longest a free-route direct leg may be over open ocean, tried only once nothing
+/// shorter connects at all: there is nothing to fly between out there but the oceanic
+/// reporting points a track message once joined, spaced widely enough that
+/// [`MAX_DIRECT_NM`] alone could not chain them into a crossing.
+const OCEAN_MAX_DIRECT_NM: f64 = 600.0;
+/// The floor beneath a percentage-of-direct ellipse: see [`ellipse::Ellipse`]'s own doc
+/// comment for why a percentage alone is too thin on a short hop.
+const ELLIPSE_SLACK_NM: f64 = 120.0;
 /// How many landmarks the ALT bound is built from: inside the 16–32 the method is usually
 /// described with.
 const LANDMARK_COUNT: usize = 24;
@@ -234,9 +247,31 @@ impl EdgeRule for Nudge {
 /// rarely has only one within reach, and giving the search a single, forced choice is what
 /// leaves a rule or a retry with nowhere else to send it.
 const ENTRY_CANDIDATES: usize = 8;
-/// The widths of join the search tries in turn, narrowest first: a narrow join gives the
-/// better route where it works, a wide one finds a route where a narrow one finds none.
-const JOIN_WIDTHS: [usize; 3] = [ENTRY_CANDIDATES, 24, 64];
+
+/// One rung of [`STAGES`]: how wide a join, how fat an ellipse (`None` for no ellipse at
+/// all), and how long a free-route direct leg may be.
+struct Stage {
+    join_width: usize,
+    ellipse_factor: Option<f64>,
+    direct_max_nm: f64,
+}
+
+/// The single escalation [`plan_routes`] climbs when a narrower attempt finds nothing: wider
+/// join pools and a fatter ellipse together, not two ladders climbed apart. They serve the
+/// same end — trying harder once the easy case has failed — and a join widened on its own
+/// would seed the search from fixes a still-thin ellipse then prunes straight back out,
+/// while an ellipse widened on its own would offer a search still joined too narrowly
+/// somewhere new it can never reach. Only at the last two rungs does the ellipse go
+/// altogether and the direct leg lengthen to what an ocean crossing needs — tried last and
+/// only because trying it always would let a route stretch a direct leg across a gap real
+/// free-route airspace would never allow, where a narrower rung already had an answer.
+const STAGES: [Stage; 5] = [
+    Stage { join_width: ENTRY_CANDIDATES, ellipse_factor: Some(1.08), direct_max_nm: MAX_DIRECT_NM },
+    Stage { join_width: 24, ellipse_factor: Some(1.25), direct_max_nm: MAX_DIRECT_NM },
+    Stage { join_width: 64, ellipse_factor: Some(1.6), direct_max_nm: MAX_DIRECT_NM },
+    Stage { join_width: 64, ellipse_factor: None, direct_max_nm: MAX_DIRECT_NM },
+    Stage { join_width: 64, ellipse_factor: None, direct_max_nm: OCEAN_MAX_DIRECT_NM },
+];
 
 /// The fixes a SID's last point (or an airport with none) may join the network at: the
 /// fix already in the network at exactly this identifier and place, if there is one —
@@ -329,12 +364,20 @@ struct Context<'a> {
     flown_nm: f64,
     rate_per_nm: f32,
     landmarks: Arc<landmarks::Landmarks>,
+    /// The region worth searching at all, where this attempt uses one: `None` at the last
+    /// rungs of [`STAGES`], where the search sees the whole network.
+    ellipse: Option<Ellipse>,
+    /// This attempt's free-route direct legs, built once from `ellipse`: `None` where
+    /// `direct_max_nm` was never given, which is every test that has no business paying for
+    /// a feature it is not exercising.
+    directs: Option<directs::Directs>,
 }
 
 impl<'a> Context<'a> {
     /// The real pipeline: runways and procedures asked of the navigation database on this
     /// machine.
-    fn build(graph: &'a Graph, req: &'a RouteRequest<'a>, join_width: usize) -> anyhow::Result<Context<'a>> {
+    #[allow(clippy::too_many_arguments)]
+    fn build(graph: &'a Graph, req: &'a RouteRequest<'a>, join_width: usize, ellipse_factor: Option<f64>, direct_max_nm: Option<f64>) -> anyhow::Result<Context<'a>> {
         let dep_runway = {
             let runways = crate::sources::navdata::runways(&req.origin.icao);
             choose_runway(req.dep_runway.as_deref(), req.origin_wind, &runways)
@@ -345,14 +388,21 @@ impl<'a> Context<'a> {
         };
         let sid = dep_runway.as_deref().and_then(|rw| procedures::sid_for_runway(&req.origin.icao, rw, req.destination.pos));
         let star = arr_runway.as_deref().and_then(|rw| procedures::star_for_runway(&req.destination.icao, rw, req.origin.pos));
-        Context::build_with(graph, req, dep_runway, arr_runway, sid, star, join_width)
+        Context::build_with(graph, req, dep_runway, arr_runway, sid, star, join_width, ellipse_factor, direct_max_nm)
     }
 
     /// The pipeline from a runway and a procedure already in hand: what the real
     /// [`Context::build`] delegates to once it has asked the navigation database, and what
     /// a test that has no database to ask, and no business waiting on one, calls directly
     /// with fixtures of its own.
-    fn build_with(graph: &'a Graph, req: &'a RouteRequest<'a>, dep_runway: Option<String>, arr_runway: Option<String>, sid: Option<procedures::Procedure>, star: Option<procedures::Procedure>, join_width: usize) -> anyhow::Result<Context<'a>> {
+    ///
+    /// `ellipse_factor` is `None` for no ellipse at all — the whole network is fair game,
+    /// which is both the last rung of [`STAGES`] and every existing test's own fixture
+    /// network, small enough that pruning it was never the point. `direct_max_nm` is `None`
+    /// to build no free-route direct legs at all, `Some` for the longest one this attempt
+    /// allows.
+    #[allow(clippy::too_many_arguments)]
+    fn build_with(graph: &'a Graph, req: &'a RouteRequest<'a>, dep_runway: Option<String>, arr_runway: Option<String>, sid: Option<procedures::Procedure>, star: Option<procedures::Procedure>, join_width: usize, ellipse_factor: Option<f64>, direct_max_nm: Option<f64>) -> anyhow::Result<Context<'a>> {
         let compact = graph.compact();
         let levels_ft = candidate_levels(req);
         if levels_ft.is_empty() {
@@ -390,7 +440,10 @@ impl<'a> Context<'a> {
         let rate_per_nm = cost::min_rate_per_nm(req.cost, &levels_ft, req.cost_index);
         let landmarks = landmarks::tables(&compact, LANDMARK_COUNT.min(compact.node_count().max(1)));
 
-        Ok(Context { graph, compact, req, levels_ft, dep_runway, arr_runway, sid, star, entry_pos, exit_pos, entry_candidates, exit_candidates, frozen_when, flown_nm, rate_per_nm, landmarks })
+        let ellipse = ellipse_factor.map(|k| Ellipse::new(req.origin.pos, req.destination.pos, k, ELLIPSE_SLACK_NM));
+        let directs = direct_max_nm.map(|max_nm| directs::build(&compact, &graph.spatial_all(), ellipse.as_ref(), req.origin.pos, req.destination.pos, max_nm));
+
+        Ok(Context { graph, compact, req, levels_ft, dep_runway, arr_runway, sid, star, entry_pos, exit_pos, entry_candidates, exit_candidates, frozen_when, flown_nm, rate_per_nm, landmarks, ellipse, directs })
     }
 
     fn bias(&self, from: LatLon, to: LatLon) -> Vec<f32> {
@@ -447,13 +500,19 @@ impl<'a> Context<'a> {
                         let starts: Vec<(u32, &[f32])> = entry_bias.iter().map(|(n, b)| (*n, &b[li..=li])).collect();
                         let goals: Vec<(u32, &[f32])> = exit_bias.iter().map(|(n, b)| (*n, &b[li..=li])).collect();
                         let one = std::slice::from_ref(&lazy);
-                        search::greedy_best_first(&self.compact, one, &single_climb, &starts, &goals, Some(&self.landmarks), self.rate_per_nm, beam, &mut scratch).map(|found| (found, job, lazy.edges_costed()))
+                        let lazy_dc: &dyn cost::DirectCost = &lazy;
+                        let direct_ctx = self.directs.as_ref().map(|adj| search::DirectContext { adj, cost: std::slice::from_ref(&lazy_dc) });
+                        search::greedy_best_first(&self.compact, one, direct_ctx.as_ref(), &single_climb, &starts, &goals, self.ellipse.as_ref(), Some(&self.landmarks), self.rate_per_nm, beam, &mut scratch)
+                            .map(|found| (found, job, lazy.edges_costed() + lazy.directs_costed()))
                     }
                     Job::Joint(beam) => {
                         let lazies: Vec<cost::LazyLevel> = self.levels_ft.iter().map(|&level_ft| cost::LazyLevel::new(self.graph, &self.compact, level_ft, frozen)).collect();
                         let starts: Vec<(u32, &[f32])> = entry_bias.iter().map(|(n, b)| (*n, b.as_slice())).collect();
                         let goals: Vec<(u32, &[f32])> = exit_bias.iter().map(|(n, b)| (*n, b.as_slice())).collect();
-                        search::greedy_best_first(&self.compact, &lazies, &climb, &starts, &goals, Some(&self.landmarks), self.rate_per_nm, beam, &mut scratch).map(|found| (found, job, lazies.iter().map(|l| l.edges_costed()).sum()))
+                        let lazy_dcs: Vec<&dyn cost::DirectCost> = lazies.iter().map(|l| l as &dyn cost::DirectCost).collect();
+                        let direct_ctx = self.directs.as_ref().map(|adj| search::DirectContext { adj, cost: &lazy_dcs });
+                        search::greedy_best_first(&self.compact, &lazies, direct_ctx.as_ref(), &climb, &starts, &goals, self.ellipse.as_ref(), Some(&self.landmarks), self.rate_per_nm, beam, &mut scratch)
+                            .map(|found| (found, job, lazies.iter().map(|l| l.edges_costed() + l.directs_costed()).sum()))
                     }
                 }
             })
@@ -543,16 +602,18 @@ pub fn plan_routes(graph: &Graph, req: &RouteRequest, most: usize) -> anyhow::Re
     if most == 0 {
         return Ok(Vec::new());
     }
-    // A narrow join first, widening only if nothing connects. Near a busy airport the
-    // nearest fixes are terminal ones on the low-level network, and the first fix usable at
-    // a cruise level — and in the same part of the upper network as the other end — can be
-    // eighty miles out and a long way down a list ordered by distance. Widening always
-    // would find those routes, but at a cost: every extra candidate seeds the search with
-    // another start state, diluting the beam and making the ordinary short flight's route
-    // worse. So the width escalates only when the narrow join fails outright.
+    // A narrow join and a thin ellipse first, widening only if nothing connects. Near a
+    // busy airport the nearest fixes are terminal ones on the low-level network, and the
+    // first fix usable at a cruise level — and in the same part of the upper network as the
+    // other end — can be eighty miles out and a long way down a list ordered by distance.
+    // Widening always would find those routes, but at a cost: every extra candidate seeds
+    // the search with another start state, diluting the beam and making the ordinary short
+    // flight's route worse, and a fatter ellipse offers the search fixes a shorter one would
+    // have kept it from ever considering. So both escalate together, only when a narrower
+    // rung fails outright: see [`STAGES`]'s own doc comment for why they are one ladder.
     let mut last: anyhow::Error = anyhow::anyhow!("no route");
-    for width in JOIN_WIDTHS {
-        match Context::build(graph, req, width).and_then(|ctx| plan_from_context(&ctx, req, most)) {
+    for stage in STAGES {
+        match Context::build(graph, req, stage.join_width, stage.ellipse_factor, Some(stage.direct_max_nm)).and_then(|ctx| plan_from_context(&ctx, req, most)) {
             Ok(found) if !found.is_empty() => return Ok(found),
             Ok(_) => last = anyhow::anyhow!("no route"),
             Err(e) => last = e,
@@ -570,7 +631,9 @@ fn plan_routes_with(graph: &Graph, req: &RouteRequest, most: usize, dep_runway: 
     if most == 0 {
         return Ok(Vec::new());
     }
-    let ctx = Context::build_with(graph, req, dep_runway, arr_runway, sid, star, ENTRY_CANDIDATES)?;
+    // No ellipse, no direct legs: every existing test built its network to exercise the
+    // search itself, on fixtures far too small for pruning to be the point.
+    let ctx = Context::build_with(graph, req, dep_runway, arr_runway, sid, star, ENTRY_CANDIDATES, None, None)?;
     plan_from_context(&ctx, req, most)
 }
 
@@ -784,6 +847,82 @@ mod tests {
         req.route_rules = std::slice::from_ref(&rule_ref);
         let route = plan_route_with(&g, &req, None, None, None, None).expect("a route that avoids the north");
         assert!(route.points.iter().all(|w| !(w.ident.starts_with('N') && w.kind == PointKind::Enroute)), "{}", route.route_string());
+    }
+
+    /// A rule that forbids one named airway outright, at any level: used below to force a
+    /// route onto a fix that would otherwise never be worth the search's while, so a test
+    /// can tell whether the ellipse — not the cost — is what kept a fix off the route.
+    struct ForbidAirway(&'static str);
+    impl EdgeRule for ForbidAirway {
+        fn name(&self) -> &str {
+            "forbid airway"
+        }
+        fn check(&self, q: &EdgeQuery) -> Verdict {
+            if q.airway == self.0 {
+                Verdict::Forbid("test".into())
+            } else {
+                Verdict::Allow
+            }
+        }
+    }
+
+    /// Two ways from `WEST` to `EAST`: a single direct hop, and a single fix a long way off
+    /// it — `FAR`, ten degrees of latitude clear of the direct line — that is the only other
+    /// way across once `UDIR` is forbidden. Each real edge here is already longer than
+    /// `MAX_DIRECT_NM`, so a free-route direct leg can never stand in for either one: what
+    /// the tests below see is the ellipse alone, not a direct leg quietly bridging the gap.
+    fn direct_and_a_far_detour() -> (Graph, Airport, Airport) {
+        let mut g = Graph::default();
+        g.add("UDIR", ("E0", (0.0, 0.0)), ("E4", (0.0, 8.0)), false, None, None);
+        g.add("UFAR", ("E0", (0.0, 0.0)), ("FAR", (10.0, 4.0)), false, None, None);
+        g.add("UFAR", ("FAR", (10.0, 4.0)), ("E4", (0.0, 8.0)), false, None, None);
+        let o = airport("WEST", (0.0, -0.3));
+        let d = airport("EAST", (0.0, 8.3));
+        (g, o, d)
+    }
+
+    #[test]
+    fn a_fix_outside_the_ellipse_is_never_on_the_route() {
+        let (g, o, d) = direct_and_a_far_detour();
+        let air = StillAir;
+        let cost = simple_cost(&air);
+        let forbid = ForbidAirway("UDIR");
+        let forbid_ref: &dyn EdgeRule = &forbid;
+        let mut req = base_request(&o, &d, &cost, &air);
+        req.levels_ft = &[35000.0];
+        req.edge_rules = std::slice::from_ref(&forbid_ref);
+
+        // Thin enough that FAR sits well outside it: with the direct line forbidden,
+        // nothing at all should connect, which is the strongest proof a pruned fix never
+        // appears on the route — there is no other way across for it to appear on.
+        let thin = Context::build_with(&g, &req, None, None, None, None, ENTRY_CANDIDATES, Some(1.1), Some(MAX_DIRECT_NM)).expect("a context");
+        assert!(thin.attempt(&[], &Nudge::default()).is_none(), "a thin ellipse should have pruned the only way across");
+
+        // The same network and the same forbidden airway, now with an ellipse fat enough to
+        // hold FAR: the detour is the only way across, so it must be found, and found using
+        // exactly the fix the thin ellipse pruned.
+        let fat = Context::build_with(&g, &req, None, None, None, None, ENTRY_CANDIDATES, Some(5.0), Some(MAX_DIRECT_NM)).expect("a context");
+        let (route, _) = fat.attempt(&[], &Nudge::default()).expect("a route once the ellipse is fat enough to hold the detour");
+        assert!(route.points.iter().any(|w| w.ident == "FAR"), "{}", route.route_string());
+    }
+
+    #[test]
+    fn the_ellipse_ladder_widens_when_a_thin_one_finds_nothing() {
+        let (g, o, d) = direct_and_a_far_detour();
+        let air = StillAir;
+        let cost = simple_cost(&air);
+        let forbid = ForbidAirway("UDIR");
+        let forbid_ref: &dyn EdgeRule = &forbid;
+        let mut req = base_request(&o, &d, &cost, &air);
+        req.levels_ft = &[35000.0];
+        req.edge_rules = std::slice::from_ref(&forbid_ref);
+
+        // Every ellipsed rung of `STAGES` is too thin to hold FAR — only the un-ellipsed
+        // rungs at the end can — so the full pipeline must climb the whole ladder to find
+        // anything at all, exactly the escalation `plan_routes` promises when a narrow
+        // attempt finds nothing.
+        let route = plan_route(&g, &req).expect("plan_routes should widen all the way to no ellipse at all");
+        assert!(route.points.iter().any(|w| w.ident == "FAR"), "{}", route.route_string());
     }
 
     #[test]
@@ -1038,7 +1177,7 @@ mod tests {
             let d = airport("DEST", b);
             let mut req = base_request(&o, &d, &cost, &air);
             req.levels_ft = &levels_ft;
-            let Ok(ctx) = Context::build_with(&g, &req, None, None, None, None, ENTRY_CANDIDATES) else {
+            let Ok(ctx) = Context::build_with(&g, &req, None, None, None, None, ENTRY_CANDIDATES, None, None) else {
                 println!("{label}: no network within reach");
                 continue;
             };
@@ -1099,7 +1238,7 @@ mod reachability {
             let origin = Airport { icao: o.into(), name: String::new(), pos: op, elevation_ft: 0.0 };
             let destination = Airport { icao: d.into(), name: String::new(), pos: dp, elevation_ft: 0.0 };
             let req = RouteRequest { origin: &origin, destination: &destination, cruise_ft: 35000.0, levels_ft: &[35000.0], cost: &cost, cost_index: 20.0, off_block: chrono::Utc::now(), air: &air, hazards: &[], edge_rules: &[], route_rules: &[], dep_runway: None, arr_runway: None, origin_wind: None, destination_wind: None, rvsm: true, avoid_firs: &[], free_route: true };
-            let ctx = Context::build(graph, &req, ENTRY_CANDIDATES).expect("a context");
+            let ctx = Context::build(graph, &req, ENTRY_CANDIDATES, None, None).expect("a context");
             // Every node reachable from any entry candidate, ignoring cost entirely.
             let mut seen = vec![false; compact.node_count()];
             let mut queue: std::collections::VecDeque<u32> = ctx.entry_candidates.iter().copied().collect();

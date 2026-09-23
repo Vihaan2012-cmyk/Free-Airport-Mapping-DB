@@ -707,6 +707,17 @@ fn decode_segments(bytes: &[u8]) -> Option<Vec<AirwaySegment>> {
     Some(out)
 }
 
+/// Every enroute waypoint the navigation database knows of, by identifier and position —
+/// not only the ones an airway happens to pass through. Most of these are already reached
+/// by some segment `airway_segments` returns; a good many are not, and are exactly what a
+/// free-route direct leg over open ocean needs somewhere to land on: the reporting points
+/// (`5945N`, `6050N`, and the like) a North Atlantic track is built from message by message,
+/// which persist in the database, five-letter names and lat/lon points alike, long after the
+/// message that once joined a given day's tracks between them has expired.
+pub fn enroute_waypoints() -> Vec<(String, f64, f64)> {
+    database().map(|db| db.enroute_waypoints()).unwrap_or_default()
+}
+
 impl Database {
     fn airway_segments(&self) -> Vec<AirwaySegment> {
         let mut out = Vec::new();
@@ -761,6 +772,18 @@ impl Database {
                 max_ft: b.8.filter(|v| *v > 0.0 && *v < 99000.0),
             });
         }
+        out
+    }
+
+    fn enroute_waypoints(&self) -> Vec<(String, f64, f64)> {
+        let mut out = Vec::new();
+        let Some(connection) = read_only(&self.path) else { return out };
+        let Some(table) = self.table("enroute_waypoints") else { return out };
+        let sql = format!("select waypoint_identifier, waypoint_latitude, waypoint_longitude from \"{table}\"");
+        let Ok(mut statement) = connection.prepare(&sql) else { return out };
+        let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?, row.get::<_, f64>(2)?)));
+        let Ok(rows) = rows else { return out };
+        out.extend(rows.flatten());
         out
     }
 }
