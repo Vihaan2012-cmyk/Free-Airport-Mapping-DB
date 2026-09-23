@@ -27,11 +27,16 @@ pub struct Landmarks {
 }
 
 impl Landmarks {
-    fn from_at(&self, l: usize, v: u32) -> f32 {
+    /// A landmark's distance *to* a fix: exposed alongside [`Landmarks::to_at`] so that
+    /// [`super::search::heuristic_to`] can gather a search's small, fixed set of goals into
+    /// its own tables once, rather than read a landmark's row — one of up to sixty-odd
+    /// thousand entries — anew for every push.
+    pub fn from_at(&self, l: usize, v: u32) -> f32 {
         self.from[l * self.n_nodes + v as usize]
     }
 
-    fn to_at(&self, l: usize, v: u32) -> f32 {
+    /// A landmark's distance *from* a fix: see [`Landmarks::from_at`].
+    pub fn to_at(&self, l: usize, v: u32) -> f32 {
         self.to[l * self.n_nodes + v as usize]
     }
 
@@ -70,6 +75,24 @@ impl Landmarks {
 
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
+    }
+
+    /// A search's goals, gathered out of these tables once: every landmark's distance to
+    /// and from each of them, in a small array the search rereads on every push instead of
+    /// this one. A search with up to a few dozen goals and two dozen landmarks otherwise
+    /// touches over a thousand entries scattered through tables sized by the whole network —
+    /// a cache miss apiece — on every single state it looks at; gathered once, the same
+    /// figures come from a few hundred bytes that stay hot for the rest of the search.
+    pub fn gather(&self, goals: &[u32]) -> GoalRows {
+        let mut to = Vec::with_capacity(self.ids.len() * goals.len());
+        let mut from = Vec::with_capacity(self.ids.len() * goals.len());
+        for l in 0..self.ids.len() {
+            for &t in goals {
+                to.push(self.to_at(l, t));
+                from.push(self.from_at(l, t));
+            }
+        }
+        GoalRows { to, from, n_goals: goals.len() }
     }
 
     fn to_bytes(&self) -> Vec<u8> {
@@ -113,6 +136,25 @@ impl Landmarks {
         let from = take_f32s(&mut at, n_landmarks * n_nodes)?;
         let to = take_f32s(&mut at, n_landmarks * n_nodes)?;
         Some(Landmarks { ids, from, to, n_nodes })
+    }
+}
+
+/// A search's goals' rows out of the landmark tables, gathered once by [`Landmarks::gather`]
+/// rather than read from the full tables on every push: `landmarks × goals` entries, small
+/// enough to stay in cache for the life of one search.
+pub struct GoalRows {
+    to: Vec<f32>,
+    from: Vec<f32>,
+    n_goals: usize,
+}
+
+impl GoalRows {
+    pub fn to_at(&self, l: usize, goal_idx: usize) -> f32 {
+        self.to[l * self.n_goals + goal_idx]
+    }
+
+    pub fn from_at(&self, l: usize, goal_idx: usize) -> f32 {
+        self.from[l * self.n_goals + goal_idx]
     }
 }
 
