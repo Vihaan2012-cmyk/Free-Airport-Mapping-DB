@@ -462,9 +462,17 @@ impl FiledRoute {
 pub struct RouteRequest<'a> {
     pub origin: &'a Airport,
     pub destination: &'a Airport,
+    /// The level asked for, where one was. Empty `levels` and this unset leaves the
+    /// choice to the search.
     pub cruise_ft: f64,
-    pub tas_kt: f64,
-    pub ceiling_ft: f64,
+    /// Every level the search may consider, lowest first. The search costs the route at
+    /// each and keeps the cheapest, so the level and the way round are chosen together:
+    /// a level two thousand feet higher is often worth a hundred miles further round.
+    pub levels_ft: &'a [f64],
+    /// What a leg costs. The route is the cheapest by this, not the shortest.
+    pub cost: &'a dyn CostModel,
+    /// What the airline will burn to save a minute.
+    pub cost_index: f64,
     pub off_block: DateTime<Utc>,
     pub air: &'a dyn WindField,
     pub hazards: &'a [Hazard],
@@ -482,6 +490,104 @@ pub struct RouteRequest<'a> {
     pub avoid_firs: &'a [String],
     /// Whether directs may replace airways where the airspace allows it.
     pub free_route: bool,
+}
+
+// ---------------------------------------------------------------------------------
+// What a leg costs.
+// ---------------------------------------------------------------------------------
+
+/// What flying one leg costs: the only two things a flight is ever planned on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct LegCost {
+    pub minutes: f64,
+    pub fuel_kg: f64,
+}
+
+/// One unit of cost index is a hundred pounds an hour, which is this many kilograms a
+/// minute: what the airline is willing to burn to save one.
+pub const KG_PER_MIN_PER_CI: f64 = 0.7559;
+
+impl LegCost {
+    /// The two put together the way an airline puts them: the fuel, plus the time at the
+    /// price the cost index sets. At a cost index of zero, the cheapest route on fuel
+    /// alone, however long it takes.
+    pub fn value(&self, cost_index: f64) -> f64 {
+        self.fuel_kg + self.minutes * cost_index * KG_PER_MIN_PER_CI
+    }
+
+    pub fn plus(self, other: LegCost) -> LegCost {
+        LegCost { minutes: self.minutes + other.minutes, fuel_kg: self.fuel_kg + other.fuel_kg }
+    }
+
+    pub fn times(self, factor: f64) -> LegCost {
+        LegCost { minutes: self.minutes * factor, fuel_kg: self.fuel_kg * factor }
+    }
+}
+
+/// One leg the search is costing.
+#[derive(Debug, Clone, Copy)]
+pub struct LegQuery {
+    pub from: LatLon,
+    pub to: LatLon,
+    pub level_ft: f64,
+    /// Roughly when the leg is flown, for the wind and the temperature.
+    pub when: DateTime<Utc>,
+    /// How far has been flown to reach it, which stands for how much lighter the
+    /// aircraft is by then.
+    pub flown_nm: f64,
+}
+
+/// What the search costs a leg with.
+///
+/// A fixed airspeed and a fixed burn is enough to find a route. The performance model,
+/// which knows what the aircraft actually burns at that weight, that level and that
+/// temperature, is what makes the route found the cheapest one rather than merely the
+/// quickest — and it is why a level is worth choosing inside the search rather than after
+/// it.
+pub trait CostModel: Send + Sync {
+    fn leg(&self, q: &LegQuery) -> LegCost;
+
+    /// The least a leg of that length at that level could possibly cost, with the most
+    /// helpful wind the sky holds. The search's estimate of what is left to fly is built
+    /// out of this, and it is only because this can never be beaten that the route it
+    /// finds is the cheapest there is rather than merely a good one.
+    fn lower_bound(&self, nm: f64, level_ft: f64) -> LegCost;
+
+    /// What the aircraft will not fly above.
+    fn ceiling_ft(&self) -> f64;
+}
+
+/// A fixed true airspeed and a fixed burn, flown through the wind: enough to plan a route
+/// on before there is a performance model to plan it on properly, and what the tests use.
+pub struct SimpleCost<'a> {
+    pub tas_kt: f64,
+    pub kg_per_hour: f64,
+    pub ceiling_ft: f64,
+    pub air: &'a dyn WindField,
+    /// The strongest tailwind anywhere in the forecast, which is what makes the estimate
+    /// of what is left to fly one that cannot be beaten.
+    pub max_tailwind_kt: f64,
+}
+
+impl CostModel for SimpleCost<'_> {
+    fn leg(&self, q: &LegQuery) -> LegCost {
+        let nm = distance_nm(q.from, q.to);
+        if nm < 0.01 {
+            return LegCost::default();
+        }
+        let air = self.air.air(along(q.from, q.to, 0.5), q.level_ft, q.when);
+        let minutes = nm / air.ground_speed(bearing_deg(q.from, q.to), self.tas_kt) * 60.0;
+        LegCost { minutes, fuel_kg: minutes / 60.0 * self.kg_per_hour }
+    }
+
+    fn lower_bound(&self, nm: f64, _level_ft: f64) -> LegCost {
+        let minutes = nm / (self.tas_kt + self.max_tailwind_kt) * 60.0;
+        LegCost { minutes, fuel_kg: minutes / 60.0 * self.kg_per_hour }
+    }
+
+    fn ceiling_ft(&self) -> f64 {
+        self.ceiling_ft
+    }
 }
 
 // ---------------------------------------------------------------------------------
