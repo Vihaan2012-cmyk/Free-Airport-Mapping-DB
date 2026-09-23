@@ -7,7 +7,7 @@
 //! `pdf::write` typesets exactly this text, monospaced, across as many A4 pages as it
 //! takes: there is one source of the plan's content, and only one place it is laid out.
 
-use crate::dispatch::{Dispatch, PointKind, TafChange, Waypoint};
+use crate::dispatch::{Dispatch, PointKind, ProfileKind, TafChange, Waypoint};
 use crate::ofp::DispatchOptions;
 use crate::route::airspace::fir_crossings;
 use chrono::{DateTime, Utc};
@@ -24,6 +24,39 @@ fn hm(dt: DateTime<Utc>) -> String {
 fn fmt_hm(minutes: f64) -> String {
     let total = minutes.round().max(0.0) as i64;
     format!("{:02}{:02}", total / 60, total % 60)
+}
+
+/// The altitude below which the log reads back a level as feet rather than a flight level:
+/// the departure's own transition altitude while it is still closer to the departure — what
+/// a climb is cleared against — the arrival's own transition level once it is closer to the
+/// arrival — what a descent is, which sits at or a little above the transition altitude, to
+/// leave a gap that stops a level being crossed twice on the way through — each from
+/// `navdata::airport_info` where the navigation database has it published. 18,000 ft (the
+/// FAA's own, and the commonest figure a dispatch system falls back on where a state
+/// publishes none) stands in for whichever of the two it does not have.
+const DEFAULT_TRANSITION_FT: f64 = 18_000.0;
+
+fn climb_transition_ft(icao: &str) -> f64 {
+    crate::sources::navdata::airport_info(icao).and_then(|i| i.transition_altitude_ft).unwrap_or(DEFAULT_TRANSITION_FT)
+}
+
+fn descent_transition_ft(icao: &str) -> f64 {
+    let info = crate::sources::navdata::airport_info(icao);
+    info.as_ref()
+        .and_then(|i| i.transition_level_ft)
+        .or_else(|| info.and_then(|i| i.transition_altitude_ft))
+        .unwrap_or(DEFAULT_TRANSITION_FT)
+}
+
+/// A navigation-log altitude the way it is actually read back: a flight level above the
+/// transition altitude, feet below it — never the "FL001" a departure airport's own
+/// elevation prints as, or "FL000" an arrival's does, when both are well under it.
+fn level_label(alt_ft: f64, transition_ft: f64) -> String {
+    if alt_ft > transition_ft {
+        format!("FL{:03.0}", (alt_ft / 100.0).round())
+    } else {
+        format!("{:05.0}", alt_ft.max(0.0))
+    }
 }
 
 /// The whole plan, as one string, ready to print or lay out on a PDF page a line at a
@@ -53,7 +86,13 @@ fn header(s: &mut String, d: &Dispatch, opts: &DispatchOptions) {
     let _ = writeln!(s, "FLIGHT {flight}   {} -> {}   {}", d.route.origin.icao, d.route.destination.icao, d.generated.format("%Y-%m-%d %H:%MZ"));
     let _ = writeln!(s, "AIRCRAFT {} ({})  REG {reg}   ENGINES {} x {}", d.spec.icao_type, d.spec.name, d.spec.engines, d.spec.engine);
     let _ = writeln!(s, "AIRAC {}", d.airac.clone().unwrap_or_else(|| "unknown".to_string()));
-    let _ = writeln!(s, "OFF-BLOCK {}Z   COST INDEX {:.0}   CRUISE FL{:03.0}", hm(d.route.off_block), opts.cost_index, d.route.cruise_ft / 100.0);
+    // The level actually climbed to, from the navigation log's own top of climb, rather
+    // than the route's filed `cruise_ft`: the route search picks a level around the
+    // aircraft's usual cruise with no notion of how short the trip is, and it is
+    // `perf::plan`'s distance cap, not the route search, that has the last word on a short
+    // sector — the two can disagree, and what was actually flown is the one worth printing.
+    let flown_cruise_ft = d.perf.profile.iter().find(|p| p.kind == ProfileKind::TopOfClimb).map(|p| p.alt_ft).unwrap_or(d.route.cruise_ft);
+    let _ = writeln!(s, "OFF-BLOCK {}Z   COST INDEX {:.0}   CRUISE FL{:03.0}", hm(d.route.off_block), opts.cost_index, flown_cruise_ft / 100.0);
     let _ = writeln!(s);
 }
 
@@ -124,6 +163,9 @@ fn nav_log(s: &mut String, d: &Dispatch) {
     // it is built to fly the route, not to say what was filed — so they are looked up here,
     // by the identifier a procedure fix and its profile point share, from the route itself.
     let constraints = procedure_constraints(d);
+    let total_nm = d.route.distance_nm().max(1.0);
+    let origin_transition_ft = climb_transition_ft(&d.route.origin.icao);
+    let destination_transition_ft = descent_transition_ft(&d.route.destination.icao);
     let mut prev_dist = 0.0;
     let mut prev_time = 0.0;
     for p in &d.perf.profile {
@@ -133,13 +175,17 @@ fn nav_log(s: &mut String, d: &Dispatch) {
         prev_time = p.time_min;
         let isa_dev = p.air.isa_dev(p.alt_ft);
         let cons = constraints.get(p.ident.as_str()).map(|w| constraint_note(w)).unwrap_or_default();
+        // Closer to the departure, its transition altitude governs; closer to the arrival,
+        // its transition level does — a cruise level sits far enough above either that
+        // which one is picked at the midpoint never matters.
+        let transition_ft = if p.dist_nm <= total_nm / 2.0 { origin_transition_ft } else { destination_transition_ft };
         let _ = writeln!(
             s,
-            "  {:<8} {:<8} {} FL{:03.0} {:03.0}/{:02.0}KT {:+4.0} {:+3.0}  {:3.0} {:3.0} {:5.0} {:5.0} {} {}   {:6.0}  {:6.0}  {}{cons}",
+            "  {:<8} {:<8} {} {:<5} {:03.0}/{:02.0}KT {:+4.0} {:+3.0}  {:3.0} {:3.0} {:5.0} {:5.0} {} {}   {:6.0}  {:6.0}  {}{cons}",
             p.ident,
             p.via,
             hdg(p.track_true_deg),
-            p.alt_ft / 100.0,
+            level_label(p.alt_ft, transition_ft),
             p.air.wind_from_deg,
             p.air.wind_kt,
             p.air.temp_c,
@@ -205,8 +251,13 @@ fn equal_time_points(s: &mut String, d: &Dispatch) {
     }
     let label = if d.spec.etops_minutes.is_some() { "ETOPS EQUAL-TIME POINTS" } else { "EQUAL-TIME POINTS" };
     let _ = writeln!(s, "{label}");
-    for etp in &d.perf.equal_time_points {
-        let _ = writeln!(s, "  BETWEEN {} AND {}  AT {:.0} NM / {}  FUEL NEEDED {:.0} KG", etp.between.0, etp.between.1, etp.dist_nm, fmt_hm(etp.time_min), etp.fuel_needed_kg);
+    for (i, etp) in d.perf.equal_time_points.iter().enumerate() {
+        // `perf::profile` works out one equal-time point between each pair of airports for
+        // an engine failure, then one for a depressurisation, always in that order and
+        // always both together — `EqualTimePoint` itself carries no label to say which is
+        // which, so the position in the list is the only thing that does.
+        let case = if i % 2 == 0 { "ENGINE FAILURE" } else { "DEPRESSURISATION" };
+        let _ = writeln!(s, "  {case}  BETWEEN {} AND {}  AT {:.0} NM / {}  FUEL NEEDED {:.0} KG", etp.between.0, etp.between.1, etp.dist_nm, fmt_hm(etp.time_min), etp.fuel_needed_kg);
     }
     let _ = writeln!(s);
 }

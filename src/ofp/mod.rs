@@ -178,6 +178,11 @@ fn level_scheme(origin: &str, destination: &str) -> LevelScheme {
     }
 }
 
+/// A passenger and their bags, kilograms: the IATA standard adult passenger weight most
+/// dispatch systems assume where nobody has weighed the load, used to turn a passenger count
+/// this planner has picked for itself into a payload when neither was given.
+const PAX_AND_BAGS_KG: f64 = 100.0;
+
 /// A cruise level to build the candidate levels around, absent one asked for. `perf::spec`
 /// does not carry a usual cruise altitude (a change worth asking for — see the final
 /// report), so this reads it off the ceiling: four thousand feet under it, which for every
@@ -343,6 +348,15 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
     let destination = p.airport(&opts.destination).ok_or_else(|| anyhow!("{} is not an airport this planner knows", opts.destination.to_uppercase()))?;
     let spec = p.aircraft_spec(&opts.aircraft).with_context(|| format!("{} is not an aircraft this planner knows", opts.aircraft.to_uppercase()))?;
 
+    // Nobody flies an empty aeroplane: a payload of zero, left as `DispatchOptions`'s
+    // default, is not a real flight to plan, so a passenger count and payload are filled in
+    // here rather than carried through as zero. An explicit `--pax` is honoured over the
+    // type's typical seating, and an explicit `--payload` over the standard passenger-and-
+    // bag weight; either can still be given as exactly nothing by asking for the other one
+    // alone with a very light aircraft, which is a real choice this does not second-guess.
+    let passengers = if opts.passengers > 0 { opts.passengers } else { crate::perf::aircraft::typical_pax(&spec.icao_type) };
+    let payload_kg = if opts.payload_kg > 0.0 { opts.payload_kg } else { passengers as f64 * PAX_AND_BAGS_KG };
+
     let direct_nm = dispatch::distance_nm(origin.pos, destination.pos);
     say("airports", format!("{} to {}, {direct_nm:.0} nm direct", origin.icao, destination.icao));
     say("aircraft", format!("{} {}, ceiling FL{:.0}", spec.icao_type, spec.name, spec.ceiling_ft / 100.0));
@@ -456,7 +470,7 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
     }
 
     // The cost model.
-    let zfw_kg = (spec.oew_kg + opts.payload_kg).min(spec.mzfw_kg);
+    let zfw_kg = (spec.oew_kg + payload_kg).min(spec.mzfw_kg);
     let cost_model = match p.cost_model(&spec, wind.as_ref(), zfw_kg, trip_nm, Some(opts.cost_index)) {
         Ok(c) => c,
         Err(e) => {
@@ -586,10 +600,19 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
         _ => None,
     };
 
-    // The vertical profile, the fuel and the weights.
-    let mut etp_airports: Vec<Airport> = vec![origin.clone(), destination.clone()];
-    if let Some(a) = &alt_route {
-        etp_airports.push(a.destination.clone());
+    // The vertical profile, the fuel and the weights. Equal-time points and a point of no
+    // return only mean something where turning back is a real question — an ocean crossing,
+    // or a twin flying under an ETOPS/EDTO approval — so `etp_airports` is left empty for
+    // anything else, which is `perf::plan`'s own signal (see its doc comment on
+    // `PerfRequest::etp_airports`) to leave both off the plan rather than print them for
+    // every short domestic sector at whatever the great-circle midpoint happens to be.
+    let mut etp_airports: Vec<Airport> = Vec::new();
+    if ocean || needs_etops {
+        etp_airports.push(origin.clone());
+        etp_airports.push(destination.clone());
+        if let Some(a) = &alt_route {
+            etp_airports.push(a.destination.clone());
+        }
     }
     let fuel_policy = FuelPolicy::default();
     let perf_req = PerfRequest {
@@ -597,7 +620,7 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
         route: &route,
         alternate: alt_route.as_ref(),
         air: wind.as_ref(),
-        payload_kg: opts.payload_kg,
+        payload_kg,
         cruise: CruisePolicy { cost_index: Some(opts.cost_index), ..Default::default() },
         fuel: fuel_policy.clone(),
         etp_airports: &etp_airports,
@@ -608,7 +631,7 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
         Ok(pp) => pp,
         Err(e) => {
             warnings.push(format!("performance model not available ({e:#}); flown on a straight-line estimate"));
-            fallback_perf_plan(&spec, &route, alt_route.as_ref(), wind.as_ref(), opts.payload_kg, cost_model.as_ref(), &fuel_policy)
+            fallback_perf_plan(&spec, &route, alt_route.as_ref(), wind.as_ref(), payload_kg, cost_model.as_ref(), &fuel_policy)
         }
     };
     perf.warnings.extend(warnings);
