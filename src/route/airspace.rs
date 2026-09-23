@@ -434,20 +434,94 @@ pub struct FirCrossing {
     pub exit_nm: f64,
 }
 
-/// The idents of every FIR/UIR with a boundary point inside a box: not every FIR the route
-/// passes through (a large one can have no point in a tight box round a short route), but
-/// enough of a start that `crossings_of`'s sampling finds the rest by what actually
-/// contains each point.
-fn fir_idents_near(b: Bounds) -> Vec<String> {
-    let Some((conn, table)) = crate::sources::navdata::open_table("fir_uir") else { return Vec::new() };
-    let sql = if b.west <= b.east {
-        format!("select distinct fir_uir_identifier from \"{table}\" where fir_uir_latitude between ?1 and ?2 and fir_uir_longitude between ?3 and ?4")
+/// The longitude span of a set of points, found the way it has to be for points scattered
+/// round a circle rather than a line: sort them, take the widest gap between neighbours —
+/// wrapping from the last back to the first — and the box is everything that is not that
+/// gap. `(west, east)`, in `Bounds`' own convention: `west > east` where the box crosses
+/// the date line. A set that really does reach most of the way round (a polar or equatorial
+/// region) still gets a wide box, because the widest gap is still the true one; what this
+/// avoids is a region such as an oceanic control area whose points sit near +179 and -179
+/// both, which read as a plain minimum and maximum would span the entire globe rather than
+/// the sliver either side of the date line they actually are.
+fn lon_span(mut lons: Vec<f64>) -> (f64, f64) {
+    lons.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    lons.dedup();
+    let (Some(&first), Some(&last)) = (lons.first(), lons.last()) else { return (0.0, 0.0) };
+    let mut west = first;
+    let mut east = last;
+    let mut widest = first + 360.0 - last;
+    for w in lons.windows(2) {
+        let gap = w[1] - w[0];
+        if gap > widest {
+            widest = gap;
+            west = w[1];
+            east = w[0];
+        }
+    }
+    (west, east)
+}
+
+/// A longitude range as one interval, or two either side of the date line where it wraps.
+fn lon_intervals(west: f64, east: f64) -> [(f64, f64); 2] {
+    if west <= east {
+        [(west, east), (f64::NAN, f64::NAN)]
     } else {
-        format!("select distinct fir_uir_identifier from \"{table}\" where fir_uir_latitude between ?1 and ?2 and (fir_uir_longitude >= ?3 or fir_uir_longitude <= ?4)")
-    };
-    let Ok(mut statement) = conn.prepare(&sql) else { return Vec::new() };
-    let Ok(rows) = statement.query_map(rusqlite::params![b.south, b.north, b.west, b.east], |row| row.get::<_, String>(0)) else { return Vec::new() };
-    rows.flatten().collect()
+        [(west, 180.0), (-180.0, east)]
+    }
+}
+
+/// Whether two boxes share any ground, each allowed to wrap the date line.
+fn bounds_overlap(a: Bounds, b: Bounds) -> bool {
+    if a.north < b.south || b.north < a.south {
+        return false;
+    }
+    let (ai, bi) = (lon_intervals(a.west, a.east), lon_intervals(b.west, b.east));
+    ai.iter().any(|&(aw, ae)| !aw.is_nan() && bi.iter().any(|&(bw, be)| !bw.is_nan() && aw <= be && bw <= ae))
+}
+
+/// Every region's own box: the latitude range plain, the longitude range by `lon_span`
+/// since a region can wrap the date line even where a route asking about it does not.
+/// Computed once and kept — the table has tens of thousands of rows across a few hundred
+/// regions, and every route this crate plans asks the same question of it.
+fn region_bounds() -> &'static Vec<(String, Bounds)> {
+    static BOUNDS: OnceLock<Vec<(String, Bounds)>> = OnceLock::new();
+    BOUNDS.get_or_init(|| {
+        let Some((conn, table)) = crate::sources::navdata::open_table("fir_uir") else { return Vec::new() };
+        let sql = format!("select fir_uir_identifier, fir_uir_latitude, fir_uir_longitude from \"{table}\"");
+        let Ok(mut statement) = conn.prepare(&sql) else { return Vec::new() };
+        let Ok(rows) = statement.query_map([], |row| Ok((row.get::<_, Option<String>>(0)?.unwrap_or_default(), row.get::<_, Option<f64>>(1)?, row.get::<_, Option<f64>>(2)?))) else {
+            return Vec::new();
+        };
+        let mut by_ident: HashMap<String, (Vec<f64>, Vec<f64>)> = HashMap::new();
+        for (ident, lat, lon) in rows.flatten() {
+            let (Some(lat), Some(lon)) = (lat, lon) else { continue };
+            if ident.is_empty() {
+                continue;
+            }
+            let entry = by_ident.entry(ident).or_default();
+            entry.0.push(lat);
+            entry.1.push(lon);
+        }
+        by_ident
+            .into_iter()
+            .map(|(ident, (lats, lons))| {
+                let south = lats.iter().cloned().fold(f64::INFINITY, f64::min);
+                let north = lats.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let (west, east) = lon_span(lons);
+                (ident, Bounds { south, north, west, east })
+            })
+            .collect()
+    })
+}
+
+/// The idents of every FIR/UIR whose own box overlaps a box: not "has a boundary point
+/// inside it", which a large region round a short route can fail even while the route is
+/// deep inside it (Rome's FIR reaches to Sardinia and the Adriatic; a box hugging a direct
+/// London-Rome track can miss every one of its boundary points while still ending inside
+/// it), but whether the two boxes overlap at all, which a region that wholly contains the
+/// route's box still does.
+fn fir_idents_near(b: Bounds) -> Vec<String> {
+    region_bounds().iter().filter(|(_, rb)| bounds_overlap(b, *rb)).map(|(ident, _)| ident.clone()).collect()
 }
 
 fn route_bounds(pts: &[LatLon], margin_nm: f64) -> Bounds {
@@ -508,18 +582,38 @@ fn point_in_polygon(p: LatLon, polygon: &[LatLon]) -> bool {
     inside
 }
 
-fn region_at(p: LatLon, regions: &[crate::sources::navdata::Region]) -> Option<usize> {
-    regions.iter().position(|r| r.parts.iter().any(|part| point_in_polygon(p, part)))
+/// One region's boundary at a single layer: whichever of its FIR or its UIR is meant,
+/// under that layer's own name.
+struct Zone<'a> {
+    ident: &'a str,
+    name: &'a str,
+    parts: &'a [Vec<(f64, f64)>],
 }
 
-/// Where between two samples — one inside the region at `idx`, the other not — the route
+/// Every region reduced to the one layer that actually applies to a level: whichever of
+/// its FIR or its UIR holds it. Built once per call so a route sampled against the result
+/// can never straddle both bands of one region at once, the way sampling against
+/// `Region::parts` whole would, and so it is reported as "PARIS" below the split and
+/// "FRANCE" above it rather than as both, or as neither's proper name.
+fn zones_at(level_ft: f64, regions: &[crate::sources::navdata::Region]) -> Vec<Zone<'_>> {
+    regions
+        .iter()
+        .flat_map(|r| r.layers.iter().filter(move |l| l.floor_ft <= level_ft && level_ft <= l.ceiling_ft).map(move |l| Zone { ident: &r.ident, name: &l.name, parts: &l.parts }))
+        .collect()
+}
+
+fn region_at(p: LatLon, zones: &[Zone]) -> Option<usize> {
+    zones.iter().position(|z| z.parts.iter().any(|part| point_in_polygon(p, part)))
+}
+
+/// Where between two samples — one inside the zone at `idx`, the other not — the route
 /// actually leaves it, found by halving the gap until it is closer than a wingspan.
-fn bisect(a: (f64, LatLon), b: (f64, LatLon), regions: &[crate::sources::navdata::Region], idx: usize) -> (f64, LatLon) {
+fn bisect(a: (f64, LatLon), b: (f64, LatLon), zones: &[Zone], idx: usize) -> (f64, LatLon) {
     let (mut lo, mut hi) = (a, b);
     for _ in 0..24 {
         let mid_nm = (lo.0 + hi.0) / 2.0;
         let mid_pos = along(lo.1, hi.1, 0.5);
-        if region_at(mid_pos, regions) == Some(idx) {
+        if region_at(mid_pos, zones) == Some(idx) {
             lo = (mid_nm, mid_pos);
         } else {
             hi = (mid_nm, mid_pos);
@@ -528,26 +622,52 @@ fn bisect(a: (f64, LatLon), b: (f64, LatLon), regions: &[crate::sources::navdata
     hi
 }
 
-/// The regions a route's points pass through, in order, sampled every few miles with a
-/// point-in-polygon test and the crossing itself found by bisection.
-fn crossings_of(pts: &[LatLon], regions: &[crate::sources::navdata::Region]) -> Vec<FirCrossing> {
+/// Consecutive crossings of the same region collapse into one. Sampling a border that
+/// weaves can flicker in and out of a neighbour for a sample or two, and a region that is
+/// genuinely left and rejoined through a stretch this module could put in no region at all
+/// (a box drawn too tight, a gap in the data) still touches the output list twice running,
+/// with nothing between; either way it is one crossing, not several. A region truly left
+/// and re-entered later, with a different one flown in between, still prints twice — the
+/// two touches are not adjacent in the list, so they are not merged.
+fn merge_consecutive(crossings: Vec<FirCrossing>) -> Vec<FirCrossing> {
+    let mut out: Vec<FirCrossing> = Vec::new();
+    for c in crossings {
+        if let Some(last) = out.last_mut() {
+            if last.ident == c.ident {
+                last.exit_nm = c.exit_nm;
+                continue;
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The regions a route's points pass through at a level, in order, sampled every few miles
+/// with a point-in-polygon test, the crossing itself found by bisection, and any run of
+/// the same region merged into one.
+fn crossings_of(pts: &[LatLon], level_ft: f64, regions: &[crate::sources::navdata::Region]) -> Vec<FirCrossing> {
     if pts.len() < 2 || regions.is_empty() {
+        return Vec::new();
+    }
+    let zones = zones_at(level_ft, regions);
+    if zones.is_empty() {
         return Vec::new();
     }
     let samples = sample_route(pts, 4.0);
     let mut out = Vec::new();
-    let mut current = region_at(samples[0].1, regions);
+    let mut current = region_at(samples[0].1, &zones);
     let mut entry = samples[0];
 
     for w in samples.windows(2) {
         let (a, b) = (w[0], w[1]);
-        let next = region_at(b.1, regions);
+        let next = region_at(b.1, &zones);
         if next == current {
             continue;
         }
         if let Some(idx) = current {
-            let cross = bisect(a, b, regions, idx);
-            out.push(FirCrossing { ident: regions[idx].ident.clone(), name: regions[idx].name.clone(), entry: entry.1, entry_nm: entry.0, exit_nm: cross.0 });
+            let cross = bisect(a, b, &zones, idx);
+            out.push(FirCrossing { ident: zones[idx].ident.to_string(), name: zones[idx].name.to_string(), entry: entry.1, entry_nm: entry.0, exit_nm: cross.0 });
             entry = cross;
         } else {
             entry = b;
@@ -556,12 +676,19 @@ fn crossings_of(pts: &[LatLon], regions: &[crate::sources::navdata::Region]) -> 
     }
     if let Some(idx) = current {
         let last = *samples.last().unwrap();
-        out.push(FirCrossing { ident: regions[idx].ident.clone(), name: regions[idx].name.clone(), entry: entry.1, entry_nm: entry.0, exit_nm: last.0 });
+        out.push(FirCrossing { ident: zones[idx].ident.to_string(), name: zones[idx].name.to_string(), entry: entry.1, entry_nm: entry.0, exit_nm: last.0 });
     }
-    out
+    merge_consecutive(out)
 }
 
-/// The regions a route passes through, in order.
+/// The regions a route passes through, in order, once each: the region responsible for
+/// the airspace at the level the route is filed at, not the delegated portions ARINC also
+/// carries and not both the FIR and the UIR of a region a cruise level has already climbed
+/// past. `route.cruise_ft` stands for the level over the whole route; near either airport,
+/// where the flight is really still climbing or already down, that slightly overstates how
+/// high it is, but it is what `FiledRoute` carries and no worse a reading of "which layer"
+/// than treating the whole route as though it were at one level, which a report that lists
+/// regions rather than altitudes has to do somewhere.
 pub fn fir_crossings(route: &FiledRoute) -> Vec<FirCrossing> {
     let pts: Vec<LatLon> = route.points.iter().map(|w| w.pos).collect();
     if pts.len() < 2 {
@@ -571,7 +698,7 @@ pub fn fir_crossings(route: &FiledRoute) -> Vec<FirCrossing> {
     if idents.is_empty() {
         return Vec::new();
     }
-    crossings_of(&pts, &crate::sources::navdata::regions(&idents))
+    crossings_of(&pts, route.cruise_ft, &crate::sources::navdata::regions(&idents))
 }
 
 #[cfg(test)]
@@ -716,9 +843,37 @@ mod tests {
 
     // -- FIR crossings -----------------------------------------------------------------
 
+    /// A region with a single part and a single layer covering the whole sky: good enough
+    /// for any test that is not about the FIR/UIR split itself.
     fn region(ident: &str, box_: [(f64, f64); 4]) -> crate::sources::navdata::Region {
-        crate::sources::navdata::Region { ident: ident.to_string(), name: format!("{ident} FIR"), parts: vec![box_.to_vec()] }
+        region_parts(ident, &format!("{ident} FIR"), vec![box_.to_vec()])
     }
+
+    fn region_parts(ident: &str, name: &str, parts: Vec<Vec<(f64, f64)>>) -> crate::sources::navdata::Region {
+        crate::sources::navdata::Region {
+            ident: ident.to_string(),
+            name: name.to_string(),
+            parts: parts.clone(),
+            layers: vec![crate::sources::navdata::RegionLayer { name: name.to_string(), floor_ft: 0.0, ceiling_ft: 99_999.0, parts }],
+        }
+    }
+
+    /// A region with the FIR and UIR named and bounded apart, the way LFFF's really are:
+    /// "PARIS" below `split_ft`, "FRANCE" above it.
+    fn layered_region(ident: &str, box_: [(f64, f64); 4], fir_name: &str, split_ft: f64, uir_name: &str) -> crate::sources::navdata::Region {
+        let parts = vec![box_.to_vec()];
+        crate::sources::navdata::Region {
+            ident: ident.to_string(),
+            name: fir_name.to_string(),
+            parts: parts.clone(),
+            layers: vec![
+                crate::sources::navdata::RegionLayer { name: fir_name.to_string(), floor_ft: 0.0, ceiling_ft: split_ft, parts: parts.clone() },
+                crate::sources::navdata::RegionLayer { name: uir_name.to_string(), floor_ft: split_ft, ceiling_ft: 99_999.0, parts },
+            ],
+        }
+    }
+
+    const CRUISE_FT: f64 = 35_000.0;
 
     #[test]
     fn a_straight_leg_through_two_regions_is_split_at_the_boundary() {
@@ -726,7 +881,7 @@ mod tests {
         let west = region("WEST", [(-5.0, -10.0), (5.0, -10.0), (5.0, 0.0), (-5.0, 0.0)]);
         let east = region("EAST", [(-5.0, 0.0), (5.0, 0.0), (5.0, 10.0), (-5.0, 10.0)]);
         let pts = vec![(0.0, -8.0), (0.0, 8.0)];
-        let crossings = crossings_of(&pts, &[west, east]);
+        let crossings = crossings_of(&pts, CRUISE_FT, &[west, east]);
         assert_eq!(crossings.len(), 2, "{crossings:#?}");
         assert_eq!(crossings[0].ident, "WEST");
         assert_eq!(crossings[1].ident, "EAST");
@@ -744,7 +899,56 @@ mod tests {
     fn a_leg_that_never_enters_a_region_crosses_nothing() {
         let far = region("FAR", [(40.0, 40.0), (41.0, 40.0), (41.0, 41.0), (40.0, 41.0)]);
         let pts = vec![(0.0, 0.0), (0.0, 10.0)];
-        assert!(crossings_of(&pts, &[far]).is_empty());
+        assert!(crossings_of(&pts, CRUISE_FT, &[far]).is_empty());
+    }
+
+    #[test]
+    fn consecutive_touches_of_one_region_across_a_gap_are_reported_once() {
+        // Two disjoint pieces of the same region, the way a region genuinely can be drawn
+        // (an archipelago, say), with a stretch between them that is in no known region at
+        // all — the sort of hole a tight box or missing data leaves. The route touches
+        // "A" twice with nothing else in between, so it is one crossing, not two.
+        let a = region_parts("A", "A FIR", vec![vec![(-5.0, -10.0), (5.0, -10.0), (5.0, -6.0), (-5.0, -6.0)], vec![(-5.0, 6.0), (5.0, 6.0), (5.0, 10.0), (-5.0, 10.0)]]);
+        let pts = vec![(0.0, -8.0), (0.0, 8.0)];
+        let crossings = crossings_of(&pts, CRUISE_FT, &[a]);
+        assert_eq!(crossings.len(), 1, "{crossings:#?}");
+        assert_eq!(crossings[0].ident, "A");
+        assert!((crossings[0].entry_nm - 0.0).abs() < 1.0);
+        let total = crate::dispatch::distance_nm((0.0, -8.0), (0.0, 8.0));
+        assert!((crossings[0].exit_nm - total).abs() < 1.0, "{} vs {}", crossings[0].exit_nm, total);
+    }
+
+    #[test]
+    fn a_region_left_and_later_rejoined_with_another_flown_between_prints_twice() {
+        // Unlike the gap above, here a different region is actually flown between the two
+        // touches of "A", so they are not adjacent in the crossing list and must not merge.
+        let a = region("A", [(-5.0, -10.0), (5.0, -10.0), (5.0, -6.0), (-5.0, -6.0)]);
+        let b = region("B", [(-5.0, -6.0), (5.0, -6.0), (5.0, 6.0), (-5.0, 6.0)]);
+        let pts = vec![(0.0, -8.0), (0.0, 0.0), (0.0, 8.0)];
+        // The straight leg from -8 to 8 would just cross A once then B; flying it via 0.0
+        // and back doesn't touch A twice by itself, so cross A, B, and A again explicitly.
+        let a2 = region("A", [(-5.0, 6.0), (5.0, 6.0), (5.0, 10.0), (-5.0, 10.0)]);
+        let crossings = crossings_of(&pts, CRUISE_FT, &[a, b, a2]);
+        let idents: Vec<&str> = crossings.iter().map(|c| c.ident.as_str()).collect();
+        assert_eq!(idents, vec!["A", "B", "A"], "{crossings:#?}");
+    }
+
+    #[test]
+    fn the_layer_that_holds_the_level_is_the_one_reported() {
+        // Paris below the split, France above it: the FIR and UIR of one region, named
+        // and bounded apart the way LFFF's really are in the ARINC table.
+        let paris = layered_region("LFFF", [(-2.0, -2.0), (-2.0, 2.0), (2.0, 2.0), (2.0, -2.0)], "PARIS", 19_500.0, "FRANCE");
+        let pts = vec![(0.0, -1.0), (0.0, 1.0)];
+
+        let low = crossings_of(&pts, 10_000.0, &[paris.clone()]);
+        assert_eq!(low.len(), 1, "{low:#?}");
+        assert_eq!(low[0].ident, "LFFF");
+        assert_eq!(low[0].name, "PARIS");
+
+        let high = crossings_of(&pts, 39_000.0, &[paris]);
+        assert_eq!(high.len(), 1, "{high:#?}");
+        assert_eq!(high[0].ident, "LFFF");
+        assert_eq!(high[0].name, "FRANCE");
     }
 
     /// Run by hand: the live FAA NOTAM API, which needs credentials and a network.
@@ -754,5 +958,81 @@ mod tests {
         let bounds = Bounds { south: 41.0, north: 42.0, west: -88.5, east: -87.0 };
         let hazards = notam_hazards(bounds, Utc::now(), Utc::now() + chrono::Duration::hours(6)).expect("live NOTAMs");
         println!("{} NOTAM hazards near KORD", hazards.len());
+    }
+
+    // -- Real navigation database, run by hand -----------------------------------------
+    //
+    // These need a navigation database installed (see `sources::navdata`) and check the
+    // fix against real ARINC 424 data rather than hand-built regions: no run of the same
+    // identifier back to back, no name that is really a delegation note, and a flight into
+    // the destination ends in that country's own region.
+
+    /// A direct great-circle route between two airports, at one level throughout: enough
+    /// for `fir_crossings`, which only reads the points and the filed cruise level.
+    fn direct_route(origin_icao: &str, origin_pos: LatLon, destination_icao: &str, destination_pos: LatLon, cruise_ft: f64) -> FiledRoute {
+        use crate::dispatch::{Airport, PointKind, Waypoint};
+        FiledRoute {
+            origin: Airport { icao: origin_icao.to_string(), name: String::new(), pos: origin_pos, elevation_ft: 0.0 },
+            destination: Airport { icao: destination_icao.to_string(), name: String::new(), pos: destination_pos, elevation_ft: 0.0 },
+            dep_runway: None,
+            sid: None,
+            sid_transition: None,
+            star: None,
+            star_transition: None,
+            arr_runway: None,
+            approach: None,
+            points: vec![Waypoint::new(origin_icao, origin_pos, "DCT", PointKind::Airport), Waypoint::new(destination_icao, destination_pos, "", PointKind::Airport)],
+            cruise_ft,
+            off_block: Utc::now(),
+        }
+    }
+
+    fn assert_sane(crossings: &[FirCrossing], destination_ident: &str) {
+        assert!(!crossings.is_empty(), "no FIR crossings at all");
+        for c in crossings {
+            assert!(!c.name.to_uppercase().contains("DELEGATED"), "a delegation note printed as a name: {c:?}");
+        }
+        for w in crossings.windows(2) {
+            assert_ne!(w[0].ident, w[1].ident, "consecutive crossings of {} were not merged: {crossings:#?}", w[0].ident);
+        }
+        assert_eq!(crossings.last().unwrap().ident, destination_ident, "the flight should end in the destination's own region: {crossings:#?}");
+    }
+
+    #[test]
+    #[ignore]
+    fn london_to_rome() {
+        let route = direct_route("EGLL", (51.4775, -0.4614), "LIRF", (41.8003, 12.2389), 39_000.0);
+        let crossings = fir_crossings(&route);
+        println!("{crossings:#?}");
+        assert_sane(&crossings, "LIRR");
+    }
+
+    #[test]
+    #[ignore]
+    fn london_to_new_york_crosses_shanwick_and_gander() {
+        let route = direct_route("EGLL", (51.4775, -0.4614), "KJFK", (40.6398, -73.7789), 35_000.0);
+        let crossings = fir_crossings(&route);
+        println!("{crossings:#?}");
+        assert_sane(&crossings, "KZNY");
+        assert!(crossings.iter().any(|c| c.ident == "EGGX"), "no Shanwick: {crossings:#?}");
+        assert!(crossings.iter().any(|c| c.ident.starts_with("CZQ")), "no Gander: {crossings:#?}");
+    }
+
+    #[test]
+    #[ignore]
+    fn mumbai_to_delhi() {
+        let route = direct_route("VABB", (19.0887, 72.8679), "VIDP", (28.5665, 77.1031), 37_000.0);
+        let crossings = fir_crossings(&route);
+        println!("{crossings:#?}");
+        assert_sane(&crossings, "VIDF");
+    }
+
+    #[test]
+    #[ignore]
+    fn new_york_to_boston() {
+        let route = direct_route("KJFK", (40.6398, -73.7789), "KBOS", (42.3643, -71.0052), 35_000.0);
+        let crossings = fir_crossings(&route);
+        println!("{crossings:#?}");
+        assert_sane(&crossings, "KZBW");
     }
 }
