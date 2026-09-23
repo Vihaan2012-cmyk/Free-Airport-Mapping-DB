@@ -2079,8 +2079,49 @@ fn fix_distance_nm(leg: &Leg, thr: (f64, f64)) -> Option<f64> {
 #[allow(clippy::too_many_arguments)]
 fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: f32, w: f32, h: f32, est: &Estimate, track_deg: f64) {
     box_outline(c, x, y, w, h, 1.2, INK);
+    // Everything the profile draws stays inside the profile.
+    c.save_state();
+    c.rect(x, y, w, h);
+    c.clip_nonzero();
+    c.end_path();
     let legs = final_legs(ch.procedure);
-    let alts: Vec<f64> = legs.iter().filter_map(|l| l.altitude_ft).collect();
+    // The way in to the approach: of the transitions that feed it, the most direct one
+    // that actually ends on the final. The others are entries from an airway and belong
+    // on the arrival chart, not here.
+    let joining: Vec<&Leg> = {
+        let final_names: Vec<&str> = legs.iter().map(|l| l.fix.as_str()).collect();
+        let thr_for_pick = ch.threshold.unwrap_or((ch.airport.lat, ch.airport.lon));
+        let reach = legs.iter().filter_map(|l| fix_distance_nm(l, thr_for_pick)).fold(9.0, f64::max) * 1.3;
+        // A leg is drawable when it carries an altitude and sits somewhere the band
+        // reaches. Navigation data occasionally puts a transition's first fix on the
+        // other side of the world, and one such leg should not decide the picture.
+        let usable = |tr: &&Transition| {
+            tr.legs
+                .iter()
+                .filter(|l| l.altitude_ft.is_some() && fix_distance_nm(l, thr_for_pick).map_or(false, |nm| nm <= reach))
+                .count()
+        };
+        feeder_transitions(ch.procedure)
+            .into_iter()
+            .filter(|tr| tr.legs.last().map_or(false, |l| final_names.contains(&l.fix.as_str())))
+            // Every leg of it has to be drawable, which throws out the transition whose
+            // first fix the data puts on another continent, and then the most direct one
+            // wins: that is the course reversal off the beacon, which is what a plate
+            // draws. The longer ones are entries from an airway.
+            .filter(|tr| usable(tr) >= 2 && usable(tr) == tr.legs.len())
+            .min_by_key(|tr| tr.legs.len())
+            .map(|tr| {
+                tr.legs
+                    .iter()
+                    .filter(|l| fix_distance_nm(l, thr_for_pick).map_or(false, |nm| nm <= reach))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    // Both paths decide how tall the band is. The arrival is usually the higher of the
+    // two — Madeira joins at four thousand against three on the final — and sizing the
+    // band to the final alone draws it off the top of the box.
+    let alts: Vec<f64> = legs.iter().chain(joining.iter()).filter_map(|l| l.altitude_ft).collect();
     // Room above the highest altitude flown for the figure written on it, and no more:
     // a band sized for twelve hundred feet of headroom whatever the approach does is
     // mostly empty paper on an approach that never goes above three thousand.
@@ -2211,6 +2252,43 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     }
     // And from the final approach fix, the glidepath to the threshold.
     path.push((at_nm(0.0), tch));
+
+    // The way in to the approach, drawn above the final it joins.
+    let arrival: Vec<(f64, f64, &Leg)> = joining
+        .iter()
+        .filter_map(|l| {
+            let nm = fix_distance_nm(l, thr)?;
+            let ft = l.altitude_ft?;
+            (ft > ch.tdze_ft).then_some((nm, ft, *l))
+        })
+        .collect();
+    if arrival.len() >= 2 {
+        c.save_state();
+        c.set_stroke_gray(0.25);
+        c.set_line_width(1.0);
+        for (i, (nm, ft, _)) in arrival.iter().enumerate() {
+            let p = (at_nm(*nm), at_ft(*ft));
+            if i == 0 {
+                c.move_to(p.0, p.1);
+            } else {
+                c.line_to(p.0, p.1);
+            }
+        }
+        c.stroke();
+        c.restore_state();
+        // Where it starts, which is the altitude it is joined at, and the name of the
+        // place it is joined at. A plate writes both.
+        if let Some((nm, ft, leg)) = arrival.first() {
+            let p = (at_nm(*nm), at_ft(*ft));
+            let s = format!("{ft:.0}'");
+            text_centred(c, bold, 8.0, p.0 - 16.0 * onward, p.1 + 2.0, &s, INK);
+            if !leg.fix.is_empty() {
+                text_centred(c, bold, 6.5, p.0 - 16.0 * onward, p.1 + 11.0, &leg.fix, 0.2);
+            }
+        }
+        // The altitude it levels at before joining is the final's own first altitude,
+        // which is already written there; a second copy of it lands on top of the first.
+    }
     // The beacon itself, where the approach passes over one. A chart stands a tapered
     // column on the ground under the path at that point, because passing the station is
     // the moment the instrument reverses and a crew looks for it on the picture.
@@ -2554,6 +2632,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     line(c, left - 30.0, my, right, my, 1.0, 0.0);
     c.restore_state();
     label(c, bold, 7.5, x + 4.0, my + 2.0, &format!("{:.0}", est.altitude_ft), 0.0);
+    c.restore_state();
 }
 
 
