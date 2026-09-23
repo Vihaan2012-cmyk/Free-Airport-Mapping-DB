@@ -365,6 +365,55 @@ impl Local {
     }
 }
 
+/// Where a heading flown from a point meets a circle about a beacon: how a DME arc is
+/// joined. The heading is magnetic and the variation small enough at the distances an arc
+/// is flown not to move the point off the line it is drawn with.
+fn intercept(centre: (f64, f64), from: (f64, f64), heading_deg: f64, radius_nm: f64) -> Option<(f64, f64)> {
+    let local = Local::at(centre);
+    let (px, py) = local.to_nm(from.0, from.1);
+    let (dx, dy) = (heading_deg.to_radians().sin(), heading_deg.to_radians().cos());
+    // |p + t d| = r, for the t ahead.
+    let b = px * dx + py * dy;
+    let cc = px * px + py * py - radius_nm * radius_nm;
+    let disc = b * b - cc;
+    if disc < 0.0 {
+        return None;
+    }
+    let t = -b + disc.sqrt();
+    (t > 0.0).then(|| local.to_ll(px + dx * t, py + dy * t))
+}
+
+/// A DME arc: from where the aircraft is, out (or in) to the arc on the line from the
+/// beacon, round it at its distance the way the leg turns, to the fix it ends at.
+fn dme_arc(centre: (f64, f64), from: (f64, f64), to: (f64, f64), radius_nm: f64, turn: Option<Turn>) -> Vec<(f64, f64)> {
+    let local = Local::at(centre);
+    let (fx, fy) = local.to_nm(from.0, from.1);
+    let (tx, ty) = local.to_nm(to.0, to.1);
+    // Bearings from the beacon, clockwise from north.
+    let a0 = fx.atan2(fy);
+    let a1 = tx.atan2(ty);
+    let clockwise = !matches!(turn, Some(Turn::Left));
+    let mut sweep = a1 - a0;
+    let tau = std::f64::consts::TAU;
+    if clockwise {
+        while sweep <= 0.0 {
+            sweep += tau;
+        }
+    } else {
+        while sweep >= 0.0 {
+            sweep -= tau;
+        }
+    }
+    let steps = ((sweep.abs().to_degrees() / 4.0).ceil() as usize).max(2);
+    let mut out = vec![from];
+    for i in 0..=steps {
+        let a = a0 + sweep * i as f64 / steps as f64;
+        out.push(local.to_ll(radius_nm * a.sin(), radius_nm * a.cos()));
+    }
+    out.push(to);
+    out
+}
+
 /// The points of an arc of radius `radius_nm` from `from` to `to`.
 ///
 /// A DME arc leg says only how far out it is flown; the centre is the navaid, and both
@@ -467,6 +516,18 @@ const TERRAIN_BANDS: [(f64, (f32, f32, f32)); 5] = [
     (f64::MAX, (0.76, 0.55, 0.36)),
 ];
 
+/// The bands for an airport at a given height. Near the sea they are the fixed ones; an
+/// airport in the mountains is tinted in thousand-foot steps from just above its own
+/// field, the way a chart of Kathmandu or La Paz is, because a band that starts at 656 ft
+/// paints every hill round a field at 4,400 ft the same brown.
+fn terrain_bands(field_ft: f64) -> Vec<(f64, (f32, f32, f32))> {
+    if field_ft < 1500.0 {
+        return TERRAIN_BANDS.to_vec();
+    }
+    let first = ((field_ft + 500.0) / 1000.0).ceil() * 1000.0;
+    TERRAIN_BANDS.iter().enumerate().map(|(i, (_, colour))| (if i + 1 == TERRAIN_BANDS.len() { f64::MAX } else { first + 1000.0 * i as f64 }, *colour)).collect()
+}
+
 
 /// Heights tinted in bands, as a terrain picture rather than contours: quick to read and
 /// honest about what the model can say.
@@ -480,12 +541,13 @@ fn draw_terrain(c: &mut dyn Canvas, patch: &Patch, v: &View, field_ft: f64) {
         .map(|(row, col)| patch.at(row, col))
         .filter(|h| h.is_finite())
         .fold(f64::NEG_INFINITY, |m, h| m.max(h as f64 / 0.3048));
-    let floor = (field_ft + 250.0).max(TERRAIN_BANDS[0].0);
-    for (i, (top, (r, g, b))) in TERRAIN_BANDS.iter().enumerate().rev() {
+    let bands = terrain_bands(field_ft);
+    let floor = (field_ft + 250.0).max(bands[0].0);
+    for (i, (top, (r, g, b))) in bands.iter().enumerate().rev() {
         // A band the ground never reaches into is not drawn. Its floor is the top of the
         // band under it; the highest band has no top of its own, and is drawn wherever
         // the ground rises above the one under it.
-        let bottom = if i == 0 { 0.0 } else { TERRAIN_BANDS[i - 1].0 };
+        let bottom = if i == 0 { 0.0 } else { bands[i - 1].0 };
         if *top <= floor || highest_ft <= bottom {
             continue;
         }
@@ -507,12 +569,13 @@ fn draw_terrain(c: &mut dyn Canvas, patch: &Patch, v: &View, field_ft: f64) {
 /// band on the page — which is where there is room for it and where it is least likely
 /// to be read as belonging to the band next door.
 fn label_terrain(c: &mut dyn Canvas, font: Name, patch: &Patch, v: &View, field_ft: f64, taken: &mut Taken) {
-    let floor = (field_ft + 250.0).max(TERRAIN_BANDS[0].0);
-    for (i, (top, _)) in TERRAIN_BANDS.iter().enumerate() {
-        if !top.is_finite() || *top <= floor {
+    let bands = terrain_bands(field_ft);
+    let floor = (field_ft + 250.0).max(bands[0].0);
+    for (i, (top, _)) in bands.iter().enumerate() {
+        if *top == f64::MAX || *top <= floor {
             continue;
         }
-        let low = if i == 0 { floor } else { TERRAIN_BANDS[i - 1].0.max(floor) };
+        let low = if i == 0 { floor } else { bands[i - 1].0.max(floor) };
         // The longest unbroken run of this band across any one row, which is the widest
         // the band gets on the page.
         let mut best: Option<(f32, f32, f32)> = None; // (length, x centre, y)
@@ -564,36 +627,54 @@ fn label_terrain(c: &mut dyn Canvas, font: Name, patch: &Patch, v: &View, field_
 /// wash — and only where it stands well above the field, because at an airport on a
 /// plain the highest thing within ten miles is a hill nobody needs warning of.
 fn draw_peak(c: &mut dyn Canvas, font: Name, patch: &Patch, v: &View, field_ft: f64, taken: &mut Taken) {
-    let mut best: Option<(f64, f64, f64)> = None; // (ft, lat, lon)
-    for row in 0..patch.height {
-        for col in 0..patch.width {
+    // Every summit on the map: a reading higher than all round it for a few readings each
+    // way, and well above the field.
+    const REACH: usize = 4;
+    let mut summits: Vec<(f64, f64, f64)> = Vec::new(); // (ft, lat, lon)
+    for row in REACH..patch.height.saturating_sub(REACH) {
+        for col in REACH..patch.width.saturating_sub(REACH) {
             let h = patch.at(row, col);
-            if !h.is_finite() {
+            if !h.is_finite() || (h as f64 / 0.3048) < field_ft + 1000.0 {
                 continue;
             }
-            let ft = h as f64 / 0.3048;
-            if best.map_or(true, |(b, _, _)| ft > b) {
-                let (lat, lon) = patch.position(row, col);
-                if v.inside(v.at(lat, lon), -10.0) {
-                    best = Some((ft, lat, lon));
-                }
+            let highest_round = (row - REACH..=row + REACH).all(|r| (col - REACH..=col + REACH).all(|k| (r == row && k == col) || !(patch.at(r, k) > h)));
+            if !highest_round {
+                continue;
+            }
+            let (lat, lon) = patch.position(row, col);
+            if v.inside(v.at(lat, lon), -10.0) {
+                summits.push((h as f64 / 0.3048, lat, lon));
             }
         }
     }
-    let Some((ft, lat, lon)) = best else { return };
-    if ft < field_ft + 1000.0 {
-        return;
+    // Highest first, one to a patch of paper, a dozen at most: the few a crew needs, and
+    // not a page of numbers.
+    summits.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let mut kept: Vec<(f64, f32, f32)> = Vec::new();
+    for (ft, lat, lon) in summits {
+        let (px, py) = v.at(lat, lon);
+        if kept.iter().any(|(_, x, y)| (x - px).hypot(y - py) < 48.0) {
+            continue;
+        }
+        kept.push((ft, px, py));
+        if kept.len() == 12 {
+            break;
+        }
     }
-    let (px, py) = v.at(lat, lon);
-    // The filled triangle a chart marks a summit with, and the height beside it.
-    c.set_fill_gray(INK);
-    c.move_to(px, py + 5.0);
-    c.line_to(px - 3.6, py - 1.6);
-    c.line_to(px + 3.6, py - 1.6);
-    c.close_path();
-    c.fill_nonzero();
-    let s = format!("{ft:.0}'");
-    taken.label(c, font, 6.5, px + 6.0, py - 1.0, &s, INK);
+    for (i, (ft, px, py)) in kept.into_iter().enumerate() {
+        c.set_fill_gray(INK);
+        if i == 0 {
+            // The highest gets the filled triangle a chart marks the top of the map with.
+            c.move_to(px, py + 5.0);
+            c.line_to(px - 3.6, py - 1.6);
+            c.line_to(px + 3.6, py - 1.6);
+            c.close_path();
+        } else {
+            circle(c, px, py, 1.6);
+        }
+        c.fill_nonzero();
+        taken.label(c, font, 6.5, px + 5.0, py - 1.0, &format!("{ft:.0}'"), INK);
+    }
 }
 
 /// Everything lower than a height, filled in one colour.
@@ -838,26 +919,49 @@ fn draw_track(c: &mut dyn Canvas, v: &View, legs: &[&Leg], start: Option<(f64, f
     if let Some((lat, lon)) = start {
         pts.push(v.at(lat, lon));
     }
+    // A heading flown with no fix at its end ("turn onto 090"), which the next leg joins
+    // from: an arc is intercepted along it.
+    let mut heading: Option<f64> = None;
+    // Stretches of the track that are arcs already, and must not be rounded again.
+    let mut arcs: Vec<(usize, usize)> = Vec::new();
     for leg in legs {
+        if leg.lat.is_none() && !matches!(leg.path.as_str(), "HM" | "HA" | "HF") {
+            if let Some(c) = leg.course_deg {
+                heading = Some(c);
+            }
+        }
         if let (Some(lat), Some(lon)) = (leg.lat, leg.lon) {
             // An arc leg is flown round its navaid at a fixed distance, not straight.
             match (leg.path.as_str(), leg.rho_nm, last_ll) {
                 ("AF", Some(radius), Some(from)) => {
-                    for p in arc_points(from, (lat, lon), radius, leg.turn).into_iter().skip(1) {
-                        pts.push(v.at(p.0, p.1));
+                    // Round the beacon it is measured from, at its distance, joined along
+                    // the heading flown out to it.
+                    let centre = crate::sources::msfs::navaids::find_near(&leg.navaid, (lat, lon)).map(|n| (n.lat, n.lon));
+                    let arc = match centre {
+                        Some(o) => {
+                            let join = heading.and_then(|h| intercept(o, from, h, radius)).unwrap_or(from);
+                            let mut a = vec![from];
+                            a.extend(dme_arc(o, join, (lat, lon), radius, leg.turn));
+                            a
+                        }
+                        None => arc_points(from, (lat, lon), radius, leg.turn),
+                    };
+                    let first = ll.len();
+                    for p in arc.into_iter().skip(1) {
+                        ll.push(p);
                     }
+                    arcs.push((first, ll.len()));
                 }
-                _ => pts.push(v.at(lat, lon)),
+                _ => ll.push((lat, lon)),
             }
+            heading = None;
             last_ll = Some((lat, lon));
-            ll.push((lat, lon));
         }
     }
-    // Where the track doubles back, the turn is drawn round rather than as a spike.
-    if ll.len() >= 3 {
-        let rounded = round_turns(ll);
-        pts = start.into_iter().map(|(lat, lon)| v.at(lat, lon)).chain(rounded.into_iter().map(|(lat, lon)| v.at(lat, lon))).collect();
-    }
+    // Where the track doubles back, the turn is drawn round rather than as a spike; the
+    // arcs are drawn as they are.
+    let rounded = if ll.len() >= 3 && arcs.is_empty() { round_turns(ll) } else { ll };
+    pts.extend(rounded.into_iter().map(|(lat, lon)| v.at(lat, lon)));
     if pts.len() < 2 {
         return pts;
     }
@@ -1298,17 +1402,18 @@ fn draw_msa_circle(c: &mut dyn Canvas, font: Name, bold: Name, cx: f32, cy: f32,
     c.stroke();
     if sectors.len() > 1 {
         for s in sectors {
-            // The bearing a sector begins at, drawn as an arrow out from the centre,
-            // because it is a bearing from the beacon rather than a line on the ground.
-            let start = (s.from_deg as f32).to_radians();
-            let (ex, ey) = (cx + start.sin() * r, cy + start.cos() * r);
-            line(c, cx, cy, ex, ey, 0.6, 0.4);
-            let back = (start + std::f32::consts::PI).to_radians().to_degrees();
-            let _ = back;
-            let (bx, by) = (ex - start.sin() * 4.0, ey - start.cos() * 4.0);
-            let (px, py) = (start.cos() * 1.8, -start.sin() * 1.8);
+            // A sector's bounds are bearings *to* the fix, the way a crew reads them off
+            // the instruments, so a boundary lies on the reciprocal, out from the centre;
+            // a chart draws it as an arrow coming in to the fix from the rim, with the
+            // bearing written where it starts.
+            let out = ((s.from_deg + 180.0) as f32).to_radians();
+            let (ex, ey) = (cx + out.sin() * r, cy + out.cos() * r);
+            line(c, ex, ey, cx, cy, 0.6, 0.4);
+            let (tip_x, tip_y) = (cx + out.sin() * 2.5, cy + out.cos() * 2.5);
+            let (bx, by) = (tip_x + out.sin() * 4.5, tip_y + out.cos() * 4.5);
+            let (px, py) = (out.cos() * 1.8, -out.sin() * 1.8);
             c.set_fill_gray(0.25);
-            c.move_to(ex, ey);
+            c.move_to(tip_x, tip_y);
             c.line_to(bx + px, by + py);
             c.line_to(bx - px, by - py);
             c.close_path();
@@ -1317,10 +1422,10 @@ fn draw_msa_circle(c: &mut dyn Canvas, font: Name, bold: Name, cx: f32, cy: f32,
             if sweep <= 0.0 {
                 sweep += 360.0;
             }
-            let middle = ((s.from_deg + sweep / 2.0) as f32).to_radians();
+            let middle = ((s.from_deg + sweep / 2.0 + 180.0) as f32).to_radians();
             let (lx, ly) = (cx + middle.sin() * r * 0.55, cy + middle.cos() * r * 0.55);
             text_centred(c, bold, 7.5, lx, ly - 2.5, &format!("{:.0}", s.altitude_ft), INK);
-            let (bx, by) = (cx + start.sin() * (r + 7.0), cy + start.cos() * (r + 7.0));
+            let (bx, by) = (cx + out.sin() * (r + 7.0), cy + out.cos() * (r + 7.0));
             text_centred(c, font, 5.0, bx, by - 2.0, &format!("{:03.0}", s.from_deg), 0.45);
         }
     } else if let Some(only) = sectors.first().map(|s| s.altitude_ft).or(msa_ft) {
@@ -1580,6 +1685,8 @@ fn draw_furniture(
     highest_ft: f64,
     // How far up the elevation key has to start, to clear whatever is under it.
     key_lift: f32,
+    // The field's height, which decides the bands the key shows.
+    field_ft: f64,
 ) {
     // Degrees and minutes along the edges, as a chart rules them.
     let step = (if v.span_nm() > 24.0 { 20.0 } else if v.span_nm() > 10.0 { 10.0 } else { 5.0 }) / 60.0;
@@ -1640,8 +1747,9 @@ fn draw_furniture(
     let swatch = 8.0;
     // Only the bands that are painted: at an airport by the sea nothing is, and a key
     // listing a colour that appears nowhere is worse than no key.
-    let bands = TERRAIN_BANDS.iter().take_while(|(top, _)| *top < highest_ft).count();
-    let bands = if highest_ft > TERRAIN_BANDS[0].0 { (bands + 1).min(TERRAIN_BANDS.len()) } else { 0 };
+    let table = terrain_bands(field_ft);
+    let bands = table.iter().take_while(|(top, _)| *top < highest_ft).count();
+    let bands = if highest_ft > table[0].0 { (bands + 1).min(table.len()) } else { 0 };
     let rows = bands + usize::from(has_water);
     if rows > 0 {
         let key_h = rows as f32 * swatch + 12.0;
@@ -1657,13 +1765,13 @@ fn draw_furniture(
             text(c, font, 5.5, kx + 16.0, ky + 1.0, "WATER", 0.35);
         }
         let ky = ky + if has_water { swatch } else { 0.0 };
-        for (i, (top, (r, g, b))) in TERRAIN_BANDS.iter().take(bands).enumerate() {
+        for (i, (top, (r, g, b))) in table.iter().take(bands).enumerate() {
             let row = ky + (bands - 1 - i) as f32 * swatch;
             c.set_fill_rgb(*r, *g, *b);
             c.rect(kx, row, 13.0, swatch - 1.5);
             c.fill_nonzero();
             box_outline(c, kx, row, 13.0, swatch - 1.5, 0.3, 0.6);
-            let label = if *top == f64::MAX || i + 1 == bands { format!("{:.0}+", if i == 0 { 0.0 } else { TERRAIN_BANDS[i - 1].0 }) } else { format!("{top:.0}") };
+            let label = if *top == f64::MAX || i + 1 == bands { format!("{:.0}+", if i == 0 { 0.0 } else { table[i - 1].0 }) } else { format!("{top:.0}") };
             text(c, font, 5.5, kx + 16.0, row + 1.0, &label, 0.35);
         }
     }
@@ -1705,6 +1813,16 @@ fn draw_plan(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     for l in &finals {
         if let (Some(a), Some(o)) = (l.lat, l.lon) {
             points.push((a, o));
+        }
+    }
+    // The ways in as well, where they start near enough to share the paper: the initial
+    // approach fix and its hold are where the approach begins, and a chart shows them.
+    let cos = ch.airport.lat.to_radians().cos().max(0.05);
+    for l in feeder_transitions(ch.procedure).iter().flat_map(|t| t.legs.iter()) {
+        if let (Some(a), Some(o)) = (l.lat, l.lon) {
+            if ((a - ch.airport.lat) * 60.0).hypot((o - ch.airport.lon) * 60.0 * cos) <= 25.0 {
+                points.push((a, o));
+            }
         }
     }
     let centre = ch.threshold.unwrap_or((ch.airport.lat, ch.airport.lon));
@@ -1981,7 +2099,8 @@ fn draw_plan(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     // The descent at whole miles, which a plate prints beside the plan, and the key to
     // the tints moved up to sit on top of it.
     let table_h = draw_recommended_altitudes(c, font, bold, ch, v.x + 6.0, v.y + 26.0);
-    draw_furniture(c, font, bold, &v, ch.variation_deg, Some(track_deg), has_water, est.highest_terrain_ft, if table_h > 0.0 { table_h + 4.0 } else { 0.0 });
+    let map_highest = ch.patch.heights.iter().filter(|h| h.is_finite()).fold(est.highest_terrain_ft, |m, h| m.max(*h as f64 / 0.3048));
+    draw_furniture(c, font, bold, &v, ch.variation_deg, Some(track_deg), has_water, map_highest, if table_h > 0.0 { table_h + 4.0 } else { 0.0 }, ch.field_elev_ft);
     box_outline(c, x, y, w, h, 1.2, INK);
     v
 }
@@ -2015,6 +2134,15 @@ fn missed_text(legs: &[&Leg]) -> String {
                 Some(s)
             }
             "CA" | "VA" | "FA" => leg.altitude_ft.map(|a| format!("climb to {a:.0}'")),
+            // A DME arc, the way a chart says it: which way, how far out, and to where.
+            "AF" => leg.rho_nm.map(|d| {
+                let way = match leg.turn {
+                    Some(Turn::Left) => "LEFT",
+                    _ => "RIGHT",
+                };
+                let to = leg.theta_deg.map(|r| format!(" to R-{r:03.0}")).unwrap_or_default();
+                format!("turn {way} onto {d:.0} DME arc {}{to}", if leg.navaid.is_empty() { String::new() } else { leg.navaid.clone() })
+            }),
             "HM" | "HA" | "HF" => {
                 // Where the hold is at the fix just reached, a chart says only "and
                 // hold"; it names the fix when the hold is somewhere else.
@@ -2247,6 +2375,39 @@ fn draw_profile(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: f32, 
     }
     // And from the final approach fix, the glidepath to the threshold.
     path.push((at_nm(0.0), tch));
+
+    // The lowest each segment may be flown at, as grey steps under the path: the altitude
+    // coded at the fix a segment ends at, from the fix before it. A plate draws these so a
+    // crew sees at a glance how much room there is under the descent; the last one, from
+    // the last step to the missed approach point, is the minimum itself.
+    if ch.glidepath_deg.is_none() && fixes.len() >= 2 {
+        let bar_grey = 0.80;
+        let mut steps: Vec<(f64, f64, f64, String)> = Vec::new(); // (from nm, to nm, ft, label)
+        for pair in fixes.windows(2) {
+            let ((from_nm, _, _), (to_nm, to_ft, _)) = (pair[0], pair[1]);
+            if from_nm - to_nm > 0.2 {
+                steps.push((from_nm, to_nm, to_ft, format!("{to_ft:.0}'")));
+            }
+        }
+        if let Some((last_nm, _, _)) = fixes.last() {
+            if *last_nm > 0.5 && est.altitude_ft > ch.tdze_ft {
+                steps.push((*last_nm, 0.3_f64.min(*last_nm), est.altitude_ft, "MDA".to_string()));
+            }
+        }
+        for (from_nm, to_nm, ft, label) in &steps {
+            let (x0, x1) = (at_nm(*from_nm), at_nm(*to_nm));
+            let (lo, hi) = (x0.min(x1), x0.max(x1));
+            let top = at_ft(*ft);
+            c.set_fill_gray(bar_grey);
+            c.rect(lo, ground_y, hi - lo, top - ground_y);
+            c.fill_nonzero();
+            line(c, x0, ground_y, x0, top, 0.5, 0.55);
+            line(c, lo, top, hi, top, 0.6, 0.55);
+            if hi - lo > text_width(font, 6.5, label) + 4.0 {
+                text_centred(c, font, 6.5, (lo + hi) / 2.0, top - 9.0, label, 0.25);
+            }
+        }
+    }
 
     // The way in to the approach, drawn above the final it joins.
     let arrival: Vec<(f64, f64, &Leg)> = joining
@@ -2966,6 +3127,18 @@ fn lights_out(visibility: &str) -> (String, String) {
     }
 }
 
+/// The standard visibility for a non-precision approach, metres, with the approach lights
+/// and with them out: the table in EU-OPS (Appendix 1 to 1.430, table 5) that a state's
+/// own figures start from, by the height of the minimum above the touchdown zone.
+fn standard_npa_visibility(mdh_ft: f64) -> (u32, u32) {
+    match mdh_ft {
+        h if h < 300.0 => (1200, 1800),
+        h if h < 450.0 => (1300, 2000),
+        h if h < 650.0 => (1500, 2100),
+        _ => (1800, 2400),
+    }
+}
+
 /// The minima, in the table a chart prints them in: the straight-in landing on the left,
 /// by aircraft category, and circling to land on the right.
 ///
@@ -3004,9 +3177,32 @@ fn draw_minima_table(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: 
         line(c, x + main_w, y, x + main_w, sub_y + sub_h, 0.6, 0.55);
     }
     let label = if est.approach.has_glidepath() { "DA(H)" } else { "MDA(H)" };
+    // The standard visibilities, on a non-precision approach no state's chart was read
+    // for: without them the rows under the minimum are empty, and a minimum with no
+    // visibility beside it is half of one.
+    let any_published = ch.published.map_or(false, |p| p.categories.iter().any(|c| !c.visibility.is_empty()));
+    let standard_vis = (!any_published && !est.approach.has_glidepath() && straight_w > 1.0).then(|| standard_npa_visibility(est.height_ft));
     if straight_w > 1.0 {
-        text_centred(c, bold, 8.0, x + main_w / 2.0, sub_y + sub_h - 9.0, &est.approach.label().to_uppercase(), INK);
+        // The missed approach climb, where it asks for more than the standard 2.5%: a
+        // plate prints it under the heading, because a crew that cannot make it cannot
+        // fly the approach.
+        let gradient = ch.missed_climb.as_ref().map(|(ft_nm, _)| ft_nm / 6076.0 * 100.0).filter(|pct| *pct > 2.55);
+        let title = match gradient {
+            Some(pct) => format!("{} - Missed apch climb gradient MIN {pct:.1}%", est.approach.label().to_uppercase()),
+            None => est.approach.label().to_uppercase(),
+        };
+        let mut size = 8.0;
+        while size > 5.5 && text_width(bold, size, &title) > main_w - 8.0 {
+            size -= 0.5;
+        }
+        text_centred(c, bold, size, x + main_w / 2.0, sub_y + sub_h - 9.0, &title, INK);
         text_centred(c, font, 7.5, x + main_w / 2.0, sub_y + sub_h - 19.0, &format!("{label} {:.0}'({:.0}')", est.altitude_ft, est.height_ft), INK);
+        if standard_vis.is_some() {
+            let half = (main_w - 16.0) / 2.0;
+            line(c, x + 16.0 + half, y, x + 16.0 + half, sub_y, 0.5, 0.65);
+            text_centred(c, font, 6.0, x + 16.0 + half / 2.0, sub_y + 2.5, "ALS", 0.3);
+            text_centred(c, font, 6.0, x + 16.0 + half * 1.5, sub_y + 2.5, "ALS out", 0.3);
+        }
     }
     if let Some((alt, hat)) = ch.published_loc {
         text_centred(c, bold, 8.0, x + main_w + (straight_w - main_w) / 2.0, sub_y + sub_h - 9.0, "LOC (GS out)", INK);
@@ -3049,6 +3245,11 @@ fn draw_minima_table(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: 
         // minimum the chart prints it once, so the same figure stands in every row.
         let column = published.and_then(|p| p.categories.get(i).or_else(|| p.categories.first()));
         let visibility = column.map(|c| c.visibility.clone()).unwrap_or_default();
+        if let (true, Some((als, out))) = (visibility.is_empty(), standard_vis) {
+            let half = (main_w - 16.0) / 2.0;
+            text_centred(c, font, 8.0, x + 16.0 + half / 2.0, middle, &format!("{als} m"), 0.1);
+            text_centred(c, font, 8.0, x + 16.0 + half * 1.5, middle, &format!("{out} m"), 0.1);
+        }
         if !visibility.is_empty() {
             let allowance = lights_out(&visibility);
             let third = main_w / 3.0;
@@ -3069,6 +3270,9 @@ fn draw_minima_table(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: 
         }
         text_centred(c, font, 6.5, circle_x + kts_w / 2.0, middle, KTS[i], 0.35);
         if let Some((_, ft)) = ch.circling.get(i) {
+            // A circle is never flown lower than the straight-in it breaks off from; where
+            // our worked-out straight-in came out higher, the circle is held to it.
+            let ft = &if published.is_none() && !ch.circling_only { ft.max(est.altitude_ft) } else { *ft };
             let height = ft - ch.field_elev_ft;
             let rest = w - straight_w - kts_w;
             // Where a state's own visibility was read it is printed; otherwise the
@@ -3444,7 +3648,14 @@ pub fn with_chart<R>(
     // The beacons near the airport, and the localiser serving the runway, which the plan
     // draws and the fixes are measured from.
     let navaids = crate::sources::navdata::beacons_near(setup.procedures.lat, setup.procedures.lon, 40.0);
-    let ils = crate::sources::navdata::ils(&setup.procedures.icao, &procedure.runway);
+    // The runway's localiser, on an approach flown on it. A VOR or an RNAV approach to a
+    // runway that also has an ILS is not flown on the localiser, and its fixes are not
+    // measured from its DME.
+    let on_localiser = !matches!(
+        procedure.approach_type,
+        Some(crate::sources::msfs::procedures::ApproachType::Vor | crate::sources::msfs::procedures::ApproachType::Ndb | crate::sources::msfs::procedures::ApproachType::Rnav | crate::sources::msfs::procedures::ApproachType::Gps)
+    );
+    let ils = on_localiser.then(|| crate::sources::navdata::ils(&setup.procedures.icao, &procedure.runway)).flatten();
     // What the runway itself publishes: the height the glidepath crosses it at.
     let runway_record = crate::sources::navdata::runway(&setup.procedures.icao, &procedure.runway);
     // The hold the missed approach ends in, and the one flown instead where the chart
@@ -3457,7 +3668,10 @@ pub fn with_chart<R>(
     let missed_fix = missed_hold_fix(procedure).unwrap_or_default();
     let mut seen: Vec<String> = Vec::new();
     let mut holds: Vec<crate::sources::navdata::Hold> = Vec::new();
-    for leg in procedure.transitions.iter().flat_map(|t| t.legs.iter()) {
+    // Only where a way in begins: that is where a published hold belongs to the approach.
+    // A beacon on the final carries holds of its own for the airways, which the approach
+    // chart has nothing to do with.
+    for leg in procedure.transitions.iter().filter(|t| t.part.is_empty()).filter_map(|t| t.legs.first()) {
         if leg.fix.is_empty() || leg.fix == missed_fix || seen.contains(&leg.fix) {
             continue;
         }
@@ -3477,7 +3691,12 @@ pub fn with_chart<R>(
     let localiser = crate::approach::published_localiser(&http, &cache, &setup, kind);
     // The published safe altitudes where a navigation database carries them, and ours
     // worked out from the terrain where it does not.
-    let published_msa = crate::sources::navdata::msa(&setup.procedures.icao, (setup.procedures.lat, setup.procedures.lon));
+    // The safe altitude about the beacon the approach is flown on, where one is published
+    // about it, as the chart prints that one; otherwise the airport's.
+    let own_beacon = setup.final_legs().iter().map(|l| l.navaid.clone()).find(|n| !n.is_empty());
+    let published_msa = own_beacon
+        .and_then(|b| crate::sources::navdata::msa_about(&setup.procedures.icao, &b))
+        .or_else(|| crate::sources::navdata::msa(&setup.procedures.icao, (setup.procedures.lat, setup.procedures.lon)));
     let msa_sectors: Vec<crate::minima::Sector> = match &published_msa {
         Some(m) => m.sectors.iter().map(|s| crate::minima::Sector { from_deg: s.from_deg, to_deg: s.to_deg, altitude_ft: s.altitude_ft }).collect(),
         None => setup.msa_sectors.clone(),

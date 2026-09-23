@@ -171,6 +171,7 @@ pub fn beacons_near(lat: f64, lon: f64, radius_nm: f64) -> Vec<Beacon> {
     let cos = lat.to_radians().cos().max(0.05);
     let mut out: Vec<(f64, Beacon)> = crate::sources::msfs::navaids::index()
         .iter()
+        .flat_map(|(ident, all)| all.iter().map(move |n| (ident, n)))
         .filter_map(|(ident, n)| {
             let nm = ((n.lat - lat) * 60.0).hypot((n.lon - lon) * 60.0 * cos);
             (nm <= radius_nm).then(|| {
@@ -210,6 +211,12 @@ pub fn ils(icao: &str, runway: &str) -> Option<Ils> {
 }
 
 /// The published minimum safe altitude around an airport, where one is published.
+/// The published safe altitude about a named beacon or fix at an airport, where there is
+/// one about it.
+pub fn msa_about(icao: &str, centre: &str) -> Option<Msa> {
+    database()?.msa_about(icao, centre)
+}
+
 pub fn msa(icao: &str, at: (f64, f64)) -> Option<Msa> {
     database()?.msa(icao, at)
 }
@@ -413,7 +420,15 @@ impl Database {
         rows.map(|r| r.flatten().collect()).unwrap_or_default()
     }
 
+    fn msa_about(&self, icao: &str, centre: &str) -> Option<Msa> {
+        self.msa_where(icao, (0.0, 0.0), Some(centre))
+    }
+
     fn msa(&self, icao: &str, at: (f64, f64)) -> Option<Msa> {
+        self.msa_where(icao, at, None)
+    }
+
+    fn msa_where(&self, icao: &str, at: (f64, f64), centre: Option<&str>) -> Option<Msa> {
         let connection = read_only(&self.path)?;
         let table = self.table("airport_msa")?;
         // An airport carries one of these for each way in — one per runway, one per
@@ -424,13 +439,14 @@ impl Database {
             "select msa_center, msa_center_latitude, msa_center_longitude, radius_limit, 
              sector_bearing_1, sector_altitude_1, sector_bearing_2, sector_altitude_2, 
              sector_bearing_3, sector_altitude_3, sector_bearing_4, sector_altitude_4, 
-             sector_bearing_5, sector_altitude_5 from \"{table}\" where airport_identifier = ?1 
+             sector_bearing_5, sector_altitude_5 from \"{table}\" where airport_identifier = ?1 {}
              order by (sector_bearing_5 is not null) + (sector_bearing_4 is not null) 
              + (sector_bearing_3 is not null) + (sector_bearing_2 is not null) desc, 
-             (msa_center like 'RW%') asc,              (msa_center_latitude - ?2) * (msa_center_latitude - ?2)              + (msa_center_longitude - ?3) * (msa_center_longitude - ?3) asc limit 1"
+             (msa_center like 'RW%') asc,              (msa_center_latitude - ?2) * (msa_center_latitude - ?2)              + (msa_center_longitude - ?3) * (msa_center_longitude - ?3) asc limit 1",
+            if centre.is_some() { "and trim(msa_center) = ?4" } else { "and ?4 is not null" }
         );
         connection
-            .query_row(&sql, rusqlite::params![icao.to_uppercase(), at.0, at.1], |row| {
+            .query_row(&sql, rusqlite::params![icao.to_uppercase(), at.0, at.1, centre.unwrap_or("").to_uppercase()], |row| {
                 let mut sectors = Vec::new();
                 for i in 0..5 {
                     let bearing: Option<f64> = row.get(4 + i * 2).ok();
