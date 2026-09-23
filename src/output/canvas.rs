@@ -201,6 +201,27 @@ impl Raster {
         Ok(self.pixmap.encode_png()?)
     }
 
+    /// The size of the picture, in pixels.
+    pub fn size(&self) -> (u32, u32) {
+        (self.pixmap.width(), self.pixmap.height())
+    }
+
+    /// Turn the page to its night side: light ink on a dark ground, the way a flight bag
+    /// shows a chart in a dark cockpit. Only the lightness turns over; each colour keeps
+    /// its hue, so the sea stays blue and the high ground stays brown. The white of the
+    /// paper comes down to a soft grey rather than to black.
+    pub fn to_night(&mut self) {
+        for px in self.pixmap.pixels_mut() {
+            // The page is painted on opaque white, so no pixel carries a part alpha and
+            // the premultiplied values are the colour itself.
+            let (r, g, b) = (px.red() as f32, px.green() as f32, px.blue() as f32);
+            let light = 0.299 * r + 0.587 * g + 0.114 * b;
+            let turned = 24.0 + (255.0 - light) * (206.0 / 255.0);
+            let shift = |c: f32| (c - light + turned).round().clamp(0.0, 255.0) as u8;
+            *px = tiny_skia::PremultipliedColorU8::from_rgba(shift(r), shift(g), shift(b), 255).unwrap_or(*px);
+        }
+    }
+
     /// Page point to pixel. The y axis is the whole of the difference.
     fn at(&self, x: f32, y: f32) -> (f32, f32) {
         (x * self.scale, (self.height_pt - y) * self.scale)

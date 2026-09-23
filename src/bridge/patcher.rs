@@ -11,9 +11,12 @@
 //!   gauge's `RequestNavigraphAccessToken` with an empty string unless a Navigraph
 //!   account with a subscription is signed in, so that handler is rewritten to always
 //!   answer with a placeholder token. The bridge ignores the bearer token, and the
-//!   gauge's requests still reach it through the hosts-file redirect.
+//!   gauge's requests still reach it through the hosts-file redirect;
+//! * the flight bags built on the Navigraph SDK (the A350 EFB, the PMDG 737 and 777
+//!   tablets), whose charts are pointed at the bridge by `patch_charts`.
 
 use anyhow::{Context, Result};
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -348,6 +351,186 @@ pub fn a220_map_installed(community: &Path) -> bool {
     })
 }
 
+// ---------------------------------------------------------------------------------
+// Charts on the flight bags. The iniBuilds A350 and the PMDG 737 and 777 tablets are
+// built on the Navigraph SDK, which makes every address it calls in three small
+// functions. Rewriting those to the bridge sends the tablet's sign-in and its charts
+// here, and nothing else anywhere: the hosts file is not touched and Navigraph Hub and
+// Simlink go on reaching Navigraph. Each rewrite keeps the text it replaced, so `off`
+// puts the file back to the byte.
+// ---------------------------------------------------------------------------------
+
+const CHARTS_MARK: &str = "/*amdb-charts:";
+
+/// The functions the SDK builds its addresses in, and the path on the bridge each is
+/// sent to.
+const CHARTS_ROOTS: [(&str, &str); 3] = [("getIdentityApiRoot", "/identity"), ("getChartsApiRoot", "/v2/charts"), ("getAirportApiRoot", "/v2/airport")];
+
+/// The flight bag scripts, by file name.
+fn is_efb_script(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with("ini-efb") || name == "pmdgtablet.js"
+}
+
+/// Where the body of `name = () => BODY` is in the text, the body ending at the first
+/// comma, semicolon or line end that is not inside brackets or a string. Found exactly
+/// once, or not at all.
+fn arrow_body(text: &str, name: &str) -> Option<(usize, usize)> {
+    let mut found = None;
+    let mut from = 0;
+    while let Some(at) = text[from..].find(name) {
+        let at = from + at;
+        from = at + name.len();
+        // A whole name, not the end of a longer one.
+        if text[..at].chars().next_back().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$') {
+            continue;
+        }
+        let after = text[from..].trim_start();
+        let Some(after) = after.strip_prefix('=') else { continue };
+        let after = after.trim_start();
+        let Some(after) = after.strip_prefix("()") else { continue };
+        let after = after.trim_start();
+        let Some(after) = after.strip_prefix("=>") else { continue };
+        let body_start = text.len() - after.trim_start().len();
+        let b = text.as_bytes();
+        let (mut i, mut depth) = (body_start, 0i32);
+        while i < b.len() {
+            match b[i] {
+                b'\'' | b'"' | b'`' => {
+                    let q = b[i];
+                    i += 1;
+                    while i < b.len() && b[i] != q {
+                        if b[i] == b'\\' {
+                            i += 1;
+                        }
+                        i += 1;
+                    }
+                }
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' if depth > 0 => depth -= 1,
+                b')' | b']' | b'}' | b',' | b';' | b'\n' | b'\r' if depth == 0 => break,
+                _ => {}
+            }
+            i += 1;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = Some((body_start, i));
+    }
+    found
+}
+
+/// Point a flight bag script's charts at the bridge. None when it is not one the SDK
+/// built, or is already pointed there.
+pub fn patch_charts_text(text: &str, port: u16) -> Option<String> {
+    if text.contains(CHARTS_MARK) {
+        return None;
+    }
+    let mut spans = Vec::new();
+    for (name, path) in CHARTS_ROOTS {
+        let (s, e) = arrow_body(text, name)?;
+        spans.push((s, e, path));
+    }
+    spans.sort_by_key(|s| s.0);
+    let mut out = String::with_capacity(text.len() + 600);
+    let mut at = 0;
+    for (s, e, path) in spans {
+        let was = base64::engine::general_purpose::STANDARD.encode(&text[s..e]);
+        out.push_str(&text[at..s]);
+        out.push_str(&format!("{CHARTS_MARK}{was}*/'http://127.0.0.1:{port}{path}'"));
+        at = e;
+    }
+    out.push_str(&text[at..]);
+    Some(out)
+}
+
+/// Put a flight bag script's own addresses back. None when it was not pointed here.
+pub fn unpatch_charts_text(text: &str) -> Option<String> {
+    if !text.contains(CHARTS_MARK) {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(CHARTS_MARK) {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + CHARTS_MARK.len()..];
+        let end = after.find("*/")?;
+        let was = base64::engine::general_purpose::STANDARD.decode(&after[..end]).ok()?;
+        out.push_str(std::str::from_utf8(&was).ok()?);
+        // Past the address that stood in for it: one quoted string.
+        let tail = &after[end + 2..];
+        let quoted = tail.strip_prefix('\'')?;
+        let close = quoted.find('\'')?;
+        rest = &quoted[close + 1..];
+    }
+    out.push_str(rest);
+    Some(out)
+}
+
+/// Flight bag scripts in a Community folder: (package, file, pointed at the bridge).
+pub fn scan_charts(community: &Path) -> Vec<(String, PathBuf, bool)> {
+    let mut out = Vec::new();
+    let Ok(rd) = fs::read_dir(community) else { return out };
+    for pkg in rd.flatten() {
+        let pdir = pkg.path();
+        if !pdir.is_dir() {
+            continue;
+        }
+        let mut js = Vec::new();
+        walk_js(&pdir.join("html_ui"), &mut js);
+        for f in js {
+            let name = f.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            if !is_efb_script(&name) {
+                continue;
+            }
+            let Ok(text) = fs::read_to_string(&f) else { continue };
+            if text.contains(CHARTS_MARK) || CHARTS_ROOTS.iter().all(|(n, _)| text.contains(n)) {
+                out.push((pkg.file_name().to_string_lossy().to_string(), f, text.contains(CHARTS_MARK)));
+            }
+        }
+    }
+    out
+}
+
+/// Point every flight bag in a Community folder at the bridge's charts. Returns the files
+/// changed.
+pub fn patch_charts(community: &Path, port: u16) -> Result<Vec<PathBuf>> {
+    let mut done = Vec::new();
+    for (pkg, path, patched) in scan_charts(community) {
+        if patched {
+            continue;
+        }
+        let text = fs::read_to_string(&path)?;
+        let Some(new_text) = patch_charts_text(&text, port) else {
+            log::warn!("{pkg}: {} is a version of the flight bag this bridge does not know", path.display());
+            continue;
+        };
+        fs::write(&path, new_text).with_context(|| format!("write {}", path.display()))?;
+        log::info!("{pkg}: charts now come from the bridge ({})", path.display());
+        done.push(path);
+    }
+    Ok(done)
+}
+
+/// Give every flight bag in a Community folder its own addresses back.
+pub fn unpatch_charts(community: &Path) -> Result<Vec<PathBuf>> {
+    let mut done = Vec::new();
+    for (pkg, path, patched) in scan_charts(community) {
+        if !patched {
+            continue;
+        }
+        let text = fs::read_to_string(&path)?;
+        let Some(old) = unpatch_charts_text(&text) else {
+            log::warn!("{pkg}: could not read back what {} was", path.display());
+            continue;
+        };
+        fs::write(&path, old).with_context(|| format!("write {}", path.display()))?;
+        done.push(path);
+    }
+    Ok(done)
+}
+
 /// Candidate Community folders for MSFS 2020 and 2024 (Store and Steam) on this machine.
 pub fn detect_community_dirs() -> Vec<PathBuf> {
     if !cfg!(windows) {
@@ -524,6 +707,9 @@ pub fn unpatch(community: &Path) -> Result<usize> {
         }
     }
     let _ = fs::remove_file(record_path(community));
+    // The flight bags keep what their charts patch replaced inside the file, not in a
+    // backup, so they are put back by reading it out.
+    n += unpatch_charts(community)?.len();
     Ok(n)
 }
 
@@ -667,6 +853,46 @@ mod tests {
         assert!(out.contains("instrument.css"));
         assert!(patch_a220_page_text(&out).is_none(), "idempotent");
         assert!(patch_a220_page_text("some other instrument page").is_none());
+    }
+
+    /// The three address functions as the A350's obfuscated bundle writes them, and as
+    /// the PMDG tablet does, each pointed at the bridge and put back to the byte.
+    #[test]
+    fn flight_bag_charts_point_here_and_come_back() {
+        let a350 = "IDENTITY_REVOCATION_ENDPOINT=_0x33dd97(0x1a89),getIdentityApiRoot=()=>_0x33dd97(0x36c)+getDefaultAppDomain(),getIdentityDeviceAuthEndpoint=()=>getIdentityApiRoot()+IDENTITY_DEVICE_AUTH_ENDPOINT;var getChartsApiRoot=()=>_0x33dd97(0x1687)+getDefaultAppDomain()+_0x33dd97(0x1354),getAirportApiRoot=()=>_0x33dd97(0x1687)+getDefaultAppDomain()+_0x33dd97(0x48a);function getAirportInfo(){}";
+        let pmdg = "var getIdentityApiRoot = () => `https://identity.api.${getDefaultAppDomain$1()}`;\nvar x = 1;\nvar getChartsApiRoot = () => `https://api.${getDefaultAppDomain$1()}/v2/charts`;\nvar getAirportApiRoot = () => `https://api.${getDefaultAppDomain$1()}/v2/airport`;\n";
+        for original in [a350, pmdg] {
+            let patched = patch_charts_text(original, 8770).unwrap();
+            assert!(patched.contains("'http://127.0.0.1:8770/identity'"));
+            assert!(patched.contains("'http://127.0.0.1:8770/v2/charts'"));
+            assert!(patched.contains("'http://127.0.0.1:8770/v2/airport'"));
+            // The calls that use the roots are left alone.
+            assert!(patched.contains("getIdentityApiRoot()+IDENTITY_DEVICE_AUTH_ENDPOINT") || original == pmdg);
+            assert!(patch_charts_text(&patched, 8770).is_none(), "idempotent");
+            assert_eq!(unpatch_charts_text(&patched).unwrap(), original);
+        }
+        // Not a flight bag, or one missing a root: left alone.
+        assert!(patch_charts_text("var getChartsApiRoot = () => 'x';", 8770).is_none());
+        assert!(unpatch_charts_text(a350).is_none());
+    }
+
+    /// The installed flight bags on this machine, patched and put back in memory without
+    /// writing anything. Run by hand: `cargo test -- --ignored installed_flight_bags`.
+    #[test]
+    #[ignore]
+    fn installed_flight_bags() {
+        let mut seen = 0;
+        for d in detect_community_dirs() {
+            for (pkg, path, patched) in scan_charts(&d) {
+                let text = fs::read_to_string(&path).unwrap();
+                let original = if patched { unpatch_charts_text(&text).unwrap() } else { text };
+                let out = patch_charts_text(&original, 8770).unwrap_or_else(|| panic!("{pkg}: {} not recognised", path.display()));
+                assert_eq!(unpatch_charts_text(&out).unwrap(), original, "{pkg} round trip");
+                println!("{pkg}: {} ok ({} bytes)", path.display(), out.len());
+                seen += 1;
+            }
+        }
+        assert!(seen > 0, "no flight bags found");
     }
 
     #[test]

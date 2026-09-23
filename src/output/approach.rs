@@ -3172,7 +3172,7 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
 
     let (f, b) = (Name(b"F"), Name(b"B"));
     let mut c = Content::new();
-    draw(&mut c, ch, est, track, f, b);
+    let _ = draw(&mut c, ch, est, track, f, b);
     pdf.stream(content_id, &c.finish());
     std::fs::write(out, pdf.finish()).with_context(|| format!("write {}", out.display()))?;
     Ok(())
@@ -3185,20 +3185,83 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
 /// up. Nothing of the drawing differs — it is the same code, sent somewhere else.
 pub fn write_png(ch: &Chart, est: &Estimate, out: &FsPath, scale: f32) -> Result<()> {
     let mut r = Raster::new(W, H, scale)?;
-    draw(&mut r, ch, est, ch.track_deg, Name(b"F"), Name(b"B"));
+    let _ = draw(&mut r, ch, est, ch.track_deg, Name(b"F"), Name(b"B"));
     r.write_png(out.as_ref())
 }
 
 /// The same again, as the bytes of a picture, for serving one over the network.
 pub fn png_bytes(ch: &Chart, est: &Estimate, scale: f32) -> Result<Vec<u8>> {
+    Ok(picture(ch, est, scale)?.day)
+}
+
+/// A chart as a picture, by day and by night, with what an electronic flight bag needs
+/// to put the aircraft on it.
+pub struct Picture {
+    pub day: Vec<u8>,
+    pub night: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub plan: Georef,
+}
+
+/// Where the plan view sits in the picture and what ground it covers. The corners are
+/// given the way a flight bag reads them: the pixels measured from the top left of the
+/// picture, bottom-left corner first, and the latitudes and longitudes of the same two
+/// corners. The plan is drawn to a scale that is even in latitude and in longitude, so
+/// two corners are the whole of it.
+pub struct Georef {
+    /// (x1, y1, x2, y2): bottom-left, then top-right.
+    pub pixels: (f64, f64, f64, f64),
+    /// (lng1, lat1, lng2, lat2): south-west, then north-east.
+    pub latlng: (f64, f64, f64, f64),
+}
+
+/// The chart as a picture. It is drawn once and turned to its night side after, since the
+/// drawing is the slow part.
+pub fn picture(ch: &Chart, est: &Estimate, scale: f32) -> Result<Picture> {
     let mut r = Raster::new(W, H, scale)?;
-    draw(&mut r, ch, est, ch.track_deg, Name(b"F"), Name(b"B"));
+    let v = draw(&mut r, ch, est, ch.track_deg, Name(b"F"), Name(b"B"));
+    let day = r.png_bytes()?;
+    r.to_night();
+    let night = r.png_bytes()?;
+    let (width, height) = r.size();
+    // The page is measured up from its foot and the picture down from its head.
+    let s = scale as f64;
+    let plan = Georef {
+        pixels: (v.x as f64 * s, (H - v.y) as f64 * s, (v.x + v.w) as f64 * s, (H - v.y - v.h) as f64 * s),
+        latlng: (v.west, v.north - v.deg_h, v.west + v.deg_w, v.north),
+    };
+    Ok(Picture { day, night, width, height, plan })
+}
+
+/// The size in pixels a chart comes out at for a scale, without drawing it.
+pub fn picture_size(scale: f32) -> (u32, u32) {
+    ((W * scale).ceil() as u32, (H * scale).ceil() as u32)
+}
+
+/// A small card naming a chart, for a list of them to show before any is drawn.
+pub fn thumbnail(title: &str, subtitle: &str, night: bool) -> Result<Vec<u8>> {
+    let (w, h) = (180.0, 254.0);
+    let mut r = Raster::new(w, h, 1.0)?;
+    let c: &mut dyn Canvas = &mut r;
+    box_outline(c, 4.0, 4.0, w - 8.0, h - 8.0, 1.0, RULE);
+    fill_box(c, 4.0, h - 40.0, w - 8.0, 36.0, 0.10);
+    let (f, b) = (Name(b"F"), Name(b"B"));
+    for (i, line) in wrap_to_width(title, b, 12.0, w - 24.0).iter().take(4).enumerate() {
+        text_centred(c, b, 12.0, w / 2.0, h - 90.0 - i as f32 * 15.0, line, INK);
+    }
+    text_centred(c, f, 9.0, w / 2.0, 40.0, subtitle, 0.4);
+    text_centred(c, b, 10.0, w / 2.0, h - 26.0, "AMDB V1", 1.0);
+    if night {
+        r.to_night();
+    }
     r.png_bytes()
 }
 
-/// Everything the chart has on it, drawn onto whatever it is being drawn on.
+/// Everything the chart has on it, drawn onto whatever it is being drawn on. Returns the
+/// window the plan view shows, which is how a picture of it is put on the map.
 #[allow(clippy::too_many_arguments)]
-fn draw(c: &mut dyn Canvas, ch: &Chart, est: &Estimate, track: f64, f: Name, b: Name) {
+fn draw(c: &mut dyn Canvas, ch: &Chart, est: &Estimate, track: f64, f: Name, b: Name) -> View {
 
     // Header: the name block on the left, the procedure on the right, the way a chart
     // puts its identity where the thumb falls.
@@ -3303,7 +3366,145 @@ fn draw(c: &mut dyn Canvas, ch: &Chart, est: &Estimate, track: f64, f: Name, b: 
         ),
         0.45,
     );
+    v
+}
 
+/// Gather everything an approach chart is drawn from and hand the chart to `f`.
+///
+/// `approach` picks the procedure the way `pick` does, `star` the arrival drawn feeding
+/// it, and `asked` the kind of minimum where it is not to be taken from the procedure.
+/// The chart borrows from what is gathered here, so it is lent rather than returned.
+pub fn with_chart<R>(
+    icao: &str,
+    approach: Option<&str>,
+    star: Option<&str>,
+    asked: Option<Approach>,
+    f: impl FnOnce(&Chart, &Estimate) -> Result<R>,
+) -> Result<R> {
+    let http = crate::sources::http::Http::new(300, 0);
+    let cache = crate::cache::Cache::for_index(false);
+    let mut idx = crate::sources::index::AirportIndex::default();
+    idx.load_ourairports_online(&http, &cache)?;
+    let setup = crate::approach::prepare(&http, &cache, &idx, icao, approach, crate::approach::Options::default())?;
+    let procedure = setup.procedure();
+    let star = match star {
+        Some(want) => match pick_star(&setup.procedures, want) {
+            Some(s) => Some(s),
+            None => return Err(anyhow::anyhow!("{icao} has no arrival called {want}; try --list")),
+        },
+        None => None,
+    };
+    // What sort of approach it is decides the floor and the area, unless told otherwise.
+    let kind = asked.or_else(|| procedure.approach_type.map(Approach::for_type)).unwrap_or(Approach::PrecisionCat1);
+    if asked.is_none() {
+        if let Some(what) = procedure.approach_type {
+            crate::term::info(&format!("{icao}: {} approach, minima as {}", what.label(), kind.label()));
+        }
+    }
+    let est = crate::approach::estimate(&setup, kind);
+    // Where the state publishes this approach's minimum, the chart prints that instead of
+    // ours.
+    let published = crate::approach::published(&http, &cache, &setup, kind);
+    if let Some(p) = &published {
+        crate::term::info(&format!("{icao}: {} published on \"{}\" as {:.0} ft", p.label, p.chart, p.altitude_ft));
+    }
+    let est = crate::approach::with_published(est, published.as_ref());
+    let worked_out: Vec<(char, f64)> = crate::approach::circling_table(&setup).into_iter().map(|(letter, ft, _)| (letter, ft)).collect();
+    let circling = crate::approach::circling_from(published.as_ref(), worked_out);
+
+    // The beacons near the airport, and the localiser serving the runway, which the plan
+    // draws and the fixes are measured from.
+    let navaids = crate::sources::navdata::beacons_near(setup.procedures.lat, setup.procedures.lon, 40.0);
+    let ils = crate::sources::navdata::ils(&setup.procedures.icao, &procedure.runway);
+    // What the runway itself publishes: the height the glidepath crosses it at.
+    let runway_record = crate::sources::navdata::runway(&setup.procedures.icao, &procedure.runway);
+    // The hold the missed approach ends in, and the one flown instead where the chart
+    // names an alternate. Both are entered from the airport's side, which is how the
+    // right one is picked out of the several a fix can carry.
+    let at = (setup.procedures.lat, setup.procedures.lon);
+    // The holds published at this approach's fixes. The procedure's legs do not carry
+    // them, so each fix is asked about by name; the one the missed approach ends in has
+    // its own box on the chart and is left out of the map.
+    let missed_fix = missed_hold_fix(procedure).unwrap_or_default();
+    let mut seen: Vec<String> = Vec::new();
+    let mut holds: Vec<crate::sources::navdata::Hold> = Vec::new();
+    for leg in procedure.transitions.iter().flat_map(|t| t.legs.iter()) {
+        if leg.fix.is_empty() || leg.fix == missed_fix || seen.contains(&leg.fix) {
+            continue;
+        }
+        seen.push(leg.fix.clone());
+        if let Some(h) = crate::sources::navdata::hold_at(&leg.fix) {
+            holds.push(h);
+        }
+    }
+    let missed_hold = missed_hold_fix(procedure).and_then(|fix| crate::sources::navdata::hold_towards(&fix, at));
+    let alternate_hold = published
+        .as_ref()
+        .and_then(|p| p.text.alternate_missed_fix.clone())
+        .and_then(|fix| crate::sources::navdata::hold_towards(&fix, at));
+    // The airway the published missed approach joins, which only its own words give.
+    let missed_airway = published.as_ref().and_then(|p| p.text.missed_approach.as_deref()).and_then(crate::approach::missed_airway);
+    // The localiser minimum for a glidepath failure, read off the same chart.
+    let localiser = crate::approach::published_localiser(&http, &cache, &setup, kind);
+    // The published safe altitudes where a navigation database carries them, and ours
+    // worked out from the terrain where it does not.
+    let published_msa = crate::sources::navdata::msa(&setup.procedures.icao, (setup.procedures.lat, setup.procedures.lon));
+    let msa_sectors: Vec<crate::minima::Sector> = match &published_msa {
+        Some(m) => m.sectors.iter().map(|s| crate::minima::Sector { from_deg: s.from_deg, to_deg: s.to_deg, altitude_ft: s.altitude_ft }).collect(),
+        None => setup.msa_sectors.clone(),
+    };
+    let msa_highest = published_msa.as_ref().map(|m| m.sectors.iter().map(|s| s.altitude_ft).fold(0.0, f64::max));
+    let msa_caption = match &published_msa {
+        Some(m) => format!("MSA {} {:.0} NM", m.centre_name, m.radius_nm),
+        None => "MSA 25 NM FROM ARP".to_string(),
+    };
+    let chart = Chart {
+        navaids: &navaids,
+        ils: ils.as_ref(),
+        msa_caption,
+        glidepath_deg: kind.has_glidepath().then(|| ils.as_ref().and_then(|i| i.glidepath_deg).unwrap_or(3.0)),
+        threshold_crossing_ft: runway_record.and_then(|r| r.threshold_crossing_ft),
+        alternate_hold: alternate_hold.as_ref(),
+        missed_hold: missed_hold.as_ref(),
+        holds: &holds,
+        published_loc_visibility: localiser.as_ref().map(|l| l.visibility.clone()),
+        published_loc: localiser.as_ref().map(|l| (l.altitude_ft, l.height_ft)),
+        published_loc_columns: localiser.as_ref().map(|l| l.categories.as_slice()).unwrap_or(&[]),
+        airport_iata: setup.airport_iata.as_deref(),
+        airport_place: setup.airport_place.as_deref(),
+        nearby_airports: &setup.nearby_airports,
+        dme_checkpoints: published.as_ref().map(|p| p.text.dme_checkpoints.as_slice()).unwrap_or(&[]),
+        approach_lights: published.as_ref().and_then(|p| p.text.approach_lights.as_deref()),
+        missed_airway: missed_airway.as_deref(),
+        published: published.as_ref(),
+        airport: &setup.procedures,
+        airport_name: setup.airport_name.as_deref(),
+        procedure,
+        star,
+        patch: &setup.patch,
+        wide: setup.wide.as_ref(),
+        obstacles: &setup.obstacles,
+        threshold: setup.threshold.map(|(lat, lon, _)| (lat, lon)),
+        tdze_ft: setup.tdze_ft,
+        tdze_surveyed: setup.tdze_surveyed,
+        field_elev_ft: setup.field_elev_ft,
+        msa_ft: msa_highest.or(setup.msa_ft),
+        msa_sectors: &msa_sectors,
+        track_deg: setup.track_deg(),
+        course_mag_deg: setup.course_mag_deg(),
+        variation_deg: setup.variation_deg(),
+        kind,
+        circling: &circling,
+        airport_dir: setup.airport_dir.as_deref(),
+        runway_ends: setup.runway_ends,
+        runway_size: setup.runway_detail.as_ref().and_then(|t| t.landing_m.zip(t.width_m)),
+        runway_lighting: setup.runway_detail.as_ref().map(|t| t.lighting.as_slice()).unwrap_or(&[]),
+        airac: crate::sources::msfs::airac_dates(),
+        missed_climb: crate::approach::missed_approach(&setup, &est).map(|m| (m.climb_ft_per_nm, m.what)),
+        coded_ft: crate::minima::coded_minimum(&setup.final_legs(), setup.tdze_ft),
+        circling_only: setup.is_circling_only(),
+    };
+    f(&chart, &est)
 }
 
 /// Every approach an airport has, in the order they are named on the chart.

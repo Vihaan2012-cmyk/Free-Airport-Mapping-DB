@@ -29,17 +29,86 @@ fn respond_json(req: Request, status: u16, body: String) {
     // CORS: panel browsers (Coherent GT) preflight any request carrying an Authorization
     // header, and neither the spec nor that engine treat "*" as covering it, so echo the
     // headers the client asked for, or a fixed list.
+    respond_bytes(req, status, "application/json; charset=utf-8", body.into_bytes());
+}
+
+/// Any answer, with the CORS headers every panel browser needs.
+fn respond_bytes(req: Request, status: u16, content_type: &str, body: Vec<u8>) {
     let asked = req.headers().iter().find(|h| h.field.equiv("Access-Control-Request-Headers")).map(|h| h.value.as_str().to_string()).filter(|s| !s.trim().is_empty());
     let allow_headers = asked.unwrap_or_else(|| "Authorization, Accept, Content-Type, X-Requested-With, Origin".to_string());
-    let mut resp = Response::from_string(body).with_status_code(status);
-    resp.add_header(header("Content-Type", "application/json; charset=utf-8"));
-    resp.add_header(header("Access-Control-Allow-Origin", "*"));
-    resp.add_header(header("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS"));
+    // A request sent with credentials, as the Navigraph SDK sends its sign-in when an app
+    // asks for map tiles, is refused a "*" origin: the page's own has to be named back.
+    let origin = req.headers().iter().find(|h| h.field.equiv("Origin")).map(|h| h.value.as_str().to_string()).filter(|s| !s.is_empty());
+    let mut resp = Response::from_data(body).with_status_code(status);
+    resp.add_header(header("Content-Type", content_type));
+    match &origin {
+        Some(o) => {
+            resp.add_header(header("Access-Control-Allow-Origin", o));
+            resp.add_header(header("Access-Control-Allow-Credentials", "true"));
+            resp.add_header(header("Vary", "Origin"));
+        }
+        None => resp.add_header(header("Access-Control-Allow-Origin", "*")),
+    }
+    resp.add_header(header("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS"));
     resp.add_header(header("Access-Control-Allow-Headers", &allow_headers));
     resp.add_header(header("Access-Control-Expose-Headers", "Content-Length, Content-Type"));
     resp.add_header(header("Access-Control-Max-Age", "86400"));
     resp.add_header(header("Cache-Control", "no-store"));
     let _ = req.respond(resp);
+}
+
+/// The flight bag charts: the sign-in, the chart list, the pictures and the airport.
+/// Returns the request back when the path is not one of these.
+fn handle_charts(store: &Store, req: Request, path: &str) -> Option<Request> {
+    let error = |req: Request, status: u16, e: anyhow::Error| {
+        crate::term::warn(&format!("Charts: {e:#}"));
+        respond_json(req, status, json!({ "error": format!("{e:#}") }).to_string());
+    };
+    if let Some(p) = path.find("/identity/") {
+        let what = path[p + "/identity/".len()..].trim_matches('/').to_string();
+        let port = req.headers().iter().find(|h| h.field.equiv("Host")).and_then(|h| h.value.as_str().rsplit_once(':').and_then(|(_, p)| p.parse().ok())).unwrap_or(super::DEFAULT_PORT);
+        match what.as_str() {
+            "connect/deviceauthorization" => {
+                crate::term::success("Flight bag signing in to charts (stand-in sign-in: nothing is sent to Navigraph)");
+                respond_json(req, 200, super::charts::device_json(port).to_string());
+            }
+            "connect/token" => respond_json(req, 200, super::charts::token_json().to_string()),
+            "connect/revocation" => respond_json(req, 200, "{}".to_string()),
+            _ => respond_json(req, 404, json!({ "error": "not found" }).to_string()),
+        }
+        return None;
+    }
+    if let Some(p) = path.find("/v2/airport/") {
+        let icao = path[p + "/v2/airport/".len()..].trim_matches('/').to_string();
+        match super::charts::airport_json(&icao, store) {
+            Ok(v) => respond_json(req, 200, v.to_string()),
+            Err(e) => error(req, 404, e),
+        }
+        return None;
+    }
+    let p = path.find("/v2/charts/")?;
+    let rest: Vec<String> = path[p + "/v2/charts/".len()..].trim_matches('/').split('/').map(str::to_string).collect();
+    let query = req.url().split_once('?').map(|(_, q)| q.to_string()).unwrap_or_default();
+    let night = parse_query(&query).get("theme").and_then(Value::as_str).is_some_and(|t| t.eq_ignore_ascii_case("night") || t.eq_ignore_ascii_case("dark"));
+    match rest.as_slice() {
+        [icao] => {
+            let host = req.headers().iter().find(|h| h.field.equiv("Host")).map(|h| h.value.as_str().to_string()).unwrap_or_else(|| format!("127.0.0.1:{}", super::DEFAULT_PORT));
+            match super::charts::index_json(icao, &format!("http://{host}")) {
+                Ok(v) => respond_json(req, 200, v.to_string()),
+                Err(e) => error(req, 404, e),
+            }
+        }
+        [icao, file] if file.ends_with(".thumb.png") => match super::charts::thumbnail(icao, file.trim_end_matches(".thumb.png"), night) {
+            Ok(png) => respond_bytes(req, 200, "image/png", png),
+            Err(e) => error(req, 404, e),
+        },
+        [icao, file] if file.ends_with(".png") => match super::charts::image(icao, file.trim_end_matches(".png"), night) {
+            Ok(png) => respond_bytes(req, 200, "image/png", png),
+            Err(e) => error(req, 500, e),
+        },
+        _ => respond_json(req, 404, json!({ "error": "not found" }).to_string()),
+    }
+    None
 }
 
 fn url_decode(s: &str) -> String {
@@ -287,6 +356,8 @@ fn handle(store: Arc<Store>, req: Request) {
         handle_xp(store, req, &rest, &params);
         return;
     }
+    let path = path.to_string();
+    let Some(req) = handle_charts(&store, req, &path) else { return };
     let Some(pos) = path.find("/v1/") else {
         crate::term::warn(&format!("Unrecognised request {} {}", req.method(), url.chars().take(600).collect::<String>()));
         respond_json(req, 404, json!({"error":"not found","hint":"expected /v1/..."}).to_string());

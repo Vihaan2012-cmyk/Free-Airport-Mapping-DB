@@ -1068,151 +1068,29 @@ fn approach_chart_cmd(icao: &str, approach: Option<&str>, star: Option<&str>, li
     if list {
         return list_procedures(&icao);
     }
-    let http = crate::sources::http::Http::new(300, 0);
-    let cache = crate::cache::Cache::for_index(false);
-    let mut idx = crate::sources::index::AirportIndex::default();
-    idx.load_ourairports_online(&http, &cache)?;
-    let setup = crate::approach::prepare(&http, &cache, &idx, &icao, approach, crate::approach::Options::default())?;
-    let procedure = setup.procedure();
-    let star = match star {
-        Some(want) => match crate::output::approach::pick_star(&setup.procedures, want) {
-            Some(s) => Some(s),
-            None => return Err(anyhow!("{icao} has no arrival called {want}; try --list")),
-        },
-        None => None,
-    };
-    // What sort of approach it is decides the floor and the area, unless told otherwise.
-    let kind = asked
-        .or_else(|| procedure.approach_type.map(crate::minima::Approach::for_type))
-        .unwrap_or(crate::minima::Approach::PrecisionCat1);
-    if asked.is_none() {
-        if let Some(what) = procedure.approach_type {
-            crate::term::info(&format!("{icao}: {} approach, minima as {}", what.label(), kind.label()));
+    let out = crate::output::approach::with_chart(&icao, approach, star, asked, |chart, est| {
+        let out = out.unwrap_or_else(|| PathBuf::from(format!("{icao}-RW{}-approach.pdf", chart.procedure.runway)));
+        // A page to print, or a picture to show. The drawing is the same either way.
+        let out = if png && out.extension().map_or(true, |e| e.eq_ignore_ascii_case("pdf")) { out.with_extension("png") } else { out };
+        if png {
+            crate::output::approach::write_png(chart, est, &out, scale.clamp(1.0, 8.0))?;
+        } else {
+            crate::output::approach::write(chart, est, &out)?;
         }
-    }
-    let est = crate::approach::estimate(&setup, kind);
-    // Where the state publishes this approach's minimum, the chart prints that instead of
-    // ours.
-    let published = crate::approach::published(&http, &cache, &setup, kind);
-    if let Some(p) = &published {
-        crate::term::info(&format!("{icao}: {} published on \"{}\" as {:.0} ft", p.label, p.chart, p.altitude_ft));
-    }
-    let est = crate::approach::with_published(est, published.as_ref());
-    let worked_out: Vec<(char, f64)> = crate::approach::circling_table(&setup).into_iter().map(|(letter, ft, _)| (letter, ft)).collect();
-    let circling = crate::approach::circling_from(published.as_ref(), worked_out);
-
-    let out = out.unwrap_or_else(|| PathBuf::from(format!("{icao}-RW{}-approach.pdf", procedure.runway)));
-    // The beacons near the airport, and the localiser serving the runway, which the plan
-    // draws and the fixes are measured from.
-    let navaids = crate::sources::navdata::beacons_near(setup.procedures.lat, setup.procedures.lon, 40.0);
-    let ils = crate::sources::navdata::ils(&setup.procedures.icao, &procedure.runway);
-    // The published safe altitudes where a navigation database carries them, and ours
-    // worked out from the terrain where it does not.
-    // What the runway itself publishes: the height the glidepath crosses it at.
-    let runway_record = crate::sources::navdata::runway(&setup.procedures.icao, &procedure.runway);
-    // The hold the missed approach ends in, and the one flown instead where the chart
-    // names an alternate. Both are entered from the airport's side, which is how the
-    // right one is picked out of the several a fix can carry.
-    let at = (setup.procedures.lat, setup.procedures.lon);
-    // The holds published at this approach's fixes. The procedure's legs do not carry
-    // them, so each fix is asked about by name; the one the missed approach ends in has
-    // its own box on the chart and is left out of the map.
-    let missed_fix = crate::output::approach::missed_hold_fix(procedure).unwrap_or_default();
-    let mut seen: Vec<String> = Vec::new();
-    let mut holds: Vec<crate::sources::navdata::Hold> = Vec::new();
-    for leg in procedure.transitions.iter().flat_map(|t| t.legs.iter()) {
-        if leg.fix.is_empty() || leg.fix == missed_fix || seen.contains(&leg.fix) {
-            continue;
-        }
-        seen.push(leg.fix.clone());
-        if let Some(h) = crate::sources::navdata::hold_at(&leg.fix) {
-            holds.push(h);
-        }
-    }
-    let missed_hold = crate::output::approach::missed_hold_fix(procedure).and_then(|fix| crate::sources::navdata::hold_towards(&fix, at));
-    let alternate_hold = published
-        .as_ref()
-        .and_then(|p| p.text.alternate_missed_fix.clone())
-        .and_then(|fix| crate::sources::navdata::hold_towards(&fix, at));
-    // The airway the published missed approach joins, which only its own words give.
-    let missed_airway = published.as_ref().and_then(|p| p.text.missed_approach.as_deref()).and_then(crate::approach::missed_airway);
-    // The localiser minimum for a glidepath failure, read off the same chart.
-    let localiser = crate::approach::published_localiser(&http, &cache, &setup, kind);
-    let published_msa = crate::sources::navdata::msa(&setup.procedures.icao, (setup.procedures.lat, setup.procedures.lon));
-    let msa_sectors: Vec<crate::minima::Sector> = match &published_msa {
-        Some(m) => m.sectors.iter().map(|s| crate::minima::Sector { from_deg: s.from_deg, to_deg: s.to_deg, altitude_ft: s.altitude_ft }).collect(),
-        None => setup.msa_sectors.clone(),
-    };
-    let msa_highest = published_msa.as_ref().map(|m| m.sectors.iter().map(|s| s.altitude_ft).fold(0.0, f64::max));
-    let msa_caption = match &published_msa {
-        Some(m) => format!("MSA {} {:.0} NM", m.centre_name, m.radius_nm),
-        None => "MSA 25 NM FROM ARP".to_string(),
-    };
-    let chart = crate::output::approach::Chart {
-        navaids: &navaids,
-        ils: ils.as_ref(),
-        msa_caption,
-        glidepath_deg: kind.has_glidepath().then(|| ils.as_ref().and_then(|i| i.glidepath_deg).unwrap_or(3.0)),
-        threshold_crossing_ft: runway_record.and_then(|r| r.threshold_crossing_ft),
-        alternate_hold: alternate_hold.as_ref(),
-        missed_hold: missed_hold.as_ref(),
-        holds: &holds,
-        published_loc_visibility: localiser.as_ref().map(|l| l.visibility.clone()),
-        published_loc: localiser.as_ref().map(|l| (l.altitude_ft, l.height_ft)),
-        published_loc_columns: localiser.as_ref().map(|l| l.categories.as_slice()).unwrap_or(&[]),
-        airport_iata: setup.airport_iata.as_deref(),
-        airport_place: setup.airport_place.as_deref(),
-        nearby_airports: &setup.nearby_airports,
-        dme_checkpoints: published.as_ref().map(|p| p.text.dme_checkpoints.as_slice()).unwrap_or(&[]),
-        approach_lights: published.as_ref().and_then(|p| p.text.approach_lights.as_deref()),
-        missed_airway: missed_airway.as_deref(),
-        published: published.as_ref(),
-        airport: &setup.procedures,
-        airport_name: setup.airport_name.as_deref(),
-        procedure,
-        star,
-        patch: &setup.patch,
-        wide: setup.wide.as_ref(),
-        obstacles: &setup.obstacles,
-        threshold: setup.threshold.map(|(lat, lon, _)| (lat, lon)),
-        tdze_ft: setup.tdze_ft,
-        tdze_surveyed: setup.tdze_surveyed,
-        field_elev_ft: setup.field_elev_ft,
-        msa_ft: msa_highest.or(setup.msa_ft),
-        msa_sectors: &msa_sectors,
-        track_deg: setup.track_deg(),
-        course_mag_deg: setup.course_mag_deg(),
-        variation_deg: setup.variation_deg(),
-        kind,
-        circling: &circling,
-        airport_dir: setup.airport_dir.as_deref(),
-        runway_ends: setup.runway_ends,
-        runway_size: setup.runway_detail.as_ref().and_then(|t| t.landing_m.zip(t.width_m)),
-        runway_lighting: setup.runway_detail.as_ref().map(|t| t.lighting.as_slice()).unwrap_or(&[]),
-        airac: crate::sources::msfs::airac_dates(),
-        missed_climb: crate::approach::missed_approach(&setup, &est).map(|m| (m.climb_ft_per_nm, m.what)),
-        coded_ft: crate::minima::coded_minimum(&setup.final_legs(), setup.tdze_ft),
-        circling_only: setup.is_circling_only(),
-    };
-    // A page to print, or a picture to show. The drawing is the same either way.
-    let out = if png && out.extension().map_or(true, |e| e.eq_ignore_ascii_case("pdf")) { out.with_extension("png") } else { out };
-    if png {
-        crate::output::approach::write_png(&chart, &est, &out, scale.clamp(1.0, 8.0))?;
-    } else {
-        crate::output::approach::write(&chart, &est, &out)?;
-    }
-    crate::term::success(&format!(
-        "{:.0} ft ({:.0} ft above touchdown), set by {}",
-        est.altitude_ft,
-        est.height_ft,
-        match est.limited_by {
-            crate::minima::LimitedBy::SystemMinimum => "the system minimum: the published chart should agree".to_string(),
-            crate::minima::LimitedBy::Terrain => format!("terrain reaching {:.0} ft", est.highest_terrain_ft),
-            crate::minima::LimitedBy::Obstacle => format!("{} at {:.0} ft", est.obstacle.as_deref().unwrap_or("an obstacle"), est.obstacle_top_ft.unwrap_or(0.0)),
-            crate::minima::LimitedBy::Coded => "the procedure's own coded minimum, not an estimate".to_string(),
-            crate::minima::LimitedBy::Published => format!("the published chart, {}", est.obstacle.as_deref().unwrap_or("read from the FAA")),
-        }
-    ));
+        crate::term::success(&format!(
+            "{:.0} ft ({:.0} ft above touchdown), set by {}",
+            est.altitude_ft,
+            est.height_ft,
+            match est.limited_by {
+                crate::minima::LimitedBy::SystemMinimum => "the system minimum: the published chart should agree".to_string(),
+                crate::minima::LimitedBy::Terrain => format!("terrain reaching {:.0} ft", est.highest_terrain_ft),
+                crate::minima::LimitedBy::Obstacle => format!("{} at {:.0} ft", est.obstacle.as_deref().unwrap_or("an obstacle"), est.obstacle_top_ft.unwrap_or(0.0)),
+                crate::minima::LimitedBy::Coded => "the procedure's own coded minimum, not an estimate".to_string(),
+                crate::minima::LimitedBy::Published => format!("the published chart, {}", est.obstacle.as_deref().unwrap_or("read from the FAA")),
+            }
+        ));
+        Ok(out)
+    })?;
     crate::term::file(Some(&icao), &out.display().to_string(), "approach chart");
     if open {
         let _ = std::process::Command::new("cmd").args(["/C", "start", "", &out.display().to_string()]).spawn();
