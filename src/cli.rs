@@ -129,6 +129,10 @@ enum Cmd {
         #[arg(long)]
         open: bool,
     },
+    /// Every aircraft in the simulators' Community folders that the bridge can patch, and
+    /// whether it is: moving maps that call the Navigraph map server, the A350's token
+    /// handler, the A220's instrument page and GM5 map, and the flight bags' charts.
+    PatchStatus,
     /// Approach charts on the flight bags built on the Navigraph SDK (iniBuilds A350, PMDG
     /// 737 and 777): `on` points them at the bridge, `off` gives them their own back,
     /// `status` says which each is. The same as the bridge's `charts`, without its need for
@@ -1070,6 +1074,43 @@ pub fn run() -> Result<()> {
         Cmd::MinimaAudit { truth, out, jobs } => crate::audit::run(&truth, out.as_deref(), jobs),
         Cmd::PublishedCheck { fixtures } => crate::audit::published_check(&fixtures),
         Cmd::ProcedureChart { icao, name, out, png, scale, open } => procedure_chart_cmd(&icao, name.as_deref(), out, png, scale, open),
+        Cmd::PatchStatus => {
+            use crate::bridge::patcher;
+            let mark = |done: bool| if done { "patched    " } else { "NOT patched" };
+            for d in patcher::detect_community_dirs() {
+                println!("\n{}", d.display());
+                let mut any = false;
+                for c in patcher::scan(&d) {
+                    any = true;
+                    println!("  {:<11}  {:<40} moving map calls the Navigraph map server directly ({} places): covered by the hosts redirect", "redirect", c.package, c.literal_hits + c.template_hits);
+                }
+                for (pkg, _) in patcher::scan_wasm(&d) {
+                    any = true;
+                    println!("  {:<11}  {:<40} moving map gauge (WASM): covered by the hosts redirect", "redirect", pkg);
+                }
+                for (pkg, _, done) in patcher::scan_a350(&d) {
+                    any = true;
+                    println!("  {}  {:<40} A350 EFB token handler (moving map without a subscription)", mark(done), pkg);
+                }
+                for (pkg, _, done) in patcher::scan_a220(&d) {
+                    any = true;
+                    println!("  {}  {:<40} GM5 A220 moving map", mark(done), pkg);
+                }
+                for (pkg, _, done) in patcher::scan_a220_page(&d) {
+                    any = true;
+                    let note = if patcher::a220_map_installed(&d) { "" } else { "  (our A220 map is not installed here)" };
+                    println!("  {}  {:<40} A220 instrument page loads our moving map{note}", mark(done), pkg);
+                }
+                for (pkg, f, done) in patcher::scan_charts(&d) {
+                    any = true;
+                    println!("  {}  {:<40} tablet charts ({})", mark(done), pkg, f.file_name().unwrap_or_default().to_string_lossy());
+                }
+                if !any {
+                    println!("  nothing the bridge knows how to patch");
+                }
+            }
+            Ok(())
+        }
         Cmd::TabletCharts { state } => {
             use crate::bridge::patcher;
             let state = state.to_ascii_lowercase();
