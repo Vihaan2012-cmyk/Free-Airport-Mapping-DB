@@ -687,10 +687,17 @@ pub fn plan(graph: &Graph, origin: (&str, LatLon), destination: (&str, LatLon), 
     Some(Plan { nm: legs.iter().map(|l| l.nm).sum(), minutes: legs.iter().map(|l| l.minutes).sum(), legs, expanded, filtered_out })
 }
 
-/// Plan a filed route: the procedures at each end, and the way between them over the
-/// airway network, obeying every rule and hazard in the request.
+/// Plan a filed route: the procedures at each end, and the cheapest way between them over
+/// the airway network, obeying every rule and hazard in the request.
 pub fn plan_route(graph: &Graph, req: &crate::dispatch::RouteRequest) -> anyhow::Result<crate::dispatch::FiledRoute> {
-    let _ = (graph, req);
+    plan_routes(graph, req, 1)?.into_iter().next().ok_or_else(|| anyhow::anyhow!("no route"))
+}
+
+/// The best few routes, cheapest first: the same search, kept honest by being made to
+/// find a route that differs from each one it has already found, so that a route a rule
+/// turns down is not the end of the matter.
+pub fn plan_routes(graph: &Graph, req: &crate::dispatch::RouteRequest, most: usize) -> anyhow::Result<Vec<crate::dispatch::FiledRoute>> {
+    let _ = (graph, req, most);
     anyhow::bail!("plan_route is not built yet")
 }
 
