@@ -103,6 +103,10 @@ pub struct Hold {
     pub leg_time_min: Option<f64>,
     pub leg_nm: Option<f64>,
     pub max_altitude_ft: Option<f64>,
+    /// The lowest the hold may be flown: the MHA a chart prints.
+    pub min_altitude_ft: Option<f64>,
+    /// The fastest it may be flown, knots.
+    pub speed_kt: Option<f64>,
 }
 
 /// What a runway record says about the runway itself.
@@ -477,47 +481,18 @@ impl Database {
     fn holds_at(&self, fix: &str) -> Vec<Hold> {
         let Some(connection) = read_only(&self.path) else { return Vec::new() };
         let Some(table) = self.table("holdings") else { return Vec::new() };
-        let sql = format!(
-            "select waypoint_identifier, waypoint_latitude, waypoint_longitude, inbound_holding_course, \
-             turn_direction, leg_time, leg_length, maximum_altitude from \"{table}\" where waypoint_identifier = ?1"
-        );
-        let Ok(mut statement) = connection.prepare(&sql) else { return Vec::new() };
-        let rows = statement.query_map([fix.to_uppercase()], |row| {
-            Ok(Hold {
-                fix: row.get::<_, String>(0).unwrap_or_default(),
-                lat: row.get::<_, f64>(1)?,
-                lon: row.get::<_, f64>(2)?,
-                inbound_deg: row.get::<_, f64>(3).unwrap_or_default(),
-                right_turns: !row.get::<_, String>(4).unwrap_or_default().eq_ignore_ascii_case("L"),
-                leg_time_min: row.get::<_, f64>(5).ok().filter(|v| *v > 0.0),
-                leg_nm: row.get::<_, f64>(6).ok().filter(|v| *v > 0.0),
-                max_altitude_ft: row.get::<_, f64>(7).ok().filter(|v| *v > 0.0),
-            })
-        });
-        rows.map(|r| r.flatten().collect()).unwrap_or_default()
+        // The minimum altitude and speed are in the databases that have them; the query
+        // falls back to without them for one that does not.
+        for extra in [true, false] {
+            let Ok(mut statement) = connection.prepare(&hold_sql(table, extra)) else { continue };
+            let rows = statement.query_map([fix.to_uppercase()], |row| hold_row(row, extra));
+            return rows.map(|r| r.flatten().collect()).unwrap_or_default();
+        }
+        Vec::new()
     }
 
     fn hold_at(&self, fix: &str) -> Option<Hold> {
-        let connection = read_only(&self.path)?;
-        let table = self.table("holdings")?;
-        let sql = format!(
-            "select waypoint_identifier, waypoint_latitude, waypoint_longitude, inbound_holding_course, 
-             turn_direction, leg_time, leg_length, maximum_altitude from \"{table}\" where waypoint_identifier = ?1 limit 1"
-        );
-        connection
-            .query_row(&sql, [fix.to_uppercase()], |row| {
-                Ok(Hold {
-                    fix: row.get::<_, String>(0).unwrap_or_default(),
-                    lat: row.get::<_, f64>(1)?,
-                    lon: row.get::<_, f64>(2)?,
-                    inbound_deg: row.get::<_, f64>(3).unwrap_or_default(),
-                    right_turns: !row.get::<_, String>(4).unwrap_or_default().eq_ignore_ascii_case("L"),
-                    leg_time_min: row.get::<_, f64>(5).ok().filter(|v| *v > 0.0),
-                    leg_nm: row.get::<_, f64>(6).ok().filter(|v| *v > 0.0),
-                    max_altitude_ft: row.get::<_, f64>(7).ok().filter(|v| *v > 0.0),
-                })
-            })
-            .ok()
+        self.holds_at(fix).into_iter().next()
     }
 }
 
@@ -762,6 +737,29 @@ impl Database {
         });
         rows.map(|r| r.flatten().collect()).unwrap_or_default()
     }
+}
+
+fn hold_sql(table: &str, extra: bool) -> String {
+    format!(
+        "select waypoint_identifier, waypoint_latitude, waypoint_longitude, inbound_holding_course, \
+         turn_direction, leg_time, leg_length, maximum_altitude{} from \"{table}\" where waypoint_identifier = ?1",
+        if extra { ", minimum_altitude, holding_speed" } else { "" }
+    )
+}
+
+fn hold_row(row: &rusqlite::Row, extra: bool) -> rusqlite::Result<Hold> {
+    Ok(Hold {
+        fix: row.get::<_, String>(0).unwrap_or_default(),
+        lat: row.get::<_, f64>(1)?,
+        lon: row.get::<_, f64>(2)?,
+        inbound_deg: row.get::<_, f64>(3).unwrap_or_default(),
+        right_turns: !row.get::<_, String>(4).unwrap_or_default().eq_ignore_ascii_case("L"),
+        leg_time_min: row.get::<_, f64>(5).ok().filter(|v| *v > 0.0),
+        leg_nm: row.get::<_, f64>(6).ok().filter(|v| *v > 0.0),
+        max_altitude_ft: row.get::<_, f64>(7).ok().filter(|v| *v > 0.0),
+        min_altitude_ft: if extra { row.get::<_, f64>(8).ok().filter(|v| *v > 0.0) } else { None },
+        speed_kt: if extra { row.get::<_, f64>(9).ok().filter(|v| *v > 0.0) } else { None },
+    })
 }
 
 /// True bearing from one point to another, degrees.
