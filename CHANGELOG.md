@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.7 (2026-09-23)
+
+The profile band.
+
+- **The descent the approach is designed around is drawn against the steps that fly it.**
+  A plate shows both: the solid line is what an aeroplane does, the dotted one is the
+  path it is meant to stay on the whole way down, and a step-down that dips below the
+  dotted line is the thing a crew is looking for. We drew only the steps.
+
+- **Sea is drawn as sea.** The elevation model reads sea level over water, and filled in
+  the same grey as a hill that is a flat strip under the aeroplane which looks like a
+  fault in the drawing. It is tinted as water, the way the plan view tints it, so a
+  reader watches the coast go by.
+
+- **The runway is at the end of the band**, as the heavy bar a plate draws, so the eye
+  knows which end is the ground being landed on.
+
+- **The band is sized for the approach.** It reserved twelve hundred feet of headroom
+  whatever the approach did, which on one that never climbs above three thousand is a
+  third of the band left empty. It now takes what the drawing uses.
+
+- The descent angle is written on the descent rather than under the minimum ruled across
+  it, where half of it was being struck through.
+
 ## 0.5.6 (2026-09-23)
 
 - **The visual glidepath is found again.** A PAPI is matched to the runway it serves by
