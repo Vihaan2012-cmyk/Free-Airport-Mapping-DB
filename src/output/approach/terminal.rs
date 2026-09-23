@@ -1,28 +1,34 @@
-//! Departure and arrival charts: a SID or a STAR on one page, laid out the way an
-//! airline's departure and arrival pages are.
+//! Departure and arrival charts, laid out the way an airline's departure and arrival
+//! pages are.
 //!
-//! Top to bottom: the airport and the kind of page; a strip of the frequency the
-//! procedure is flown on, the airport's elevation and the transition altitude; the
-//! procedure's name in a box, with its coded name and runways; the map; and along the
-//! foot the initial climb runway by runway and the routing of each transition.
+//! A page carries one procedure or a family of them: the arrivals a chart puts together
+//! because they are flown to the same fix under the same letter (LIDRO 1P and RAKUN 1P
+//! both to PILIM), or the departures that leave the same way. A page whose routes spread
+//! wider than they run tall is turned on its side, with the briefing panel in its top
+//! right corner as a landscape chart has it.
 //!
 //! The map is drawn from everything on this machine that says anything about the ground
-//! and the air over it: the terrain and the sea from the Copernicus elevation model, the
-//! grid minimum off-route altitudes and the controlled airspace from an aircraft's
-//! navigation database, the beacons from the same, and the procedure itself from the
-//! simulator. The track is the one flown rather than a line joined through the fixes: a
-//! climb on a heading goes out on that heading, and a turn goes the way the procedure
-//! says, round the long way if that is the way it says.
+//! and the air over it: the terrain and the sea from the Copernicus elevation model; the
+//! grid minimum off-route altitudes, the minimum safe altitude sectors, the published
+//! holds and the controlled airspace from an aircraft's navigation database; the beacons
+//! from the same; and the procedure itself from the simulator. The track is the one
+//! flown rather than a line joined through the fixes: a climb on a heading goes out on
+//! that heading, and a turn goes the way the procedure says, the long way round if that
+//! is the way it says.
 
 use super::*;
 use crate::sources::msfs::procedures::{AltitudeRule, Kind, Leg, Procedure};
-use crate::sources::navdata::{AirportInfo, Airspace, Beacon, Communication};
+use crate::sources::navdata::{AirportInfo, Airspace, Beacon, Communication, Hold, Msa};
 
-/// The blue altitudes and the magenta speeds are printed in, and the red of airspace.
+/// The blue altitudes and the magenta speeds are printed in, and the red of airspace and
+/// the safe-altitude sectors.
 const BLUE: (f32, f32, f32) = (0.10, 0.22, 0.80);
 const MAGENTA: (f32, f32, f32) = (0.66, 0.05, 0.38);
-const AIRSPACE: (f32, f32, f32) = (0.66, 0.16, 0.14);
+const RED: (f32, f32, f32) = (0.66, 0.16, 0.14);
 const INK_RGB: (f32, f32, f32) = (INK, INK, INK);
+/// The page, portrait and landscape.
+const PORTRAIT: (f32, f32) = (W, H);
+const LANDSCAPE: (f32, f32) = (H, W);
 
 /// Everything a departure or arrival chart is drawn from.
 pub struct Terminal<'a> {
@@ -31,9 +37,17 @@ pub struct Terminal<'a> {
     pub airport_iata: Option<String>,
     pub airport_place: Option<String>,
     pub field_elev_ft: f64,
+    /// The first of the procedures on the page, which names it.
     pub procedure: &'a Procedure,
+    /// Every procedure on the page.
+    pub procedures: Vec<&'a Procedure>,
+    /// The published holds at the fixes the procedures end at.
+    pub holds: Vec<Hold>,
+    pub msa: Option<Msa>,
+    /// Width and height of the page, points: A4 one way up or the other.
+    pub page: (f32, f32),
     pub navaids: Vec<Beacon>,
-    /// Each runway the procedure serves: its name and both ends, the named end first.
+    /// Each runway the procedures serve: its name and both ends, the named end first.
     pub runways: Vec<(String, (f64, f64), (f64, f64))>,
     /// Every runway at the airport, for drawing the airport itself.
     pub all_runways: Vec<((f64, f64), (f64, f64))>,
@@ -46,14 +60,35 @@ pub struct Terminal<'a> {
     pub nearby: Vec<(String, String, String, f64, f64)>,
 }
 
-/// A piece of the procedure as the page describes it: the runways or the transition it
-/// belongs to, and its legs. Runway transitions that are flown the same way are one
-/// route, headed with all of their runways, as a chart heads them.
+impl Terminal<'_> {
+    fn sid(&self) -> bool {
+        is_sid(self.procedure)
+    }
+    fn rnav(&self) -> bool {
+        self.procedures.iter().all(|p| is_rnav(p))
+    }
+    fn runways(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.procedures.iter().flat_map(|p| runways_of(p)).collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+    fn all_runways_served(&self) -> bool {
+        let served = self.runways().len();
+        served > 1 && served * 2 >= self.all_runways.len() * 2
+    }
+}
+
+/// A piece of the procedures as the page describes it: the runways or the transition it
+/// belongs to, the procedure it is part of, and its legs. Runway transitions that are
+/// flown the same way are one route, headed with all of their runways.
 struct Route<'a> {
     heading: String,
     /// The runways a runway route is for; the transition's name otherwise.
     names: Vec<String>,
     part: &'a str,
+    /// The procedure it belongs to, as a chart titles it: "LIDRO 1P".
+    of: String,
     legs: Vec<&'a Leg>,
 }
 
@@ -71,9 +106,10 @@ pub fn is_rnav(p: &Procedure) -> bool {
         && !legs.iter().any(|l| l.theta_deg.is_some() && matches!(l.path.as_str(), "CF" | "CR" | "VR" | "AF"))
 }
 
-/// The pieces in the order they are flown: out from the runway on a departure, in to
-/// it on an arrival.
-fn routes(p: &Procedure) -> Vec<Route<'_>> {
+/// One procedure's pieces in the order they are flown: out from the runway on a
+/// departure, in to it on an arrival.
+fn routes_of(p: &Procedure) -> Vec<Route<'_>> {
+    let of = title(p);
     let mut runway: Vec<Route> = Vec::new();
     let mut common: Vec<Route> = Vec::new();
     let mut enroute: Vec<Route> = Vec::new();
@@ -90,11 +126,11 @@ fn routes(p: &Procedure) -> Vec<Route<'_>> {
                 let name = t.name.trim_start_matches("RW").to_string();
                 match same {
                     Some(r) => r.names.push(name),
-                    None => runway.push(Route { heading: String::new(), names: vec![name], part: "runway", legs }),
+                    None => runway.push(Route { heading: String::new(), names: vec![name], part: "runway", of: of.clone(), legs }),
                 }
             }
-            "common" => common.push(Route { heading: String::new(), names: Vec::new(), part: "common", legs }),
-            _ => enroute.push(Route { heading: format!("{} TRANSITION", t.name), names: vec![t.name.clone()], part: "enroute", legs }),
+            "common" => common.push(Route { heading: String::new(), names: Vec::new(), part: "common", of: of.clone(), legs }),
+            _ => enroute.push(Route { heading: format!("{} TRANSITION", t.name), names: vec![t.name.clone()], part: "enroute", of: of.clone(), legs }),
         }
     }
     for r in &mut runway {
@@ -107,18 +143,22 @@ fn routes(p: &Procedure) -> Vec<Route<'_>> {
     }
 }
 
+/// Every procedure's pieces, one after another.
+fn routes<'a>(t: &Terminal<'a>) -> Vec<Route<'a>> {
+    t.procedures.iter().flat_map(|p| routes_of(p)).collect()
+}
+
 /// Runways the way a chart lists them: "31L/R" for a pair, "4L/R, 13L" for more.
 fn runway_list(names: &[String]) -> String {
     let mut out: Vec<String> = Vec::new();
-    let mut i = 0;
     let mut sorted: Vec<String> = names.to_vec();
     sorted.sort();
     sorted.dedup();
+    let mut i = 0;
     while i < sorted.len() {
-        let here = &sorted[i];
-        let number: String = here.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let number: String = sorted[i].chars().take_while(|c| c.is_ascii_digit()).collect();
         let number = number.trim_start_matches('0').to_string();
-        let mut sides: Vec<String> = vec![here.chars().skip_while(|c| c.is_ascii_digit()).collect()];
+        let mut sides: Vec<String> = vec![sorted[i].chars().skip_while(|c| c.is_ascii_digit()).collect()];
         let mut j = i + 1;
         while j < sorted.len() && sorted[j].chars().take_while(|c| c.is_ascii_digit()).collect::<String>().trim_start_matches('0') == number {
             sides.push(sorted[j].chars().skip_while(|c| c.is_ascii_digit()).collect());
@@ -166,6 +206,50 @@ pub fn runways_of(p: &Procedure) -> Vec<String> {
     out
 }
 
+/// The fix a procedure ends at (an arrival) or leaves the runway for (a departure), which
+/// is what the procedures a chart groups share.
+fn meeting_fix(p: &Procedure) -> String {
+    let named = |l: &&Leg| !l.fix.is_empty() && !l.fix.starts_with("RW");
+    if is_sid(p) {
+        p.transitions.iter().filter(|t| t.part == "runway").flat_map(|t| t.legs.iter()).find(named).map(|l| l.fix.clone()).unwrap_or_default()
+    } else {
+        p.transitions.iter().rev().flat_map(|t| t.legs.iter().rev()).find(named).map(|l| l.fix.clone()).unwrap_or_default()
+    }
+}
+
+/// The departures and arrivals of an airport, in the groups a chart puts on one page:
+/// the same kind, the same letter, and the same fix they meet at.
+pub fn groups(a: &AirportProcedures) -> Vec<Vec<&Procedure>> {
+    // (key, the bearing the group's first procedure comes from, its procedures)
+    let mut out: Vec<(String, Option<f64>, Vec<&Procedure>)> = Vec::new();
+    for p in a.procedures.iter().filter(|p| p.kind != Kind::Approach) {
+        let letter = p.name.chars().last().unwrap_or(' ');
+        let key = format!("{:?}|{letter}|{}|{}", p.kind, meeting_fix(p), runways_of(p).join(","));
+        let from = direction(p);
+        // The same key, and from the same quarter: arrivals from the north-east share a
+        // page, and one from the north goes on the next.
+        let close = |b: Option<f64>| match (b, from) {
+            (Some(x), Some(y)) => ((x - y + 540.0) % 360.0 - 180.0).abs() <= 20.0,
+            _ => true,
+        };
+        match out.iter_mut().find(|(k, b, list)| *k == key && close(*b) && list.len() < 4) {
+            Some((_, _, list)) => list.push(p),
+            None => out.push((key, from, vec![p])),
+        }
+    }
+    out.into_iter().map(|(_, _, list)| list).collect()
+}
+
+/// The bearing from the fix a procedure meets the others at to the far end of it: where
+/// an arrival comes from, or where a departure goes.
+fn direction(p: &Procedure) -> Option<f64> {
+    let meet = meeting_fix(p);
+    let legs: Vec<&Leg> = p.transitions.iter().flat_map(|t| t.legs.iter()).collect();
+    let at = legs.iter().find(|l| l.fix == meet).and_then(|l| l.lat.zip(l.lon))?;
+    let far = if is_sid(p) { legs.iter().rev().find_map(|l| l.lat.zip(l.lon)) } else { legs.iter().find_map(|l| l.lat.zip(l.lon)) }?;
+    (at != far).then(|| bearing_between(at, far))
+}
+
 /// An altitude the way a route description writes it.
 fn altitude_phrase(leg: &Leg) -> Option<String> {
     let a = leg.altitude_ft?;
@@ -180,6 +264,20 @@ fn altitude_phrase(leg: &Leg) -> Option<String> {
     })
 }
 
+/// An altitude the short way a routing table writes it: "4000+".
+fn altitude_short(leg: &Leg) -> Option<String> {
+    let a = leg.altitude_ft?;
+    Some(match leg.altitude_rule {
+        AltitudeRule::AtOrAbove => format!("{a:.0}+"),
+        AltitudeRule::AtOrBelow => format!("{a:.0}-"),
+        AltitudeRule::Between => match leg.altitude2_ft {
+            Some(b) => format!("{:.0}-{:.0}", a.min(b), a.max(b)),
+            None => format!("{a:.0}"),
+        },
+        _ => format!("{a:.0}"),
+    })
+}
+
 fn turn_word(leg: &Leg) -> &'static str {
     match leg.turn {
         Some(Turn::Left) => "LEFT turn ",
@@ -188,9 +286,7 @@ fn turn_word(leg: &Leg) -> &'static str {
     }
 }
 
-/// A route in words, read off its legs, the way a chart's initial climb box writes it:
-/// "Climb on heading 314° to 520, then LEFT turn direct to cross SKORR at or above 2500
-/// and at or below 210 KT, then on track 225° to RNGRR."
+/// A route in words, read off its legs, the way a chart's initial climb box writes it.
 fn route_text(legs: &[&Leg], departure: bool) -> String {
     let mut parts: Vec<String> = Vec::new();
     for (i, leg) in legs.iter().enumerate() {
@@ -256,6 +352,33 @@ fn route_text(legs: &[&Leg], departure: bool) -> String {
     format!("{s}.")
 }
 
+/// An arrival's routing the way a chart's routing table writes it: the fixes in order,
+/// with what is asked at each in brackets. "LIDRO - MA536 - MA534 (4000+) - PILIM (3000+)."
+fn routing_short(legs: &[&Leg]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for leg in legs {
+        if leg.fix.is_empty() || leg.fix.starts_with("RW") || matches!(leg.path.as_str(), "HM" | "HA" | "HF") {
+            if leg.path.ends_with('M') && !leg.path.starts_with('H') {
+                parts.push("expect RADAR vectors".into());
+            }
+            continue;
+        }
+        let mut limits: Vec<String> = Vec::new();
+        if let Some(a) = altitude_short(leg) {
+            limits.push(a);
+        }
+        if let Some(s) = leg.speed_kt {
+            limits.push(format!("MAX {s:.0} KT"));
+        }
+        let s = if limits.is_empty() { leg.fix.clone() } else { format!("{} ({})", leg.fix, limits.join(", ")) };
+        if parts.last().map(|p| p.split(' ').next() == Some(leg.fix.as_str())).unwrap_or(false) {
+            parts.pop();
+        }
+        parts.push(s);
+    }
+    format!("{}.", parts.join(" - "))
+}
+
 /// Course (magnetic) and distance between two points.
 fn course_and_nm(a: (f64, f64), b: (f64, f64), variation_deg: f64) -> (f64, f64) {
     let cos = ((a.0 + b.0) / 2.0).to_radians().cos().max(0.05);
@@ -275,7 +398,7 @@ struct Piece {
     /// A heading flown to an altitude: the heading and the altitude, for its label.
     heading: Option<(f64, Option<f64>)>,
     vectors: bool,
-    /// The leg flown to reach the end of it, for the course and distance label.
+    /// A straight leg to a fix, for the course and distance label.
     to_fix: bool,
 }
 
@@ -291,7 +414,6 @@ fn turn_to_fix(from: (f64, f64), track_true: f64, turn: Option<Turn>, fix: (f64,
     let (fx, fy) = local.to_nm(fix.0, fix.1);
     let bearing_to = |x: f64, y: f64| ((fx - x).atan2(fy - y).to_degrees() + 360.0) % 360.0;
     let diff = |a: f64, b: f64| ((b - a + 540.0) % 360.0) - 180.0;
-    // Which way round: as the procedure says, or the shorter way where it says nothing.
     let left = match turn {
         Some(Turn::Left) => true,
         Some(Turn::Right) => false,
@@ -301,16 +423,14 @@ fn turn_to_fix(from: (f64, f64), track_true: f64, turn: Option<Turn>, fix: (f64,
         return vec![from, fix];
     }
     let side = if left { -90.0 } else { 90.0 };
-    let (cx, cy) = {
-        let (ux, uy) = unit(track_true + side);
-        (ux * RADIUS_NM, uy * RADIUS_NM)
-    };
+    let (ux, uy) = unit(track_true + side);
+    let (cx, cy) = (ux * RADIUS_NM, uy * RADIUS_NM);
     let mut out = vec![from];
     let mut h = track_true;
     for _ in 0..72 {
         h = (h + if left { -5.0 } else { 5.0 } + 360.0) % 360.0;
-        let (ux, uy) = unit(h - side);
-        let (px, py) = (cx + ux * RADIUS_NM, cy + uy * RADIUS_NM);
+        let (vx, vy) = unit(h - side);
+        let (px, py) = (cx + vx * RADIUS_NM, cy + vy * RADIUS_NM);
         out.push(local.to_ll(px, py));
         if diff(h, bearing_to(px, py)).abs() < 6.0 {
             break;
@@ -318,6 +438,12 @@ fn turn_to_fix(from: (f64, f64), track_true: f64, turn: Option<Turn>, fix: (f64,
     }
     out.push(fix);
     out
+}
+
+fn bearing_between(a: (f64, f64), b: (f64, f64)) -> f64 {
+    let cos = a.0.to_radians().cos().max(0.05);
+    let (dn, de) = (b.0 - a.0, (b.1 - a.1) * cos);
+    (de.atan2(dn).to_degrees() + 360.0) % 360.0
 }
 
 /// The path a route is flown along, in pieces, from a starting point and track where it
@@ -340,8 +466,6 @@ fn flown(legs: &[&Leg], start: Option<((f64, f64), f64)>, variation_deg: f64, fi
             "VA" | "CA" | "FA" | "VI" | "CI" | "VM" | "FM" | "VD" | "CD" | "VR" | "CR" => {
                 let (Some(from), Some(course)) = (at, leg.course_deg) else { continue };
                 let heading = to_true(course);
-                // How far a climb to the altitude takes, at a gradient an airliner flies;
-                // an intercept or vectors are shown by a short line on the heading.
                 let nm = match (leg.path.as_str(), leg.altitude_ft) {
                     ("VA" | "CA" | "FA", Some(a)) => ((a - field_ft) / 450.0).clamp(1.0, 6.0),
                     ("VM" | "FM", _) => 4.0,
@@ -349,7 +473,6 @@ fn flown(legs: &[&Leg], start: Option<((f64, f64), f64)>, variation_deg: f64, fi
                 };
                 let mut points = match (track, leg.turn) {
                     (Some(t), Some(_)) if ((heading - t + 540.0) % 360.0 - 180.0).abs() > 15.0 => {
-                        // Turn on to the heading the way the leg says, then fly it.
                         let local = Local::at(from);
                         let left = leg.turn == Some(Turn::Left);
                         let side = if left { -90.0 } else { 90.0 };
@@ -391,7 +514,6 @@ fn flown(legs: &[&Leg], start: Option<((f64, f64), f64)>, variation_deg: f64, fi
                 };
                 track = Some(bearing_between(points[points.len().saturating_sub(2)], f));
                 at = Some(f);
-                // A leg that is mostly a turn has no one course to label it with.
                 let straight = points.len() <= 3;
                 pieces.push(Piece { points, heading: None, vectors: false, to_fix: straight });
             }
@@ -401,10 +523,8 @@ fn flown(legs: &[&Leg], start: Option<((f64, f64), f64)>, variation_deg: f64, fi
                     at = Some(f);
                     continue;
                 };
-                // Joining a track flown on a heading: the turn on to it the way the leg
-                // says, like a direct.
-                let points = match (track, leg.turn, i > 0 && pieces.last().is_some_and(|p| p.heading.is_some())) {
-                    (Some(t), turn, true) => turn_to_fix(from, t, turn, f),
+                let points = match (track, i > 0 && pieces.last().is_some_and(|p| p.heading.is_some())) {
+                    (Some(t), true) => turn_to_fix(from, t, leg.turn, f),
                     _ => vec![from, f],
                 };
                 track = Some(bearing_between(from, f));
@@ -418,14 +538,8 @@ fn flown(legs: &[&Leg], start: Option<((f64, f64), f64)>, variation_deg: f64, fi
     pieces
 }
 
-fn bearing_between(a: (f64, f64), b: (f64, f64)) -> f64 {
-    let cos = a.0.to_radians().cos().max(0.05);
-    let (dn, de) = (b.0 - a.0, (b.1 - a.1) * cos);
-    (de.atan2(dn).to_degrees() + 360.0) % 360.0
-}
-
 // ---------------------------------------------------------------------------------
-// Drawing.
+// Drawing: the pieces.
 // ---------------------------------------------------------------------------------
 
 /// Text written along a line on the page, the right way up whichever way the line runs,
@@ -485,60 +599,48 @@ fn draw_waypoint(c: &mut dyn Canvas, px: f32, py: f32, rnav: bool) {
                 c.line_to(px + dx, py + dy);
             }
         }
-        c.close_path();
-        c.set_fill_gray(1.0);
-        c.fill_even_odd_and_stroke();
     } else {
         c.move_to(px, py + 4.5);
         c.line_to(px + 4.0, py - 2.8);
         c.line_to(px - 4.0, py - 2.8);
-        c.close_path();
-        c.set_fill_gray(1.0);
-        c.fill_even_odd_and_stroke();
     }
+    c.close_path();
+    c.set_fill_gray(1.0);
+    c.fill_even_odd_and_stroke();
 }
 
-/// A named fix with what is asked there: its name, the speed limit in magenta and the
-/// altitude in blue, stacked beside it where there is room.
+/// A named fix with what is asked there: its name, the notes on what part it plays, the
+/// speed limit in magenta and the altitude in blue, stacked beside it where there is room.
 #[allow(clippy::too_many_arguments)]
-fn draw_fix_block(c: &mut dyn Canvas, f: Name, b: Name, v: &View, leg: &Leg, rnav: bool, taken: &mut Taken, seen: &mut Vec<String>) {
-    let _ = f;
+fn draw_fix_block(c: &mut dyn Canvas, f: Name, b: Name, v: &View, leg: &Leg, notes: &[&str], rnav: bool, taken: &mut Taken, seen: &mut Vec<String>) {
     let (Some(lat), Some(lon)) = (leg.lat, leg.lon) else { return };
-    if leg.fix.is_empty() || leg.fix.starts_with("RW") {
+    if leg.fix.is_empty() || leg.fix.starts_with("RW") || seen.contains(&leg.fix) {
         return;
     }
     let (px, py) = v.at(lat, lon);
     if !v.inside((px, py), -4.0) {
         return;
     }
-    // A fix is written once: the transitions that start at the end of the common route
-    // name it again with the same limits, and a chart prints them the once.
-    if seen.contains(&leg.fix) {
-        return;
-    }
-    let first = true;
     seen.push(leg.fix.clone());
     draw_waypoint(c, px, py, rnav);
-    // What is written: the name once; the limits wherever a leg sets them.
-    let mut rows: Vec<(String, f32, (f32, f32, f32), bool)> = Vec::new();
-    if first {
-        rows.push((leg.fix.clone(), 10.0, INK_RGB, false));
+    // (font, size, colour, what): None for the altitude, which is drawn with its lines.
+    let mut rows: Vec<(Name, f32, (f32, f32, f32), Option<String>)> = Vec::new();
+    for n in notes {
+        rows.push((f, 7.5, INK_RGB, Some(format!("({n})"))));
     }
+    rows.push((b, 10.0, INK_RGB, Some(leg.fix.clone())));
     if let Some(s) = leg.speed_kt {
-        rows.push((format!("MAX {s:.0} KT"), 8.5, MAGENTA, false));
+        rows.push((b, 8.5, MAGENTA, Some(format!("MAX {s:.0} KT"))));
     }
     if leg.altitude_ft.is_some() {
-        rows.push((String::new(), 9.5, BLUE, true));
+        rows.push((b, 9.5, BLUE, None));
     }
-    if rows.is_empty() {
-        return;
-    }
-    let widths: Vec<f32> = rows.iter().map(|(s, size, _, alt)| if *alt { text_width(b, *size, &format!("{:.0}", leg.altitude_ft.unwrap_or(0.0))) + 2.0 } else { text_width(b, *size, s) + 2.0 }).collect();
-    let bw = widths.iter().copied().fold(0.0f32, f32::max);
+    let width_of = |(font, size, _, s): &(Name, f32, (f32, f32, f32), Option<String>)| match s {
+        Some(s) => text_width(*font, *size, s) + 2.0,
+        None => text_width(b, *size, &format!("{:.0}", leg.altitude_ft.unwrap_or(0.0))) + 2.0,
+    };
+    let bw = rows.iter().map(width_of).fold(0.0f32, f32::max);
     let bh: f32 = rows.iter().map(|(_, size, _, _)| size + 2.5).sum();
-    // Beside the fix, in any of eight directions and at a growing distance, the nearest
-    // clear one; a fix's name is never left off, so where none is clear it goes to the
-    // right of the fix regardless.
     let mut places: Vec<(f32, f32)> = Vec::new();
     for gap in [9.0f32, 16.0, 26.0] {
         places.extend([
@@ -556,20 +658,186 @@ fn draw_fix_block(c: &mut dyn Canvas, f: Name, b: Name, v: &View, leg: &Leg, rna
     let (bx, by) = places.iter().copied().find(|(x, y)| taken.free(*x, *y, bw, bh) && on_paper(*x, *y)).or_else(|| places.iter().copied().find(|(x, y)| on_paper(*x, *y))).unwrap_or(places[0]);
     taken.reserve(bx, by, bw, bh);
     let mut row_y = by + bh;
-    for (s, size, rgb, alt) in &rows {
+    for (font, size, rgb, s) in &rows {
         row_y -= size + 2.5;
-        if *alt {
-            draw_altitude(c, b, *size, bx, row_y + 2.0, leg);
-        } else {
-            c.text_styled(b, *size, bx, row_y + 2.0, 0.0, s, *rgb);
+        match s {
+            Some(s) => c.text_styled(*font, *size, bx, row_y + 2.0, 0.0, s, *rgb),
+            None => {
+                draw_altitude(c, b, *size, bx, row_y + 2.0, leg);
+            }
         }
     }
 }
 
+/// The published minimum safe altitude round its fix, in red: the circle, the lines
+/// between the sectors, each sector's altitude, and the fix's name along the rim.
+#[allow(clippy::too_many_arguments)]
+fn draw_msa(c: &mut dyn Canvas, b: Name, v: &View, msa: &Msa, variation_deg: f64, taken: &mut Taken) {
+    let centre = v.at(msa.centre.0, msa.centre.1);
+    let r = msa.radius_nm as f32 * v.px_per_nm();
+    if r < 30.0 {
+        return;
+    }
+    c.save_state();
+    c.set_stroke_rgb(RED.0, RED.1, RED.2);
+    c.set_line_width(1.4);
+    circle(c, centre.0, centre.1, r);
+    c.stroke();
+    // The sectors are bounded by bearings towards the centre, magnetic, so a boundary
+    // runs out from the centre the opposite way.
+    let page_dir = |mag_to_centre: f64| {
+        let t = (mag_to_centre + 180.0 + variation_deg).to_radians();
+        (t.sin() as f32, t.cos() as f32)
+    };
+    if msa.sectors.len() > 1 {
+        for s in &msa.sectors {
+            let (dx, dy) = page_dir(s.from_deg);
+            c.move_to(centre.0, centre.1);
+            c.line_to(centre.0 + dx * r, centre.1 + dy * r);
+            c.stroke();
+            // The bearing, written along the line near the rim, as the chart gives it:
+            // towards the centre.
+            let at = (centre.0 + dx * r * 0.72, centre.1 + dy * r * 0.72);
+            if v.inside(at, -14.0) {
+                text_along(c, b, 8.0, at, (dx, dy), 4.0, &format!("{:03.0}\u{b0}", s.from_deg), RED);
+            }
+        }
+    }
+    c.restore_state();
+    for s in &msa.sectors {
+        let mid = if s.to_deg > s.from_deg { (s.from_deg + s.to_deg) / 2.0 } else { (s.from_deg + s.to_deg + 360.0) / 2.0 };
+        let (dx, dy) = page_dir(mid);
+        let text = format!("{:.0}", s.altitude_ft);
+        let tw = text_width(b, 13.0, &text);
+        // Where the sector has open paper, from well inside the rim towards the middle.
+        let spot = [0.62f32, 0.5, 0.75, 0.4]
+            .into_iter()
+            .map(|k| (centre.0 + dx * r * k - tw / 2.0, centre.1 + dy * r * k - 5.0))
+            .find(|(x, y)| v.inside((*x, *y), 0.0) && v.inside((x + tw, y + 14.0), 0.0) && taken.free(*x, *y, tw, 14.0));
+        if let Some((x, y)) = spot {
+            c.text_styled(b, 13.0, x, y, 0.0, &text, RED);
+            taken.reserve(x, y, tw, 14.0);
+        }
+    }
+    // The name of the fix it is centred on, along the rim, where the rim is on the paper.
+    for k in 0..24 {
+        let a = (300.0 + k as f32 * 15.0).to_radians();
+        let p = (centre.0 + a.sin() * r, centre.1 + a.cos() * r);
+        let w = text_width(b, 11.0, &msa.centre_name);
+        if v.inside(p, 12.0 + w / 2.0) {
+            let tangent = (a.cos(), -a.sin());
+            text_along(c, b, 11.0, p, tangent, 5.0, &msa.centre_name, RED);
+            break;
+        }
+    }
+}
+
+/// A published hold on the map, drawn to scale where it is flown.
+fn draw_hold_on_map(c: &mut dyn Canvas, v: &View, hold: &Hold, variation_deg: f64) {
+    let turn = if hold.right_turns { Turn::Right } else { Turn::Left };
+    let leg_nm = hold.leg_nm.or_else(|| hold.leg_time_min.map(|m| m * 3.5)).filter(|nm| (0.5..12.0).contains(nm)).unwrap_or(3.5);
+    let pts: Vec<(f32, f32)> = hold_points((hold.lat, hold.lon), hold.inbound_deg + variation_deg, Some(turn), leg_nm).into_iter().map(|p| v.at(p.0, p.1)).collect();
+    if pts.len() < 2 {
+        return;
+    }
+    c.set_stroke_gray(INK);
+    c.set_line_width(1.3);
+    for (i, (px, py)) in pts.iter().enumerate() {
+        if i == 0 {
+            c.move_to(*px, *py);
+        } else {
+            c.line_to(*px, *py);
+        }
+    }
+    c.stroke();
+}
+
+/// A hold in its own box, not to scale, the way a chart shows the hold a procedure ends
+/// in: the fix, the racetrack with its courses, and the limits beside it.
+#[allow(clippy::too_many_arguments)]
+fn draw_hold_box(c: &mut dyn Canvas, f: Name, b: Name, x: f32, y: f32, w: f32, h: f32, hold: &Hold) {
+    fill_box(c, x, y, w, h, 1.0);
+    box_outline(c, x, y, w, h, 1.0, INK);
+    // The H badge and the fix.
+    fill_box(c, x + w / 2.0 - 4.0, y + h - 13.0, 8.0, 8.0, INK);
+    text_centred(c, b, 6.0, x + w / 2.0, y + h - 11.5, "H", 1.0);
+    text_centred(c, b, 10.0, x + w / 2.0, y + h - 25.0, &hold.fix, INK);
+    // The racetrack, laid out the way the map's is and scaled into the box: a four-mile
+    // leg about the equator, where a degree is the same both ways, so the shape is true.
+    let turn = if hold.right_turns { Turn::Right } else { Turn::Left };
+    let shape = hold_points((0.0, 0.0), hold.inbound_deg, Some(turn), 4.0);
+    let (mut lo_x, mut hi_x, mut lo_y, mut hi_y) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+    for (lat, lon) in &shape {
+        lo_x = lo_x.min(*lon);
+        hi_x = hi_x.max(*lon);
+        lo_y = lo_y.min(*lat);
+        hi_y = hi_y.max(*lat);
+    }
+    let (room_w, room_h) = (w * 0.5 - 12.0, h - 40.0);
+    let k = (room_w as f64 / (hi_x - lo_x).max(1e-9)).min(room_h as f64 / (hi_y - lo_y).max(1e-9));
+    let (ox, oy) = (x + 8.0 + (room_w - ((hi_x - lo_x) * k) as f32) / 2.0, y + 6.0 + (room_h - ((hi_y - lo_y) * k) as f32) / 2.0);
+    let to_box = |(lat, lon): (f64, f64)| (ox + ((lon - lo_x) * k) as f32, oy + ((lat - lo_y) * k) as f32);
+    let pts: Vec<(f32, f32)> = shape.iter().copied().map(to_box).collect();
+    let (back, fix) = (pts[0], pts[1]);
+    let (ux, uy) = {
+        let (dx, dy) = (fix.0 - back.0, fix.1 - back.1);
+        let l = dx.hypot(dy).max(1e-3);
+        (dx / l, dy / l)
+    };
+    let (sx, sy) = {
+        let far = pts[pts.len() / 2];
+        let (dx, dy) = (far.0 - fix.0, far.1 - fix.1);
+        let along = dx * ux + dy * uy;
+        let (px, py) = (dx - along * ux, dy - along * uy);
+        let l = px.hypot(py).max(1e-3);
+        (px / l, py / l)
+    };
+    let rad = {
+        let far = pts[pts.len() / 2];
+        ((far.0 - fix.0) * sx + (far.1 - fix.1) * sy).abs() / 2.0
+    };
+    c.set_stroke_gray(INK);
+    c.set_line_width(1.1);
+    for (i, p) in pts.iter().enumerate() {
+        if i == 0 {
+            c.move_to(p.0, p.1);
+        } else {
+            c.line_to(p.0, p.1);
+        }
+    }
+    c.stroke();
+    arrow_head(c, back, fix, INK);
+    draw_waypoint(c, fix.0, fix.1, true);
+    text_along(c, b, 7.5, ((fix.0 + back.0) / 2.0, (fix.1 + back.1) / 2.0), (ux, uy), -9.0, &format!("{:03.0}\u{b0}", hold.inbound_deg), INK_RGB);
+    text_along(c, b, 7.5, ((fix.0 + back.0) / 2.0 + sx * rad * 2.0, (fix.1 + back.1) / 2.0 + sy * rad * 2.0), (ux, uy), 4.0, &format!("{:03.0}\u{b0}", (hold.inbound_deg + 180.0) % 360.0), INK_RGB);
+    // The limits.
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(s) = hold.speed_kt {
+        lines.push(format!("MAX {s:.0} KT"));
+    }
+    if let Some(m) = hold.max_altitude_ft {
+        lines.push(if m >= 10000.0 && (m % 1000.0) == 0.0 { format!("MAX FL{:.0}", m / 100.0) } else { format!("MAX {m:.0}") });
+    }
+    if let Some(m) = hold.min_altitude_ft {
+        lines.push(format!("MHA {m:.0}"));
+    }
+    if let Some(t) = hold.leg_time_min {
+        lines.push(format!("{t:.0} MIN"));
+    }
+    for (i, l) in lines.iter().enumerate() {
+        text(c, f, 7.5, x + w * 0.58, y + h - 42.0 - i as f32 * 9.5, l, INK);
+    }
+}
+
+// ---------------------------------------------------------------------------------
+// Drawing: the page.
+// ---------------------------------------------------------------------------------
+
 /// The header: the airport on the left, the place and the kind of page on the right,
-/// whose it is in the middle.
+/// whose it is in the middle. Returns where it ends.
 fn draw_header(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal) -> f32 {
-    let top = H - MARGIN;
+    let (pw, ph) = t.page;
+    let top = ph - MARGIN;
     let idents = match &t.airport_iata {
         Some(iata) if !iata.is_empty() => format!("{}/{}", t.airport.icao, iata),
         _ => t.airport.icao.clone(),
@@ -577,38 +845,35 @@ fn draw_header(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal) -> f32 {
     text(c, b, 15.0, MARGIN, top - 14.0, &idents, INK);
     text(c, f, 9.5, MARGIN, top - 26.0, &shorten(t.airport_name.as_deref().unwrap_or("")).to_uppercase(), INK);
     let place = t.airport_place.clone().unwrap_or_default().to_uppercase();
-    text_right(c, b, 15.0, W - MARGIN, top - 14.0, &place, INK);
-    let badge = format!("{}{}", if is_rnav(t.procedure) { "RNAV " } else { "" }, if is_sid(t.procedure) { "SID" } else { "STAR" });
+    text_right(c, b, 15.0, pw - MARGIN, top - 14.0, &place, INK);
+    let badge = format!("{}{}", if t.rnav() { "RNAV " } else { "" }, if t.sid() { "SID" } else { "STAR" });
     let bw = text_width(b, 9.0, &badge) + 10.0;
-    fill_box(c, W - MARGIN - bw, top - 29.0, bw, 12.0, INK);
-    text(c, b, 9.0, W - MARGIN - bw + 5.0, top - 26.0, &badge, 1.0);
-    let middle = W / 2.0;
-    text_centred(c, b, 11.0, middle - 20.0, top - 12.0, "AMDB V1", INK);
+    fill_box(c, pw - MARGIN - bw, top - 29.0, bw, 12.0, INK);
+    text(c, b, 9.0, pw - MARGIN - bw + 5.0, top - 26.0, &badge, 1.0);
+    let middle = pw / 2.0;
+    text_centred(c, b, 11.0, middle, top - 12.0, "AMDB V1", INK);
     if let Some((from, to)) = crate::sources::msfs::airac_dates() {
-        text_centred(c, f, 6.5, middle - 20.0, top - 23.0, &format!("EFF {from} - {to}"), 0.3);
+        text_centred(c, f, 6.5, middle, top - 23.0, &format!("EFF {from} - {to}"), 0.3);
     }
     top - 34.0
 }
 
-/// The strip of what is briefed before flying it. Returns where it ends.
-fn draw_strip(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, top: f32) -> f32 {
-    let h = 40.0;
-    let y = top - h;
-    let (x, w) = (MARGIN, W - 2.0 * MARGIN);
-    box_outline(c, x, y, w, h, 1.0, INK);
-    // The frequency the procedure is flown on, called by its name.
-    let wanted: &[(&str, &str)] = if is_sid(t.procedure) { &[("DEP", "Departure")] } else { &[("ATI", "ATIS"), ("APP", "Approach")] };
+/// The strip of what is briefed before flying it, at a given place and width. Returns
+/// its height.
+fn draw_strip(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, top: f32, w: f32) -> f32 {
+    let narrow = w < 330.0;
+    // The frequencies the procedures are flown on, called by their names.
+    let wanted: &[(&str, &str)] = if t.sid() { &[("DEP", "Departure")] } else { &[("ATI", "ATIS"), ("APP", "Approach")] };
     let mut cells: Vec<(String, String)> = Vec::new();
     for (kind, label) in wanted {
         let mut found: Vec<&Communication> = t.comms.iter().filter(|m| m.kind == *kind).collect();
         found.sort_by(|a, b| a.mhz.total_cmp(&b.mhz));
         found.dedup_by(|a, b| (a.mhz - b.mhz).abs() < 0.001);
+        let show = |m: &&Communication| format!("{:.3}", m.mhz).trim_end_matches('0').trim_end_matches('.').to_string();
         if let Some(first) = found.first() {
-            let name = if first.callsign.is_empty() { label.to_string() } else { format!("{} {label}", first.callsign) };
-            let freqs: Vec<String> = found.iter().take(2).map(|m| format!("{:.3}", m.mhz).trim_end_matches('0').trim_end_matches('.').to_string()).collect();
-            cells.push((name, freqs.join("  ")));
+            let name = if first.callsign.is_empty() || *kind == "ATI" { label.to_string() } else { format!("{} {label}", first.callsign) };
+            cells.push((name, found.iter().take(if narrow { 1 } else { 2 }).map(show).collect::<Vec<_>>().join("  ")));
         } else {
-            // The simulator's own list, where the database has none.
             let sim = if *kind == "DEP" { "DEPARTURE" } else if *kind == "ATI" { "ATIS" } else { "APPROACH" };
             if let Some(fr) = t.airport.frequencies.iter().find(|fr| fr.kind == sim) {
                 cells.push((label.to_string(), format!("{:.3}", fr.mhz)));
@@ -616,6 +881,58 @@ fn draw_strip(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, top: f32) -> f
         }
     }
     cells.push(("Apt Elev".to_string(), format!("{:.0}", t.field_elev_ft)));
+    // The notes: transition altitude and level, what the procedures need of the
+    // aircraft, and the speed limit.
+    let info = t.info.clone().unwrap_or_default();
+    let mut notes: Vec<String> = Vec::new();
+    let mut trans = Vec::new();
+    if let Some(a) = info.transition_altitude_ft {
+        trans.push(format!("Trans alt: {a:.0}"));
+    }
+    if let Some(l) = info.transition_level_ft {
+        trans.push(format!("Trans level: FL{:.0}", l / 100.0));
+    } else if t.sid() || info.transition_altitude_ft.is_none() {
+    } else {
+        trans.push("Trans level: By ATC".into());
+    }
+    if trans.is_empty() {
+        trans.push("Trans alt: By ATC".into());
+    }
+    notes.push(trans.join("   "));
+    if t.rnav() {
+        notes.push("RNAV 1 - DME/DME/IRU or GPS required".into());
+    }
+    if let Some((kt, below)) = info.speed_limit {
+        notes.push(format!("MAX {kt:.0} KT below {below:.0}'"));
+    }
+    if narrow {
+        // Stacked: the frequencies in a column on the left, the notes beside them.
+        let cell_w = 70.0;
+        let row_h = 22.0;
+        let h = (cells.len() as f32 * row_h).max(notes.len() as f32 * 13.0 + 4.0);
+        let y = top - h;
+        box_outline(c, x, y, w, h, 1.0, INK);
+        line(c, x + cell_w, y, x + cell_w, y + h, 0.8, INK);
+        for (i, (label, value)) in cells.iter().enumerate() {
+            let ry = top - row_h * (i + 1) as f32;
+            if i > 0 {
+                line(c, x, ry + row_h, x + cell_w, ry + row_h, 0.6, INK);
+            }
+            text_centred(c, f, 5.8, x + cell_w / 2.0, ry + row_h - 8.0, label, INK);
+            text_centred(c, b, 9.0, x + cell_w / 2.0, ry + 4.0, value, INK);
+        }
+        for (i, n) in notes.iter().enumerate() {
+            let lines = wrap_to_width(n, f, 7.0, w - cell_w - 8.0);
+            let ry = top - 11.0 - i as f32 * 13.0;
+            if let Some(l) = lines.first() {
+                text(c, f, 7.0, x + cell_w + 4.0, ry, l, INK);
+            }
+        }
+        return h;
+    }
+    let h = 40.0;
+    let y = top - h;
+    box_outline(c, x, y, w, h, 1.0, INK);
     let cell_w = 88.0;
     for (i, (label, value)) in cells.iter().enumerate() {
         let cx = x + cell_w * i as f32 + cell_w / 2.0;
@@ -627,28 +944,7 @@ fn draw_strip(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, top: f32) -> f
         }
         text_centred(c, b, size, cx, y + 9.0, value, INK);
     }
-    // The notes: transition altitude and level, what the procedure needs of the aircraft,
-    // and the speed limit.
     let nx = x + cell_w * cells.len() as f32;
-    let mut notes: Vec<String> = Vec::new();
-    let info = t.info.clone().unwrap_or_default();
-    let mut trans = Vec::new();
-    if let Some(a) = info.transition_altitude_ft {
-        trans.push(format!("Trans alt: {a:.0}"));
-    }
-    if let Some(l) = info.transition_level_ft {
-        trans.push(format!("Trans level: FL{:.0}", l / 100.0));
-    }
-    if trans.is_empty() {
-        trans.push("Trans alt: by ATC".into());
-    }
-    notes.push(trans.join("   "));
-    if is_rnav(t.procedure) {
-        notes.push("RNAV 1 - DME/DME/IRU or GPS required".into());
-    }
-    if let Some((kt, below)) = info.speed_limit {
-        notes.push(format!("MAX {kt:.0} KT below {below:.0}'"));
-    }
     let row_h = h / notes.len().max(1) as f32;
     for (i, n) in notes.iter().enumerate() {
         let ry = y + h - row_h * (i + 1) as f32;
@@ -657,71 +953,124 @@ fn draw_strip(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, top: f32) -> f
         }
         text(c, f, 7.5, nx + 5.0, ry + row_h / 2.0 - 2.5, n, INK);
     }
-    y
+    h
 }
 
-/// The procedure's name, its coded name and its runways, in their box.
-fn draw_title_box(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, top: f32) -> f32 {
-    let h = 46.0;
-    let y = top - h;
-    box_outline(c, MARGIN, y, W - 2.0 * MARGIN, h, 1.0, INK);
-    let kind = if is_sid(t.procedure) { "DEPARTURE" } else { "ARRIVAL" };
-    let rnav = if is_rnav(t.procedure) { "RNAV " } else { "" };
-    text_centred(c, b, 13.0, W / 2.0, y + h - 15.0, &format!("{} {rnav}{kind}", title(t.procedure)), INK);
-    let (fix, _) = named_fix(t.procedure);
-    text_centred(c, f, 10.0, W / 2.0, y + h - 28.0, &format!("({}.{fix})", t.procedure.name), INK);
-    let runways = runways_of(t.procedure);
-    let label = if runways.len() == 1 { "RWY" } else { "RWYS" };
-    text_centred(c, f, 10.0, W / 2.0, y + h - 41.0, &format!("({label} {})", runway_list(&runways)), INK);
-    y
-}
-
-/// The table and routing at the foot. Returns how tall it came out, drawing it only when
-/// `draw` is set, so the map can be given what is left.
-fn draw_foot(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, draw: bool) -> f32 {
-    let size = 7.8;
-    let lead = size + 2.4;
-    let (x, w) = (MARGIN, W - 2.0 * MARGIN);
-    let sid = is_sid(t.procedure);
-    let all = routes(t.procedure);
-    let first_col = 58.0;
-    let text_w = w - first_col - 10.0;
-    // The table: one row per runway (a departure) or per transition (an arrival).
-    let (table, rest): (Vec<&Route>, Vec<&Route>) = all.iter().partition(|r| if sid { r.part == "runway" } else { r.part == "enroute" });
-    let heading = if sid { "INITIAL CLIMB" } else { "TRANSITION ROUTING" };
-    let col_head = if sid { "RWY" } else { "FROM" };
-    let mut rows: Vec<(String, Vec<String>)> = Vec::new();
-    for r in &table {
-        let label = if sid { r.heading.clone() } else { r.names.first().cloned().unwrap_or_default() };
-        rows.push((label, wrap_to_width(&route_text(&r.legs, sid), f, size, text_w)));
+/// The procedures' names, coded names and runways, in their box. Returns its height.
+fn draw_title_box(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, top: f32, w: f32) -> f32 {
+    let kind = if t.sid() { "DEPARTURE" } else { "ARRIVAL" };
+    let rnav = if t.rnav() { "RNAV " } else { "" };
+    let runways = t.runways();
+    let rw_label = if t.all_runways_served() || runways.is_empty() { "(ALL RWYS)".to_string() } else { format!("({} {})", if runways.len() == 1 { "RWY" } else { "RWYS" }, runway_list(&runways)) };
+    let mut lines: Vec<(Name, f32, String)> = Vec::new();
+    if t.procedures.len() == 1 {
+        let (fix, _) = named_fix(t.procedure);
+        lines.push((b, 13.0, format!("{} {rnav}{kind}", title(t.procedure))));
+        lines.push((f, 10.0, format!("({}.{fix})", t.procedure.name)));
+        lines.push((f, 10.0, rw_label));
+    } else {
+        for p in &t.procedures {
+            lines.push((f, 11.5, format!("{} [{}]", title(p), p.name)));
+        }
+        lines.push((b, 11.5, format!("{rnav}{kind}S {rw_label}")));
     }
+    let h = lines.iter().map(|(_, s, _)| s + 3.5).sum::<f32>() + 8.0;
+    let y = top - h;
+    box_outline(c, x, y, w, h, 1.0, INK);
+    let mut row = top - 4.0;
+    for (font, size, s) in &lines {
+        row -= size + 3.5;
+        let mut sz = *size;
+        while sz > 6.0 && text_width(*font, sz, s) > w - 8.0 {
+            sz -= 0.5;
+        }
+        text_centred(c, *font, sz, x + w / 2.0, row + 2.0, s, INK);
+    }
+    h
+}
+
+/// The routing: for a departure the initial climb runway by runway and then the
+/// transitions; for an arrival each procedure's routing, as a chart's table writes it.
+/// Returns how tall it came out, drawing it only when `draw` is set.
+#[allow(clippy::too_many_arguments)]
+fn draw_routing(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, top: f32, w: f32, draw: bool) -> f32 {
+    let size = 7.6;
+    let lead = size + 2.3;
+    let sid = t.sid();
+    let all = routes(t);
+    let first_col = if sid { 58.0 } else { 62.0 };
+    let text_w = w - first_col - 10.0;
+    // The table: the runways of a departure, the procedures of an arrival.
+    let mut rows: Vec<(String, Vec<String>)> = Vec::new();
     let mut routing: Vec<String> = Vec::new();
-    for r in &rest {
-        let head = match (r.part, sid) {
-            ("enroute", _) => format!("{}: ", r.heading),
-            ("runway", false) => format!("RWY {}: ", r.heading),
-            _ => String::new(),
-        };
-        routing.push(format!("{head}{}", route_text(&r.legs, sid)));
+    if sid {
+        for r in all.iter().filter(|r| r.part == "runway") {
+            let label = if t.procedures.len() > 1 { format!("{} {}", r.of, r.heading) } else { r.heading.clone() };
+            rows.push((label, wrap_to_width(&route_text(&r.legs, true), f, size, text_w)));
+        }
+        for r in all.iter().filter(|r| r.part != "runway") {
+            let head = if r.part == "enroute" { format!("{}: ", r.heading) } else { String::new() };
+            routing.push(format!("{head}{}", route_text(&r.legs, true)));
+        }
+    } else {
+        for p in &t.procedures {
+            // The whole of one arrival, its transitions aside, as one line of fixes.
+            let pr = routes_of(p);
+            let main: Vec<&Leg> = pr.iter().filter(|r| r.part != "enroute").enumerate().flat_map(|(i, r)| {
+                let rest = r.part == "runway" && i > 0;
+                r.legs.iter().copied().skip(usize::from(rest))
+            }).collect();
+            let first_runway = pr.iter().find(|r| r.part == "runway");
+            let runway_legs: Vec<&Leg> = first_runway.map(|r| r.legs.clone()).unwrap_or_default();
+            let legs: Vec<&Leg> = if main.is_empty() { runway_legs } else { main };
+            rows.push((title(p), wrap_to_width(&routing_short(&legs), f, size, text_w)));
+            for r in pr.iter().filter(|r| r.part == "enroute") {
+                routing.push(format!("{}: {}", r.heading, routing_short(&r.legs)));
+            }
+        }
     }
     let routing_lines: Vec<String> = routing.iter().flat_map(|s| wrap_to_width(s, f, size, w - 12.0)).collect();
-    let table_h = if rows.is_empty() { 0.0 } else { 14.0 + rows.iter().map(|(_, l)| l.len().max(1) as f32 * lead + 5.0).sum::<f32>() };
-    let routing_h = if routing_lines.is_empty() { 0.0 } else { 14.0 + routing_lines.len() as f32 * lead + 5.0 };
+    let table_h = if rows.is_empty() { 0.0 } else { 13.0 + rows.iter().map(|(_, l)| l.len().max(1) as f32 * lead + 4.0).sum::<f32>() };
+    let routing_h = if routing_lines.is_empty() { 0.0 } else { 13.0 + routing_lines.len() as f32 * lead + 4.0 };
     let total = table_h + routing_h;
     if !draw {
         return total;
     }
-    let bottom = MARGIN + 20.0;
-    // Routing, at the very foot.
-    let mut y = bottom;
+    let mut y = top;
+    if table_h > 0.0 {
+        y -= table_h;
+        box_outline(c, x, y, w, table_h, 1.0, INK);
+        line(c, x, y + table_h - 11.0, x + w, y + table_h - 11.0, 0.6, INK);
+        line(c, x + first_col, y, x + first_col, y + table_h, 0.6, INK);
+        text_centred(c, b, 7.0, x + first_col / 2.0, y + table_h - 8.5, if sid { "RWY" } else { "STAR" }, INK);
+        text_centred(c, b, 7.0, x + first_col + (w - first_col) / 2.0, y + table_h - 8.5, if sid { "INITIAL CLIMB" } else { "ROUTING" }, INK);
+        let mut ry = y + table_h - 11.0;
+        for (i, (label, lines)) in rows.iter().enumerate() {
+            let rh = lines.len().max(1) as f32 * lead + 4.0;
+            if i > 0 {
+                line(c, x, ry, x + w, ry, 0.5, INK);
+            }
+            let mut lsize = 7.5;
+            while lsize > 5.0 && text_width(b, lsize, label) > first_col - 5.0 {
+                lsize -= 0.5;
+            }
+            text_centred(c, b, lsize, x + first_col / 2.0, ry - rh / 2.0 - 2.5, label, INK);
+            let mut ly = ry - lead;
+            for l in lines {
+                text(c, f, size, x + first_col + 5.0, ly, l, INK);
+                ly -= lead;
+            }
+            ry -= rh;
+        }
+    }
     if routing_h > 0.0 {
+        y -= routing_h;
         box_outline(c, x, y, w, routing_h, 1.0, INK);
-        line(c, x, y + routing_h - 12.0, x + w, y + routing_h - 12.0, 0.6, INK);
-        text_centred(c, b, 7.5, x + w / 2.0, y + routing_h - 9.0, "ROUTING", INK);
-        let mut ry = y + routing_h - 12.0 - lead;
+        line(c, x, y + routing_h - 11.0, x + w, y + routing_h - 11.0, 0.6, INK);
+        text_centred(c, b, 7.0, x + w / 2.0, y + routing_h - 8.5, if sid { "ROUTING" } else { "TRANSITIONS" }, INK);
+        let mut ry = y + routing_h - 11.0 - lead;
         for l in &routing_lines {
-            // The transition's name in bold, where the line starts with it.
-            if let Some((head, tail)) = l.split_once(": ").filter(|(h, _)| h.ends_with("TRANSITION") || h.starts_with("RWY")) {
+            if let Some((head, tail)) = l.split_once(": ").filter(|(h, _)| h.ends_with("TRANSITION")) {
                 text(c, b, size, x + 6.0, ry, &format!("{head}:"), INK);
                 text(c, f, size, x + 6.0 + text_width(b, size, &format!("{head}: ")), ry, tail, INK);
             } else {
@@ -729,45 +1078,14 @@ fn draw_foot(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, draw: bool) -> 
             }
             ry -= lead;
         }
-        y += routing_h;
-    }
-    if rows.is_empty() {
-        return total;
-    }
-    // The table above it.
-    box_outline(c, x, y, w, table_h, 1.0, INK);
-    line(c, x, y + table_h - 12.0, x + w, y + table_h - 12.0, 0.6, INK);
-    line(c, x + first_col, y, x + first_col, y + table_h, 0.6, INK);
-    text_centred(c, b, 7.5, x + first_col / 2.0, y + table_h - 9.0, col_head, INK);
-    text_centred(c, b, 7.5, x + first_col + (w - first_col) / 2.0, y + table_h - 9.0, heading, INK);
-    let mut ry = y + table_h - 12.0;
-    for (i, (label, lines)) in rows.iter().enumerate() {
-        let rh = lines.len().max(1) as f32 * lead + 5.0;
-        if i > 0 {
-            line(c, x, ry, x + w, ry, 0.5, INK);
-        }
-        let mut ly = ry - lead;
-        let lsize = if text_width(b, 8.0, label) > first_col - 6.0 { 6.5 } else { 8.0 };
-        text_centred(c, b, lsize, x + first_col / 2.0, ry - rh / 2.0 - 2.5, label, INK);
-        for l in lines {
-            text(c, f, size, x + first_col + 5.0, ly, l, INK);
-            ly -= lead;
-        }
-        ry -= rh;
     }
     total
 }
 
-/// The page. Returns the window its map shows.
-fn draw(c: &mut dyn Canvas, t: &Terminal, f: Name, b: Name) -> View {
-    let top = draw_header(c, f, b, t);
-    let top = draw_strip(c, f, b, t, top);
-    let top = draw_title_box(c, f, b, t, top);
-    let foot = draw_foot(c, f, b, t, false);
-    draw_foot(c, f, b, t, true);
-    let map_y = MARGIN + 20.0 + foot;
-    let v = draw_map(c, f, b, t, MARGIN, map_y, W - 2.0 * MARGIN, top - map_y);
-    line(c, MARGIN, MARGIN + 17.0, W - MARGIN, MARGIN + 17.0, 0.6, RULE);
+/// The footer.
+fn draw_footer(c: &mut dyn Canvas, f: Name, t: &Terminal) {
+    let pw = t.page.0;
+    line(c, MARGIN, MARGIN + 17.0, pw - MARGIN, MARGIN + 17.0, 0.6, RULE);
     text(c, f, 6.2, MARGIN, MARGIN + 9.0, "NOT FOR REAL-WORLD NAVIGATION. Drawn from the simulator's navigation data: fly the published chart.", 0.25);
     let printed = chrono::Utc::now().format("%d %b %Y").to_string().to_uppercase();
     text(
@@ -777,22 +1095,96 @@ fn draw(c: &mut dyn Canvas, t: &Terminal, f: Name, b: Name) -> View {
         MARGIN,
         MARGIN + 1.0,
         &format!(
-            "AMDB V1 - drawn {printed} - procedure {} - fixes, MORA and airspace {} - terrain Copernicus DEM (ESA)",
+            "AMDB V1 - drawn {printed} - procedure {} - fixes, MORA, MSA, holds and airspace {} - terrain Copernicus DEM (ESA)",
             t.airport.source,
             crate::sources::navdata::source().unwrap_or_else(|| "simulator".into())
         ),
         0.45,
     );
+}
+
+/// The page. Returns the window its map shows.
+fn draw(c: &mut dyn Canvas, t: &Terminal, f: Name, b: Name) -> View {
+    let (pw, _) = t.page;
+    let top = draw_header(c, f, b, t);
+    let bottom = MARGIN + 20.0;
+    let full_w = pw - 2.0 * MARGIN;
+    let v = if t.page == LANDSCAPE {
+        // The map takes the whole page, and the briefing panel sits over its top right
+        // corner, as a landscape chart has it: the strip, the title, the routing and the
+        // hold, one under another.
+        let panel_w = 250.0;
+        let (px, map_top) = (MARGIN + full_w - panel_w, top);
+        let panel_h = {
+            let strip = draw_strip(&mut NullCanvas, f, b, t, px, map_top, panel_w);
+            let title = draw_title_box(&mut NullCanvas, f, b, t, px, map_top - strip, panel_w);
+            let routing = draw_routing(&mut NullCanvas, f, b, t, px, 0.0, panel_w, false);
+            let hold = if t.holds.is_empty() { 0.0 } else { 78.0 };
+            strip + title + routing + hold
+        };
+        let v = draw_map(c, f, b, t, MARGIN, bottom, full_w, map_top - bottom, Some((panel_w, panel_h)));
+        let strip = draw_strip(c, f, b, t, px, map_top, panel_w);
+        let title = draw_title_box(c, f, b, t, px, map_top - strip, panel_w);
+        let used = strip + title;
+        let routing = draw_routing(c, f, b, t, px, map_top - used, panel_w, true);
+        if let Some(hold) = t.holds.first() {
+            draw_hold_box(c, f, b, px, map_top - used - routing - 78.0, panel_w, 78.0, hold);
+        }
+        v
+    } else {
+        let strip = draw_strip(c, f, b, t, MARGIN, top, full_w);
+        let title = draw_title_box(c, f, b, t, MARGIN, top - strip, full_w);
+        let map_top = top - strip - title;
+        let routing_h = draw_routing(c, f, b, t, MARGIN, 0.0, full_w, false);
+        draw_routing(c, f, b, t, MARGIN, bottom + routing_h, full_w, true);
+        let map_bottom = bottom + routing_h;
+        let v = draw_map(c, f, b, t, MARGIN, map_bottom, full_w, map_top - map_bottom, None);
+        // The hold the procedure ends in, in its box in the map's top right corner.
+        if let Some(hold) = t.holds.first() {
+            draw_hold_box(c, f, b, MARGIN + full_w - 170.0, map_top - 80.0, 170.0, 80.0, hold);
+        }
+        v
+    };
+    draw_footer(c, f, t);
     v
 }
 
-/// The map.
+/// A surface that draws nothing, for measuring what a piece of the page would take.
+struct NullCanvas;
+
+impl Canvas for NullCanvas {
+    fn move_to(&mut self, _: f32, _: f32) {}
+    fn line_to(&mut self, _: f32, _: f32) {}
+    fn cubic_to(&mut self, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32) {}
+    fn close_path(&mut self) {}
+    fn rect(&mut self, _: f32, _: f32, _: f32, _: f32) {}
+    fn fill_nonzero(&mut self) {}
+    fn fill_even_odd(&mut self) {}
+    fn fill_even_odd_and_stroke(&mut self) {}
+    fn stroke(&mut self) {}
+    fn end_path(&mut self) {}
+    fn clip_nonzero(&mut self) {}
+    fn set_fill_gray(&mut self, _: f32) {}
+    fn set_fill_rgb(&mut self, _: f32, _: f32, _: f32) {}
+    fn set_stroke_gray(&mut self, _: f32) {}
+    fn set_stroke_rgb(&mut self, _: f32, _: f32, _: f32) {}
+    fn set_line_width(&mut self, _: f32) {}
+    fn set_dash(&mut self, _: &[f32], _: f32) {}
+    fn save_state(&mut self) {}
+    fn restore_state(&mut self) {}
+    fn text(&mut self, _: Name, _: f32, _: f32, _: f32, _: &str, _: f32) {}
+    fn text_turned(&mut self, _: Name, _: f32, _: f32, _: f32, _: &str, _: f32) {}
+    fn text_styled(&mut self, _: Name, _: f32, _: f32, _: f32, _: f32, _: &str, _: (f32, f32, f32)) {}
+}
+
+/// The map. `panel` is the corner a landscape page's briefing panel covers, top right,
+/// which the map is framed to keep its routes out of.
 #[allow(clippy::too_many_arguments)]
-fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, w: f32, h: f32) -> View {
+fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, w: f32, h: f32, panel: Option<(f32, f32)>) -> View {
     let variation = t.airport.magnetic_variation_deg.unwrap_or(0.0);
-    let routes = routes(t.procedure);
-    let sid = is_sid(t.procedure);
-    let rnav = is_rnav(t.procedure);
+    let routes = routes(t);
+    let sid = t.sid();
+    let rnav = t.rnav();
     // The path of every route, flown.
     let mut drawn: Vec<(usize, Vec<Piece>)> = Vec::new();
     for (i, r) in routes.iter().enumerate() {
@@ -816,8 +1208,19 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
     points.extend(routes.iter().flat_map(|r| r.legs.iter()).filter_map(|l| l.lat.zip(l.lon)));
     points.push((t.airport.lat, t.airport.lon));
     let cos = t.airport.lat.to_radians().cos().max(0.05);
+    // The whole of the safe-altitude circle, on an arrival, which a chart frames the
+    // procedures in: the sectors are what the crew descends into.
+    if let (Some(msa), false) = (&t.msa, sid) {
+        let (dlat, dlon) = (msa.radius_nm / 60.0, msa.radius_nm / 60.0 / cos);
+        points.extend([(msa.centre.0 + dlat, msa.centre.1), (msa.centre.0 - dlat, msa.centre.1), (msa.centre.0, msa.centre.1 + dlon), (msa.centre.0, msa.centre.1 - dlon)]);
+    }
     let reach = points.iter().map(|(lat, lon)| ((lat - t.airport.lat) * 60.0).hypot((lon - t.airport.lon) * 60.0 * cos)).fold(0.0f64, f64::max);
-    let v = View::around_within((t.airport.lat, t.airport.lon), &points, x, y, w, h, 10.0, 320.0, (reach * 0.07).max(2.0));
+    // On a landscape page the routes are framed in what the panel leaves.
+    let frame_w = panel.map_or(w, |(pw, _)| w - pw - 6.0);
+    let v = View::around_within((t.airport.lat, t.airport.lon), &points, x, y, frame_w, h, 10.0, 320.0, (reach * 0.07).max(2.0));
+    // The whole map box shares the frame's scale: the view is widened to the right to
+    // the box's edge, so the ground under the panel is drawn to the same scale.
+    let v = View { deg_w: v.deg_w * (w / frame_w) as f64, w, ..v };
 
     c.save_state();
     c.rect(x, y, w, h);
@@ -825,18 +1228,25 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
     c.end_path();
 
     // The ground, and the sea.
+    let mut highest_ft = 0.0f64;
+    let mut has_water = false;
     if let Some(patch) = &t.patch {
         draw_terrain(c, patch, &v, t.field_elev_ft.max(WATER_NEEDS_FIELD_FT));
+        for h in &patch.heights {
+            if h.is_finite() {
+                highest_ft = highest_ft.max(*h as f64 / 0.3048);
+                has_water |= (*h as f64 / 0.3048) <= WATER_FT;
+            }
+        }
     }
     let mut taken = Taken::default();
-    // The controlled airspace the airport sits in: its outer edge, in red.
-    if let Some(outer) = t
-        .airspace
-        .iter()
-        .max_by(|a, b| extent(&a.boundary).total_cmp(&extent(&b.boundary)))
-    {
+    if let Some((pw, ph)) = panel {
+        taken.reserve(x + w - pw - 4.0, y + h - ph - 4.0, pw + 4.0, ph + 4.0);
+    }
+    // Class B airspace, the only kind a departure or arrival chart draws: its outer edge.
+    if let Some(outer) = t.airspace.iter().filter(|a| a.class == "B").max_by(|a, b| extent(&a.boundary).total_cmp(&extent(&b.boundary))) {
         c.save_state();
-        c.set_stroke_rgb(AIRSPACE.0, AIRSPACE.1, AIRSPACE.2);
+        c.set_stroke_rgb(RED.0, RED.1, RED.2);
         c.set_line_width(1.4);
         for (i, (lat, lon)) in outer.boundary.iter().enumerate() {
             let (px, py) = v.at(*lat, *lon);
@@ -849,16 +1259,10 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
         c.close_path();
         c.stroke();
         c.restore_state();
-        // Its class, written along its edge where the edge is on the paper.
-        let on_page: Vec<(f32, f32)> = outer.boundary.iter().map(|(la, lo)| v.at(*la, *lo)).collect();
-        if let Some(pair) = on_page.windows(2).filter(|p| v.inside(p[0], -30.0) && v.inside(p[1], -30.0)).max_by(|a, b| {
-            let la = (a[1].0 - a[0].0).hypot(a[1].1 - a[0].1);
-            let lb = (b[1].0 - b[0].0).hypot(b[1].1 - b[0].1);
-            la.total_cmp(&lb)
-        }) {
-            let mid = ((pair[0].0 + pair[1].0) / 2.0, (pair[0].1 + pair[1].1) / 2.0);
-            text_along(c, b, 9.0, mid, (pair[1].0 - pair[0].0, pair[1].1 - pair[0].1), 4.0, &format!("CLASS {}", outer.class), AIRSPACE);
-        }
+    }
+    // The safe altitude round its fix, on an arrival: a departure page leaves it off.
+    if let (Some(msa), false) = (&t.msa, sid) {
+        draw_msa(c, b, &v, msa, variation, &mut taken);
     }
 
     // The airport: a grey disc with its runways on it.
@@ -880,10 +1284,9 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
     }
     taken.reserve(ax - radius, ay - radius, radius * 2.0, radius * 2.0);
     taken.reserve(v.x, v.y + v.h - 96.0, 72.0, 96.0);
-    taken.reserve(v.x, v.y, v.w * 0.4, 28.0);
+    taken.reserve(v.x, v.y, 200.0, 28.0);
 
-    // The other airports, in grey: a small ringed symbol, and the place, the name and
-    // the code under it, the way a chart names the airports round about.
+    // The other airports, in grey.
     let grey = (0.42, 0.42, 0.42);
     for (place, name, code, lat, lon) in &t.nearby {
         let (px, py) = v.at(*lat, *lon);
@@ -893,8 +1296,6 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
         let lines: Vec<&str> = [place.as_str(), name.as_str(), code.as_str()].into_iter().filter(|s| !s.is_empty()).collect();
         let bw = lines.iter().map(|l| text_width(f, 6.8, l)).fold(0.0f32, f32::max) + 2.0;
         let bh = lines.len() as f32 * 8.0;
-        // Above the symbol if there is room, else below, else to either side, and always
-        // on the paper.
         let place_at = [(px - bw / 2.0, py + 8.0), (px - bw / 2.0, py - 8.0 - bh), (px + 9.0, py - bh / 2.0), (px - 9.0 - bw, py - bh / 2.0)]
             .into_iter()
             .find(|(x0, y0)| taken.free(*x0, *y0, bw, bh) && taken.free(px - 6.0, py - 6.0, 12.0, 12.0) && v.inside((*x0, *y0), 0.0) && v.inside((x0 + bw, y0 + bh), 0.0));
@@ -918,11 +1319,18 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
     }
 
     // The beacons.
-    let wanted: Vec<String> = t.procedure.transitions.iter().flat_map(|tr| tr.legs.iter()).flat_map(|l| [l.navaid.clone(), l.fix.clone()]).filter(|s| !s.is_empty()).collect();
+    let wanted: Vec<String> = t.procedures.iter().flat_map(|p| p.transitions.iter()).flat_map(|tr| tr.legs.iter()).flat_map(|l| [l.navaid.clone(), l.fix.clone()]).filter(|s| !s.is_empty()).collect();
     draw_navaids(c, f, b, &v, &t.navaids, &wanted, &mut taken);
 
-    // The tracks: the part every flight flies solid, the transitions dashed.
+    // The published holds the procedures end in, where they are flown.
+    for hold in &t.holds {
+        draw_hold_on_map(c, &v, hold, variation);
+    }
+
+    // The tracks: the part every flight flies solid, the transitions dashed; on a page of
+    // several arrivals, each is its own solid line.
     let mut labelled: Vec<(String, String)> = Vec::new();
+    let mut named_procs: Vec<String> = Vec::new();
     for (i, pieces) in &drawn {
         let r = &routes[*i];
         let dashed = r.part == "enroute";
@@ -947,19 +1355,15 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
             }
             c.stroke();
             c.restore_state();
-            // The paper the track covers, so the names of the fixes are put beside it and
-            // not on it.
             for pair in pts.windows(2) {
                 let (a, z) = (pair[0], pair[1]);
                 let steps = ((z.0 - a.0).hypot(z.1 - a.1) / 6.0).ceil().max(1.0) as usize;
                 for s in 0..=steps {
-                    let t = s as f32 / steps as f32;
-                    taken.reserve(a.0 + (z.0 - a.0) * t - 2.5, a.1 + (z.1 - a.1) * t - 2.5, 5.0, 5.0);
+                    let tt = s as f32 / steps as f32;
+                    taken.reserve(a.0 + (z.0 - a.0) * tt - 2.5, a.1 + (z.1 - a.1) * tt - 2.5, 5.0, 5.0);
                 }
             }
             last_page = Some((pts[pts.len() - 2], pts[pts.len() - 1]));
-            // A heading flown to an altitude: the heading along it, the altitude at its
-            // end, as the chart writes them.
             if let Some((hdg, alt)) = p.heading {
                 let (a0, a1) = (pts[pts.len() - 2], pts[pts.len() - 1]);
                 let mid = ((a0.0 + a1.0) / 2.0, (a0.1 + a1.1) / 2.0);
@@ -978,7 +1382,6 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
                     text_along(c, f, 7.0, mid, (a1.0 - a0.0, a1.1 - a0.1), -9.0, "VECTORS", INK_RGB);
                 }
             }
-            // Course and distance along a leg to a fix, once for a leg routes share.
             if p.to_fix && p.points.len() >= 2 {
                 let (a, z) = (p.points[0], *p.points.last().unwrap());
                 let key = (format!("{:.4}{:.4}", a.0, a.1), format!("{:.4}{:.4}", z.0, z.1));
@@ -996,13 +1399,18 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
                 let size = if page_len < 60.0 { 7.5 } else { 8.5 };
                 text_along(c, b, size, mid, (a1.0 - a0.0, a1.1 - a0.1), 4.0, &format!("{course:03.0}\u{b0}"), INK_RGB);
                 text_along(c, f, size - 1.0, mid, (a1.0 - a0.0, a1.1 - a0.1), -9.5, &format!("{nm:.1}"), INK_RGB);
-                // The transition's name along its longest leg, as the chart writes it.
-                if r.part == "enroute" && page_len > 110.0 {
-                    let (fix, _) = named_fix(t.procedure);
-                    let name = r.names.first().cloned().unwrap_or_default();
+                // The name along the longest leg: a transition's, or on a page of several
+                // procedures (or one with no transitions) the procedure's own.
+                if page_len > 110.0 {
                     let q = (a0.0 + (a1.0 - a0.0) * 0.28, a0.1 + (a1.1 - a0.1) * 0.28);
-                    let _ = fix;
-                    text_along(c, b, 8.0, q, (a1.0 - a0.0, a1.1 - a0.1), 4.0, &format!("{name} ({}.{name})", t.procedure.name), INK_RGB);
+                    let dir = (a1.0 - a0.0, a1.1 - a0.1);
+                    if r.part == "enroute" {
+                        let name = r.names.first().cloned().unwrap_or_default();
+                        text_along(c, b, 8.0, q, dir, 4.0, &format!("{name} ({}.{name})", t.procedure.name), INK_RGB);
+                    } else if !named_procs.contains(&r.of) && (t.procedures.len() > 1 || !routes.iter().any(|x| x.part == "enroute")) {
+                        named_procs.push(r.of.clone());
+                        text_along(c, b, 8.0, q, dir, 4.0, &r.of, INK_RGB);
+                    }
                 }
             }
         }
@@ -1010,19 +1418,40 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
             arrow_head(c, from, to, INK);
         }
     }
-    // The fixes over the tracks, with what is asked at each.
+    // The fixes over the tracks, with what is asked at each, and what part the fix
+    // plays: where an arrival ends in a hold it is the clearance limit, and where an
+    // approach starts it is the initial approach fix.
+    let iafs: Vec<String> = t
+        .airport
+        .procedures
+        .iter()
+        .filter(|p| p.kind == Kind::Approach)
+        .flat_map(|p| p.transitions.iter())
+        .filter(|tr| tr.part.is_empty())
+        .filter_map(|tr| tr.legs.first().map(|l| l.fix.clone()))
+        .collect();
     let mut seen: Vec<String> = Vec::new();
     for r in &routes {
         for leg in &r.legs {
-            draw_fix_block(c, f, b, &v, leg, rnav, &mut taken, &mut seen);
+            let mut notes: Vec<&str> = Vec::new();
+            if !sid && t.holds.iter().any(|h| h.fix == leg.fix) {
+                notes.push("Clearance limit");
+            }
+            if !sid && iafs.contains(&leg.fix) {
+                notes.push("IAF");
+            }
+            draw_fix_block(c, f, b, &v, leg, &notes, rnav, &mut taken, &mut seen);
         }
     }
     let holds: Vec<&Leg> = routes.iter().flat_map(|r| r.legs.iter().copied()).collect();
     draw_holds(c, f, &v, &holds);
+    if let Some(patch) = &t.patch {
+        draw_peak(c, f, patch, &v, t.field_elev_ft, &mut taken);
+    }
     draw_mora(c, b, &v, &t.mora, &mut taken);
     c.restore_state();
 
-    draw_furniture(c, f, b, &v, t.airport.magnetic_variation_deg, None, false, 0.0, 0.0);
+    draw_furniture(c, f, b, &v, t.airport.magnetic_variation_deg, None, has_water, highest_ft, 0.0);
     box_outline(c, x, y, w, h, 1.0, INK);
     v
 }
@@ -1042,13 +1471,11 @@ fn draw_mora(c: &mut dyn Canvas, b: Name, v: &View, mora: &[(f64, f64, f64)], ta
         let small = format!("{}", ((ft % 1000.0) / 100.0).round() as i64 % 10);
         let bw = text_width(b, 20.0, &big);
         let (box_w, box_h) = (bw + 14.0, 22.0);
-        // The middle of the visible part first, then outwards across it on a grid.
         let mut spots: Vec<(f64, f64, f64)> = Vec::new();
         for i in 0..=6 {
             for j in 0..=6 {
                 let (la, lo) = (s + (n - s) * i as f64 / 6.0, w0 + (e - w0) * j as f64 / 6.0);
-                let d = (i as f64 - 3.0).hypot(j as f64 - 3.0);
-                spots.push((d, la, lo));
+                spots.push(((i as f64 - 3.0).hypot(j as f64 - 3.0), la, lo));
             }
         }
         spots.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -1075,17 +1502,16 @@ fn extent(points: &[(f64, f64)]) -> f64 {
     (n - s) * (e - wst)
 }
 
-/// Gather what a departure or arrival chart needs and draw it with `f`.
+/// Gather what a departure or arrival chart needs and draw it with `f`. `name` is any one
+/// of the procedures on the page; the others a chart groups with it come too.
 pub fn with_terminal<R>(icao: &str, name: &str, f: impl FnOnce(&Terminal) -> Result<R>) -> Result<R> {
     let icao = icao.to_uppercase();
     let found = crate::sources::msfs::procedures::find(&icao)?.ok_or_else(|| anyhow::anyhow!("{icao} has no procedures in the simulator's navigation data"))?;
-    let procedure = found
-        .procedures
-        .iter()
-        .find(|p| p.kind != Kind::Approach && p.name.eq_ignore_ascii_case(name))
+    let group = groups(&found)
+        .into_iter()
+        .find(|g| g.iter().any(|p| p.name.eq_ignore_ascii_case(name)))
         .ok_or_else(|| anyhow::anyhow!("{icao} has no departure or arrival called {name}"))?;
-    // The airport's own name and place, where the index has them. Offline is no reason
-    // not to draw the chart.
+    let procedure = group[0];
     let http = crate::sources::http::Http::new(120, 0);
     let cache = crate::cache::Cache::for_index(false);
     let (mut airport_name, mut airport_iata, mut airport_place, mut field_elev_ft) = (None, None, None, 0.0);
@@ -1093,8 +1519,6 @@ pub fn with_terminal<R>(icao: &str, name: &str, f: impl FnOnce(&Terminal) -> Res
     {
         let mut idx = crate::sources::index::AirportIndex::default();
         if idx.load_ourairports_online(&http, &cache).is_ok() {
-            // The airports a crew would see out of the window on the way, named the way
-            // a chart names them: the place, then the airport.
             let cos = found.lat.to_radians().cos().max(0.05);
             for (code, e) in &idx.by_icao {
                 if code == &icao || !matches!(e.kind.as_deref(), Some("large_airport") | Some("medium_airport")) {
@@ -1111,8 +1535,6 @@ pub fn with_terminal<R>(icao: &str, name: &str, f: impl FnOnce(&Terminal) -> Res
                 };
                 nearby.push((place, shorten(e.name.as_deref().unwrap_or("")), code.clone(), e.lat, e.lon));
             }
-        }
-        if idx.by_icao.contains_key(&icao) {
             if let Some(e) = idx.get(&icao) {
                 airport_name = e.name.clone();
                 airport_iata = e.iata.clone().filter(|s| s.len() == 3);
@@ -1125,38 +1547,55 @@ pub fn with_terminal<R>(icao: &str, name: &str, f: impl FnOnce(&Terminal) -> Res
             }
         }
     }
-    // Every runway the procedure serves, with its other end, which is its reciprocal.
+    let served: Vec<String> = {
+        let mut all: Vec<String> = group.iter().flat_map(|p| runways_of(p)).collect();
+        all.sort();
+        all.dedup();
+        all
+    };
     let mut runways = Vec::new();
-    for rw in runways_of(procedure) {
-        let Some(near) = crate::sources::navdata::runway_threshold(&icao, &rw) else { continue };
-        let Some(far) = reciprocal(&rw).and_then(|r| crate::sources::navdata::runway_threshold(&icao, &r)) else { continue };
-        runways.push((rw, near, far));
+    for rw in &served {
+        let Some(near) = crate::sources::navdata::runway_threshold(&icao, rw) else { continue };
+        let Some(far) = reciprocal(rw).and_then(|r| crate::sources::navdata::runway_threshold(&icao, &r)) else { continue };
+        runways.push((rw.clone(), near, far));
     }
-    // Every runway at the airport, for the picture of it.
     let mut all_runways = Vec::new();
-    for n in 1..=36u32 {
+    for n in 1..=18u32 {
         for side in ["", "L", "C", "R"] {
             let rw = format!("{n:02}{side}");
-            if n > 18 {
-                continue;
-            }
             let (Some(a), Some(bb)) = (crate::sources::navdata::runway_threshold(&icao, &rw), reciprocal(&rw).and_then(|r| crate::sources::navdata::runway_threshold(&icao, &r))) else { continue };
             all_runways.push((a, bb));
         }
     }
-    let reach = procedure
-        .transitions
-        .iter()
-        .flat_map(|t| t.legs.iter())
-        .filter_map(|l| l.lat.zip(l.lon))
-        .map(|(lat, lon)| ((lat - found.lat) * 60.0).hypot((lon - found.lon) * 60.0 * found.lat.to_radians().cos().max(0.05)))
-        .fold(20.0f64, f64::max);
+    let placed: Vec<(f64, f64)> = group.iter().flat_map(|p| p.transitions.iter()).flat_map(|t| t.legs.iter()).filter_map(|l| l.lat.zip(l.lon)).collect();
+    let cos = found.lat.to_radians().cos().max(0.05);
+    let reach = placed.iter().map(|(lat, lon)| ((lat - found.lat) * 60.0).hypot((lon - found.lon) * 60.0 * cos)).fold(20.0f64, f64::max);
+    // Landscape where the routes spread wider than they run tall, as the paper then has
+    // more room for them on its side.
+    let (mut n, mut s, mut e, mut w) = (found.lat, found.lat, found.lon, found.lon);
+    for (lat, lon) in &placed {
+        n = n.max(*lat);
+        s = s.min(*lat);
+        e = e.max(*lon);
+        w = w.min(*lon);
+    }
+    let page = if (e - w) * cos > (n - s) * 0.8 { LANDSCAPE } else { PORTRAIT };
+    // The holds the procedures end in, from the published ones at those fixes.
+    let mut holds: Vec<Hold> = Vec::new();
+    if group[0].kind == Kind::Star {
+        for p in &group {
+            let end = meeting_fix(p);
+            if end.is_empty() || holds.iter().any(|h| h.fix == end) {
+                continue;
+            }
+            if let Some(h) = crate::sources::navdata::hold_at(&end) {
+                holds.push(h);
+            }
+        }
+    }
     let navaids = crate::sources::navdata::beacons_near(found.lat, found.lon, reach.min(150.0));
     let deg = reach / 60.0 * 1.3;
-    let cos = found.lat.to_radians().cos().max(0.05);
     let mora = crate::sources::navdata::grid_mora(found.lat - deg, found.lat + deg, found.lon - deg / cos, found.lon + deg / cos);
-    // The terrain over the whole of it, at a spacing that keeps the patch a size the
-    // network and the drawing can manage.
     let radius_km = (reach * 1.852 * 1.35).clamp(20.0, 330.0);
     let step_m = (radius_km * 1000.0 / 260.0).max(90.0);
     // The model has no tile over the open sea at all, so a square with nothing in it is
@@ -1176,6 +1615,10 @@ pub fn with_terminal<R>(icao: &str, name: &str, f: impl FnOnce(&Terminal) -> Res
         airport_place,
         field_elev_ft,
         procedure,
+        procedures: group,
+        holds,
+        msa: crate::sources::navdata::msa(&icao, (found.lat, found.lon)),
+        page,
         navaids,
         runways,
         all_runways,
@@ -1204,14 +1647,14 @@ fn reciprocal(runway: &str) -> Option<String> {
 
 /// Write a departure or arrival chart as a PDF.
 pub fn write(t: &Terminal, out: &FsPath) -> Result<()> {
-    write_page(out, |c, f, b| {
+    write_page_sized(out, t.page, |c, f, b| {
         let _ = draw(c, t, f, b);
     })
 }
 
 /// The same as a picture, by day and by night.
 pub fn picture(t: &Terminal, scale: f32) -> Result<Picture> {
-    picture_of(scale, |c, f, b| draw(c, t, f, b))
+    picture_of_sized(scale, t.page, |c, f, b| draw(c, t, f, b))
 }
 
 #[cfg(test)]
@@ -1238,6 +1681,19 @@ mod tests {
     }
 
     #[test]
+    fn an_arrival_routing_reads_the_way_the_table_writes_it() {
+        let mut a = leg("TF", "MA534");
+        a.altitude_ft = Some(4000.0);
+        a.altitude_rule = AltitudeRule::AtOrAbove;
+        let mut p = leg("TF", "PILIM");
+        p.altitude_ft = Some(3000.0);
+        p.altitude_rule = AltitudeRule::AtOrAbove;
+        let legs = [leg("IF", "LIDRO"), leg("TF", "MA536"), a, p];
+        let refs: Vec<&Leg> = legs.iter().collect();
+        assert_eq!(routing_short(&refs), "LIDRO - MA536 - MA534 (4000+) - PILIM (3000+).");
+    }
+
+    #[test]
     fn names_and_runways_are_written_as_a_chart_writes_them() {
         let p = Procedure {
             kind: Kind::Sid,
@@ -1257,14 +1713,37 @@ mod tests {
     }
 
     #[test]
+    fn arrivals_to_the_same_fix_under_the_same_letter_share_a_page() {
+        let star = |name: &str, first: &str| Procedure {
+            kind: Kind::Star,
+            name: name.into(),
+            approach_type: None,
+            suffix: None,
+            variant: None,
+            runway: String::new(),
+            transitions: vec![crate::sources::msfs::procedures::Transition { name: "RW05".into(), part: "runway".into(), legs: vec![leg("IF", first), leg("TF", "MA534"), leg("TF", "PILIM")] }],
+        };
+        let a = AirportProcedures {
+            icao: "LPMA".into(),
+            lat: 32.69,
+            lon: -16.77,
+            procedures: vec![star("LIDR1P", "LIDRO"), star("RAKU1P", "RAKUN"), star("NIDU2X", "NIDUL")],
+            magnetic_variation_deg: None,
+            frequencies: Vec::new(),
+            source: String::new(),
+        };
+        let g = groups(&a);
+        assert_eq!(g.len(), 2);
+        assert_eq!(g[0].iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), vec!["LIDR1P", "RAKU1P"]);
+    }
+
+    #[test]
     fn a_left_turn_goes_the_long_way_round_when_it_says_so() {
-        // Out on 314 and back to a fix to the south-west: left is the long way.
         let from = (40.65, -73.80);
         let fix = (40.60, -73.85);
         let left = turn_to_fix(from, 314.0, Some(Turn::Left), fix);
         let right = turn_to_fix(from, 314.0, Some(Turn::Right), fix);
         assert!(left.len() > 3 && right.len() > 3);
-        // The left turn swings out west before coming back; the right one does not.
         let west = |pts: &[(f64, f64)]| pts.iter().map(|p| p.1).fold(f64::MAX, f64::min);
         assert!(west(&left) < west(&right) || left.len() != right.len());
     }

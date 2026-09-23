@@ -3168,12 +3168,17 @@ pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
 /// One A4 page as a PDF, drawn by `paint` in Helvetica and Helvetica-Bold (named `f`
 /// and `b`).
 fn write_page(out: &FsPath, paint: impl FnOnce(&mut dyn Canvas, Name, Name)) -> Result<()> {
+    write_page_sized(out, (W, H), paint)
+}
+
+/// The same for a page of any size: a landscape one is A4 turned on its side.
+fn write_page_sized(out: &FsPath, size: (f32, f32), paint: impl FnOnce(&mut dyn Canvas, Name, Name)) -> Result<()> {
     let mut pdf = Pdf::new();
     let (cat, tree, page_id, content_id, font_id, bold_id) = (Ref::new(1), Ref::new(2), Ref::new(3), Ref::new(4), Ref::new(5), Ref::new(6));
     pdf.catalog(cat).pages(tree);
     pdf.pages(tree).kids([page_id]).count(1);
     let mut page = pdf.page(page_id);
-    page.media_box(Rect::new(0.0, 0.0, W, H));
+    page.media_box(Rect::new(0.0, 0.0, size.0, size.1));
     page.parent(tree);
     page.contents(content_id);
     page.resources().fonts().pair(Name(b"F"), font_id).pair(Name(b"B"), bold_id);
@@ -3238,7 +3243,11 @@ pub fn picture(ch: &Chart, est: &Estimate, scale: f32) -> Result<Picture> {
 /// Any page as a picture, by day and by night, from what `paint` draws; it returns the
 /// window its map shows, which is how the picture is put on the ground.
 fn picture_of(scale: f32, paint: impl FnOnce(&mut dyn Canvas, Name, Name) -> View) -> Result<Picture> {
-    let mut r = Raster::new(W, H, scale)?;
+    picture_of_sized(scale, (W, H), paint)
+}
+
+fn picture_of_sized(scale: f32, size: (f32, f32), paint: impl FnOnce(&mut dyn Canvas, Name, Name) -> View) -> Result<Picture> {
+    let mut r = Raster::new(size.0, size.1, scale)?;
     let v = paint(&mut r, Name(b"F"), Name(b"B"));
     let day = r.png_bytes()?;
     r.to_night();
@@ -3246,8 +3255,9 @@ fn picture_of(scale: f32, paint: impl FnOnce(&mut dyn Canvas, Name, Name) -> Vie
     let (width, height) = r.size();
     // The page is measured up from its foot and the picture down from its head.
     let s = scale as f64;
+    let h = size.1;
     let plan = Georef {
-        pixels: (v.x as f64 * s, (H - v.y) as f64 * s, (v.x + v.w) as f64 * s, (H - v.y - v.h) as f64 * s),
+        pixels: (v.x as f64 * s, (h - v.y) as f64 * s, (v.x + v.w) as f64 * s, (h - v.y - v.h) as f64 * s),
         latlng: (v.west, v.north - v.deg_h, v.west + v.deg_w, v.north),
     };
     Ok(Picture { day, night, width, height, plan })
