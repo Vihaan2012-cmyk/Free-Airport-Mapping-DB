@@ -386,8 +386,8 @@ impl<'a> Context<'a> {
             let runways = crate::sources::navdata::runways(&req.destination.icao);
             choose_runway(req.arr_runway.as_deref(), req.destination_wind, &runways)
         };
-        let sid = dep_runway.as_deref().and_then(|rw| procedures::sid_for_runway(&req.origin.icao, rw, req.destination.pos));
-        let star = arr_runway.as_deref().and_then(|rw| procedures::star_for_runway(&req.destination.icao, rw, req.origin.pos));
+        let sid = dep_runway.as_deref().and_then(|rw| procedures::sid_for_runway(&req.origin.icao, rw, req.destination.pos, graph));
+        let star = arr_runway.as_deref().and_then(|rw| procedures::star_for_runway(&req.destination.icao, rw, req.origin.pos, graph));
         Context::build_with(graph, req, dep_runway, arr_runway, sid, star, join_width, ellipse_factor, direct_max_nm)
     }
 
@@ -561,12 +561,35 @@ impl<'a> Context<'a> {
         points.push(Waypoint::new(self.req.origin.icao.clone(), self.req.origin.pos, self.dep_runway.clone().unwrap_or_default(), PointKind::Airport));
         let sid_name = self.sid.as_ref().map(|s| s.ident.clone());
         if let Some(sid) = &self.sid {
-            points.extend(sid.points.iter().cloned());
+            let mut sid_points = sid.points.clone();
+            // Where the SID's own last fix is also the fix the search joined the airway
+            // network at — by identity, per `join_candidates` — it is one fix flown once,
+            // not two printed back to back with nothing between. The join keeps the
+            // network's own copy, since that is the one whose `via` already says what is
+            // flown out of it, but carries across whatever the SID published there.
+            if let (Some(last), Some(first)) = (sid_points.last(), enroute.first_mut()) {
+                if same_fix(last, first) {
+                    first.alt_min_ft = first.alt_min_ft.or(last.alt_min_ft);
+                    first.alt_max_ft = first.alt_max_ft.or(last.alt_max_ft);
+                    first.speed_max_kt = first.speed_max_kt.or(last.speed_max_kt);
+                    sid_points.pop();
+                }
+            }
+            points.extend(sid_points);
         }
         points.extend(enroute);
         let star_name = self.star.as_ref().map(|s| s.ident.clone());
         if let Some(star) = &self.star {
-            points.extend(star.points.iter().cloned());
+            let mut star_points = star.points.clone();
+            if let (Some(last), Some(first)) = (points.last_mut(), star_points.first()) {
+                if same_fix(last, first) {
+                    last.alt_min_ft = last.alt_min_ft.or(first.alt_min_ft);
+                    last.alt_max_ft = last.alt_max_ft.or(first.alt_max_ft);
+                    last.speed_max_kt = last.speed_max_kt.or(first.speed_max_kt);
+                    star_points.remove(0);
+                }
+            }
+            points.extend(star_points);
         }
         points.push(Waypoint::new(self.req.destination.icao.clone(), self.req.destination.pos, String::new(), PointKind::Airport));
 
@@ -640,6 +663,13 @@ fn plan_routes_with(graph: &Graph, req: &RouteRequest, most: usize, dep_runway: 
 #[cfg(test)]
 fn plan_route_with(graph: &Graph, req: &RouteRequest, dep_runway: Option<String>, arr_runway: Option<String>, sid: Option<procedures::Procedure>, star: Option<procedures::Procedure>) -> anyhow::Result<FiledRoute> {
     plan_routes_with(graph, req, 1, dep_runway, arr_runway, sid, star)?.into_iter().next().ok_or_else(|| anyhow::anyhow!("no route"))
+}
+
+/// Whether two waypoints are the same published fix: the same name at, near enough for
+/// floating point, the same place. What [`Context::assemble`] uses to tell a SID or STAR
+/// boundary joined to the airway network by identity from one merely close to it.
+fn same_fix(a: &Waypoint, b: &Waypoint) -> bool {
+    a.ident == b.ident && (a.pos.0 - b.pos.0).abs() < 1e-6 && (a.pos.1 - b.pos.1).abs() < 1e-6
 }
 
 fn plan_from_context(ctx: &Context, req: &RouteRequest, most: usize) -> anyhow::Result<Vec<FiledRoute>> {
@@ -847,6 +877,70 @@ mod tests {
         req.route_rules = std::slice::from_ref(&rule_ref);
         let route = plan_route_with(&g, &req, None, None, None, None).expect("a route that avoids the north");
         assert!(route.points.iter().all(|w| !(w.ident.starts_with('N') && w.kind == PointKind::Enroute)), "{}", route.route_string());
+    }
+
+    /// A SID whose own last fix is written under the same name and place as a network fix
+    /// ("N0") joins it by identity. `Context::assemble` is exercised directly, with the
+    /// path it is given fixed by hand, rather than through the search: the search is free
+    /// to pick any entry candidate whose *own* direct leg turns out cheapest overall — that
+    /// is what it is for — so a test of the merge itself must not depend on which one it
+    /// happens to prefer on a given network. The assembled route should carry the SID's
+    /// name, print "N0" exactly once rather than the SID's own copy immediately followed by
+    /// the network's, and keep the constraint the SID published there.
+    #[test]
+    fn a_sid_joins_the_network_by_identity_without_printing_the_join_fix_twice() {
+        let g = ladder();
+        let o = airport("WEST", (1.0, -0.6));
+        let d = airport("EAST", (0.0, 5.8));
+        let air = StillAir;
+        let cost = simple_cost(&air);
+        let mut req = base_request(&o, &d, &cost, &air);
+        req.levels_ft = &[35000.0];
+        let mut joined = Waypoint::new("N0", (1.0, 0.0), "DEP1A", PointKind::Sid);
+        joined.alt_min_ft = Some(3000.0);
+        let sid = procedures::Procedure {
+            ident: "DEP1A".to_string(),
+            transition: None,
+            points: vec![Waypoint::new("RW09", (1.0, -0.05), "DEP1A", PointKind::Sid), joined],
+        };
+        let ctx = Context::build_with(&g, &req, Some("09".to_string()), None, Some(sid), None, ENTRY_CANDIDATES, None, None).expect("a context");
+        let n0 = g.find("N0", (1.0, 0.0)).expect("N0 is a network fix");
+        let n1 = g.find("N1", (1.0, 1.0)).expect("N1 is a network fix");
+        let steps = vec![search::Step { fix: n0, level_idx: 0, via_airway: None }, search::Step { fix: n1, level_idx: 0, via_airway: None }];
+        let route = ctx.assemble(steps, &|_| 35000.0);
+        assert_eq!(route.sid.as_deref(), Some("DEP1A"));
+        let n0_points: Vec<&Waypoint> = route.points.iter().filter(|w| w.ident == "N0").collect();
+        assert_eq!(n0_points.len(), 1, "{}", route.route_string());
+        assert_eq!(n0_points[0].kind, PointKind::Enroute);
+        assert_eq!(n0_points[0].alt_min_ft, Some(3000.0));
+    }
+
+    /// A STAR whose own first fix is not known to the network at all cannot be merged with
+    /// anything — `same_fix` never matches a fix by a different name in a different place —
+    /// so both it and whatever enroute fix the search actually lands on beforehand should
+    /// still be printed, in order, each once. Which fix that is is the search's business,
+    /// not this test's, so nothing here names one.
+    #[test]
+    fn a_star_with_no_network_fix_at_its_entry_is_not_merged_away() {
+        let g = ladder();
+        let o = airport("WEST", (0.0, -0.8));
+        let d = airport("EAST", (1.0, 5.5));
+        let air = StillAir;
+        let cost = simple_cost(&air);
+        let mut req = base_request(&o, &d, &cost, &air);
+        req.levels_ft = &[35000.0];
+        let star = procedures::Procedure {
+            ident: "ARR1A".to_string(),
+            transition: None,
+            points: vec![Waypoint::new("STARX", (1.3, 5.6), "ARR1A", PointKind::Star), Waypoint::new("RW27", (1.0, 5.75), "ARR1A", PointKind::Star)],
+        };
+        let route = plan_route_with(&g, &req, None, Some("27".to_string()), None, Some(star)).expect("a route");
+        assert_eq!(route.star.as_deref(), Some("ARR1A"));
+        let star_at = route.points.iter().position(|w| w.ident == "STARX" && w.kind == PointKind::Star).expect("STARX present once, as a STAR fix");
+        assert!(star_at > 0, "{}", route.route_string());
+        let before = &route.points[star_at - 1];
+        assert_eq!(before.kind, PointKind::Enroute, "{}", route.route_string());
+        assert_ne!(before.ident, "STARX");
     }
 
     /// A rule that forbids one named airway outright, at any level: used below to force a
