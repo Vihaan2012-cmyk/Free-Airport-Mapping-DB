@@ -593,8 +593,118 @@ pub struct AirwaySegment {
 }
 
 /// Every airway segment in the navigation database: the network a route is planned on.
+/// Every airway segment in the navigation database, kept on disk between runs.
+///
+/// Reading the ninety thousand rows the table holds takes a tenth of a second, which is
+/// nothing against the forty seconds this module used to spend elsewhere and a great deal
+/// against the two milliseconds a route search itself needs. The rows cannot change while a
+/// navigation database stays where it is, so they are written once in a flat binary form —
+/// strings as a length and their bytes, numbers little-endian — and read back after. The key
+/// carries the AIRAC cycle and the file's own size, so a database swapped for a newer cycle,
+/// or replaced in place, is read afresh rather than answered from a stale file.
 pub fn airway_segments() -> Vec<AirwaySegment> {
-    database().map(|db| db.airway_segments()).unwrap_or_default()
+    let Some(db) = database() else { return Vec::new() };
+    let Some(key) = cache_key(db, "airways") else { return db.airway_segments() };
+    let store = crate::cache::Cache::for_index(false);
+    match store.get_or_fetch_bytes(&key, || Ok(encode_segments(&db.airway_segments()))) {
+        Ok(bytes) => match decode_segments(&bytes) {
+            Some(found) if !found.is_empty() => found,
+            // A file written by an older layout, or a truncated one: read the database.
+            _ => db.airway_segments(),
+        },
+        Err(_) => db.airway_segments(),
+    }
+}
+
+/// A cache key for something read whole out of one navigation database: the cycle it
+/// publishes, and the file's own length, so that a database replaced in place without the
+/// cycle changing is still noticed.
+fn cache_key(db: &Database, what: &str) -> Option<String> {
+    let airac = db.airac.clone().unwrap_or_else(|| "none".to_string());
+    let size = std::fs::metadata(&db.path).map(|m| m.len()).unwrap_or(0);
+    (size > 0).then(|| format!("navdata/{what}-{airac}-{size}.bin"))
+}
+
+fn put_str(out: &mut Vec<u8>, s: &str) {
+    out.extend((s.len() as u16).to_le_bytes());
+    out.extend(s.as_bytes());
+}
+
+fn put_opt_f64(out: &mut Vec<u8>, v: Option<f64>) {
+    // Not-a-number stands for absent, which no real altitude ever is.
+    out.extend(v.unwrap_or(f64::NAN).to_le_bytes());
+}
+
+struct Reader<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+        let out = self.bytes.get(self.at..self.at + n)?;
+        self.at += n;
+        Some(out)
+    }
+
+    fn u16(&mut self) -> Option<u16> {
+        Some(u16::from_le_bytes(self.take(2)?.try_into().ok()?))
+    }
+
+    fn u32(&mut self) -> Option<u32> {
+        Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
+    }
+
+    fn f64(&mut self) -> Option<f64> {
+        Some(f64::from_le_bytes(self.take(8)?.try_into().ok()?))
+    }
+
+    fn opt_f64(&mut self) -> Option<Option<f64>> {
+        let v = self.f64()?;
+        Some((!v.is_nan()).then_some(v))
+    }
+
+    fn string(&mut self) -> Option<String> {
+        let n = self.u16()? as usize;
+        Some(String::from_utf8_lossy(self.take(n)?).into_owned())
+    }
+}
+
+const SEGMENTS_MAGIC: u32 = 0x414d_4457;
+
+fn encode_segments(segments: &[AirwaySegment]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(segments.len() * 48 + 8);
+    out.extend(SEGMENTS_MAGIC.to_le_bytes());
+    out.extend((segments.len() as u32).to_le_bytes());
+    for s in segments {
+        put_str(&mut out, &s.airway);
+        for (ident, lat, lon) in [&s.from, &s.to] {
+            put_str(&mut out, ident);
+            out.extend(lat.to_le_bytes());
+            out.extend(lon.to_le_bytes());
+        }
+        out.push(u8::from(s.one_way));
+        put_opt_f64(&mut out, s.min_ft);
+        put_opt_f64(&mut out, s.max_ft);
+    }
+    out
+}
+
+fn decode_segments(bytes: &[u8]) -> Option<Vec<AirwaySegment>> {
+    let mut r = Reader { bytes, at: 0 };
+    if r.u32()? != SEGMENTS_MAGIC {
+        return None;
+    }
+    let n = r.u32()? as usize;
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        let airway = r.string()?;
+        let from = (r.string()?, r.f64()?, r.f64()?);
+        let to = (r.string()?, r.f64()?, r.f64()?);
+        let one_way = *r.take(1)?.first()? != 0;
+        out.push(AirwaySegment { airway, from, to, one_way, min_ft: r.opt_f64()?, max_ft: r.opt_f64()? });
+    }
+    Some(out)
 }
 
 impl Database {
