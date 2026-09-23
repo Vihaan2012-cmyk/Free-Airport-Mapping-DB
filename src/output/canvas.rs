@@ -39,6 +39,7 @@ pub trait Canvas {
     fn set_fill_gray(&mut self, grey: f32);
     fn set_fill_rgb(&mut self, r: f32, g: f32, b: f32);
     fn set_stroke_gray(&mut self, grey: f32);
+    fn set_stroke_rgb(&mut self, r: f32, g: f32, b: f32);
     fn set_line_width(&mut self, w: f32);
     fn set_dash(&mut self, pattern: &[f32], phase: f32);
 
@@ -49,6 +50,10 @@ pub trait Canvas {
     fn text(&mut self, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32);
     /// The same, turned a quarter turn anticlockwise, for a label up the side of a band.
     fn text_turned(&mut self, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32);
+    /// Text in a colour, turned anticlockwise by `angle_deg` about its start: a label
+    /// written along a leg, or an altitude in the blue a chart prints them in.
+    #[allow(clippy::too_many_arguments)]
+    fn text_styled(&mut self, font: Name, size: f32, x: f32, y: f32, angle_deg: f32, s: &str, rgb: (f32, f32, f32));
 }
 
 /// True for the bold face. The two fonts are named F and B in the PDF's resources, and
@@ -104,6 +109,9 @@ impl Canvas for Content {
     fn set_stroke_gray(&mut self, grey: f32) {
         Content::set_stroke_gray(self, grey);
     }
+    fn set_stroke_rgb(&mut self, r: f32, g: f32, b: f32) {
+        Content::set_stroke_rgb(self, r, g, b);
+    }
     fn set_line_width(&mut self, w: f32) {
         Content::set_line_width(self, w);
     }
@@ -130,6 +138,15 @@ impl Canvas for Content {
         self.set_font(font, size);
         // A quarter turn anticlockwise about the point given.
         self.set_text_matrix([0.0, 1.0, -1.0, 0.0, x, y]);
+        self.show(Str(&super::winansi(s)));
+        self.end_text();
+    }
+    fn text_styled(&mut self, font: Name, size: f32, x: f32, y: f32, angle_deg: f32, s: &str, rgb: (f32, f32, f32)) {
+        let (sin, cos) = angle_deg.to_radians().sin_cos();
+        self.begin_text();
+        self.set_fill_rgb(rgb.0, rgb.1, rgb.2);
+        self.set_font(font, size);
+        self.set_text_matrix([cos, sin, -sin, cos, x, y]);
         self.show(Str(&super::winansi(s)));
         self.end_text();
     }
@@ -397,6 +414,9 @@ impl Canvas for Raster {
     fn set_stroke_gray(&mut self, grey: f32) {
         self.state.stroke = tiny_skia::Color::from_rgba(grey, grey, grey, 1.0).unwrap_or(tiny_skia::Color::BLACK);
     }
+    fn set_stroke_rgb(&mut self, r: f32, g: f32, b: f32) {
+        self.state.stroke = tiny_skia::Color::from_rgba(r, g, b, 1.0).unwrap_or(tiny_skia::Color::BLACK);
+    }
     fn set_line_width(&mut self, w: f32) {
         self.state.width = w;
     }
@@ -417,6 +437,75 @@ impl Canvas for Raster {
     }
     fn text_turned(&mut self, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) {
         self.write(font, size, x, y, s, grey, true);
+    }
+    fn text_styled(&mut self, font: Name, size: f32, x: f32, y: f32, angle_deg: f32, s: &str, rgb: (f32, f32, f32)) {
+        self.write_at_angle(font, size, x, y, angle_deg, s, rgb);
+    }
+}
+
+impl Raster {
+    /// Text at any angle and in any colour. A glyph turned through an angle no longer
+    /// lands on whole pixels, so each of its pixels is shared out over the four it falls
+    /// between, which keeps the strokes whole instead of leaving holes in them.
+    #[allow(clippy::too_many_arguments)]
+    fn write_at_angle(&mut self, font: Name, size: f32, x: f32, y: f32, angle_deg: f32, s: &str, rgb: (f32, f32, f32)) {
+        let px = size * self.scale;
+        let (ox, oy) = self.at(x, y);
+        let mut glyphs: Vec<(ab_glyph::OutlinedGlyph, f32)> = Vec::new();
+        {
+            let face = self.face(font);
+            let scaled = face.as_scaled(PxScale::from(px));
+            let mut pen = 0.0f32;
+            let mut previous: Option<ab_glyph::GlyphId> = None;
+            for ch in s.chars() {
+                let id = face.glyph_id(ch);
+                if let Some(prev) = previous {
+                    pen += scaled.kern(prev, id);
+                }
+                let glyph = id.with_scale_and_position(px, ab_glyph::point(0.0, 0.0));
+                if let Some(outlined) = face.outline_glyph(glyph) {
+                    glyphs.push((outlined, pen));
+                }
+                pen += scaled.h_advance(id);
+                previous = Some(id);
+            }
+        }
+        // Along the baseline and down the letter, in pixels: the page's y runs up and the
+        // picture's down, so the turn goes the other way in here.
+        let (sin, cos) = angle_deg.to_radians().sin_cos();
+        let (along, down) = ((cos, -sin), (sin, cos));
+        let width = self.pixmap.width() as i32;
+        let height = self.pixmap.height() as i32;
+        // Coverage gathered first, so that a pixel two glyph pixels share is not blended
+        // twice over.
+        let mut cover: std::collections::HashMap<(i32, i32), f32> = std::collections::HashMap::new();
+        for (outlined, pen) in glyphs {
+            let bounds = outlined.px_bounds();
+            outlined.draw(|gx, gy, coverage| {
+                if coverage <= 0.003 {
+                    return;
+                }
+                let (lx, ly) = (pen + bounds.min.x + gx as f32, bounds.min.y + gy as f32);
+                let fx = ox + lx * along.0 + ly * down.0;
+                let fy = oy + lx * along.1 + ly * down.1;
+                let (ix, iy) = (fx.floor(), fy.floor());
+                let (tx, ty) = (fx - ix, fy - iy);
+                for (dx, dy, w) in [(0, 0, (1.0 - tx) * (1.0 - ty)), (1, 0, tx * (1.0 - ty)), (0, 1, (1.0 - tx) * ty), (1, 1, tx * ty)] {
+                    *cover.entry((ix as i32 + dx, iy as i32 + dy)).or_insert(0.0) += coverage * w;
+                }
+            });
+        }
+        let data = self.pixmap.pixels_mut();
+        for ((ix, iy), a) in cover {
+            if ix < 0 || iy < 0 || ix >= width || iy >= height {
+                continue;
+            }
+            let a = a.clamp(0.0, 1.0);
+            let index = (iy * width + ix) as usize;
+            let under = data[index].demultiply();
+            let mix = |over: f32, under: u8| (over * 255.0 * a + under as f32 * (1.0 - a)) as u8;
+            data[index] = tiny_skia::ColorU8::from_rgba(mix(rgb.0, under.red()), mix(rgb.1, under.green()), mix(rgb.2, under.blue()), 255).premultiply();
+        }
     }
 }
 
