@@ -122,34 +122,95 @@ fn procedures_for(icao: &str) -> Result<AirportProcedures> {
     procedures::find(icao)?.ok_or_else(|| anyhow!("{icao} has no procedures in the simulator's navigation data"))
 }
 
+/// One entry on an airport's chart list, before it is put in the shape a flight bag wants.
+struct Entry {
+    id: String,
+    category: &'static str,
+    type_code: &'static str,
+    precision: bool,
+    index_number: String,
+    name: String,
+    procedures: Vec<String>,
+    runways: Vec<String>,
+}
+
+/// Every chart an airport has: its departures, its arrivals and its approaches, in the
+/// order a chart binder files them. A departure or arrival page carries every procedure
+/// a chart puts together on one page, and its id names the first of them.
+fn entries(icao: &str, found: &AirportProcedures) -> Vec<Entry> {
+    use crate::output::approach::terminal;
+    use crate::sources::msfs::procedures::Kind;
+    let mut out = Vec::new();
+    let letter = |n: usize| if n == 0 { String::new() } else { ((b'A' + (n as u8 - 1).min(25)) as char).to_string() };
+    let groups = terminal::groups(found);
+    for (kind, category, code, rnav_code, series) in [(Kind::Star, "ARR", "J", "JG", "10-2"), (Kind::Sid, "DEP", "G", "GG", "10-3")] {
+        for (n, g) in groups.iter().filter(|g| g[0].kind == kind).enumerate() {
+            let mut runways: Vec<String> = g.iter().flat_map(|p| terminal::runways_of(p)).collect();
+            runways.sort();
+            runways.dedup();
+            let rnav = g.iter().all(|p| terminal::is_rnav(p));
+            out.push(Entry {
+                id: format!("{icao}-{category}-{}", g[0].name),
+                category,
+                type_code: if rnav { rnav_code } else { code },
+                precision: false,
+                index_number: format!("{series}{}", letter(n)),
+                name: g.iter().map(|p| terminal::title(p)).collect::<Vec<_>>().join(" / "),
+                procedures: g.iter().map(|p| p.name.clone()).collect(),
+                runways,
+            });
+        }
+    }
+    for (n, p) in approach::approaches(found).into_iter().enumerate() {
+        out.push(Entry {
+            id: chart_id(icao, p),
+            category: "APP",
+            type_code: type_code(p.approach_type),
+            precision: matches!(p.approach_type, Some(ApproachType::Ils)),
+            index_number: format!("11-{}", n + 1),
+            name: approach::title_of(p),
+            procedures: vec![p.name.clone()],
+            runways: vec![p.runway.clone()],
+        });
+    }
+    out
+}
+
+/// What a chart already drawn says about itself: where its plan is on the ground, and its
+/// size, which a landscape page does not share with the rest.
+fn drawn_meta(dir: &std::path::Path, id: &str) -> Option<Value> {
+    std::fs::read_to_string(dir.join(format!("{id}.json"))).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok())
+}
+
 /// The airport's charts, in the shape `getChartsIndex` returns. `base` is the address
 /// the charts are fetched back from, as the flight bag reached this server.
+///
+/// Asking for the list starts every chart on it drawing in the background, approaches
+/// first, so that by the time one is chosen it is usually waiting.
 pub fn index_json(icao: &str, base: &str) -> Result<Value> {
     let icao = icao.to_uppercase();
     let found = procedures_for(&icao)?;
     let (width, height) = approach::picture_size(SCALE);
     let date = crate::sources::msfs::airac_dates().map(|(from, _)| from).unwrap_or_default();
     let dir = cache_dir(&icao);
+    let list = entries(&icao, &found);
     let mut charts = Vec::new();
-    for (n, p) in approach::approaches(&found).into_iter().enumerate() {
-        let id = chart_id(&icao, p);
+    for e in &list {
+        let id = &e.id;
         let url = |kind: &str, theme: &str| format!("{base}/v2/charts/{icao}/{id}{kind}?theme={theme}");
-        // A chart already drawn knows where its plan is on the ground; one not yet drawn
-        // is listed without, and gains it the next time the list is asked for.
-        let bounds = std::fs::read_to_string(dir.join(format!("{id}.json"))).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
         let mut chart = json!({
             "id": id,
             "icao_airport_identifier": icao,
-            "category": "APP",
-            "type_code": type_code(p.approach_type),
-            "precision_approach": matches!(p.approach_type, Some(ApproachType::Ils)),
-            "index_number": format!("11-{}", n + 1),
-            "name": approach::title_of(p),
+            "category": e.category,
+            "type_code": e.type_code,
+            "precision_approach": e.precision,
+            "index_number": e.index_number,
+            "name": e.name,
             "revision_date": date,
             "width": width,
             "height": height,
-            "procedures": [p.name],
-            "runways": [p.runway],
+            "procedures": e.procedures,
+            "runways": e.runways,
             "image_day_url": url(".png", "day"),
             "image_night_url": url(".png", "night"),
             "thumb_day_url": url(".thumb.png", "day"),
@@ -161,14 +222,43 @@ pub fn index_json(icao: &str, base: &str) -> Result<Value> {
             "is_georeferenced": false,
             "bounding_boxes": Value::Null,
         });
-        if let Some(b) = bounds {
+        // A chart already drawn knows where its plan is on the ground and how big it
+        // is; one not yet drawn gains them the next time the list is asked for.
+        if let Some(meta) = drawn_meta(&dir, id) {
+            let planview = meta.get("planview").cloned().unwrap_or_else(|| meta.clone());
             chart["is_georeferenced"] = json!(true);
-            chart["bounding_boxes"] = json!({ "planview": b, "insets": [] });
+            chart["bounding_boxes"] = json!({ "planview": planview, "insets": [] });
+            if let (Some(w), Some(h)) = (meta.get("width"), meta.get("height")) {
+                chart["width"] = w.clone();
+                chart["height"] = h.clone();
+            }
         }
         charts.push(chart);
     }
-    crate::term::info(&format!("[{icao}] Chart list: {} approaches", charts.len()));
+    let count = |c: &str| list.iter().filter(|e| e.category == c).count();
+    crate::term::info(&format!("[{icao}] Chart list: {} departure, {} arrival and {} approach pages", count("DEP"), count("ARR"), count("APP")));
+    draw_ahead(&icao, list.iter().filter(|e| e.category == "APP").chain(list.iter().filter(|e| e.category != "APP")).map(|e| e.id.clone()).collect());
     Ok(json!({ "charts": charts }))
+}
+
+/// Draw an airport's charts in the background, once per airport while the bridge runs.
+fn draw_ahead(icao: &str, ids: Vec<String>) {
+    static STARTED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    {
+        let mut started = STARTED.lock().unwrap_or_else(|e| e.into_inner());
+        if started.iter().any(|s| s == icao) {
+            return;
+        }
+        started.push(icao.to_string());
+    }
+    let icao = icao.to_string();
+    std::thread::spawn(move || {
+        for id in ids {
+            if let Err(e) = image(&icao, &id, false) {
+                log::warn!("[{icao}] could not draw {id} ahead: {e:#}");
+            }
+        }
+    });
 }
 
 /// What `getAirportInfo` returns, as much of it as the simulator's data says.
@@ -234,20 +324,31 @@ pub fn image(icao: &str, id: &str, night: bool) -> Result<Vec<u8>> {
     if let Ok(bytes) = std::fs::read(&file) {
         return Ok(bytes);
     }
-    let want = approach_name(&icao, id).ok_or_else(|| anyhow!("{id} is not one of {icao}'s charts"))?;
     let t0 = std::time::Instant::now();
     crate::term::info(&format!("[{icao}] Drawing {id} for the flight bag"));
-    let picture = approach::with_chart(&icao, Some(&want), None, None, |chart, est| approach::picture(chart, est, SCALE))?;
+    // A departure or arrival page, or an approach.
+    let terminal = ["DEP", "ARR"].iter().find_map(|k| id.strip_prefix(&format!("{icao}-{k}-")));
+    let picture = match terminal {
+        Some(name) => crate::output::approach::terminal::with_terminal(&icao, name, |t| crate::output::approach::terminal::picture(t, SCALE))?,
+        None => {
+            let want = approach_name(&icao, id).ok_or_else(|| anyhow!("{id} is not one of {icao}'s charts"))?;
+            approach::with_chart(&icao, Some(&want), None, None, |chart, est| approach::picture(chart, est, SCALE))?
+        }
+    };
     std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
     std::fs::write(dir.join(format!("{id}.day.png")), &picture.day)?;
     std::fs::write(dir.join(format!("{id}.night.png")), &picture.night)?;
     let (x1, y1, x2, y2) = picture.plan.pixels;
     let (lng1, lat1, lng2, lat2) = picture.plan.latlng;
-    let planview = json!({
-        "pixels": { "x1": x1, "y1": y1, "x2": x2, "y2": y2 },
-        "latlng": { "lng1": lng1, "lat1": lat1, "lng2": lng2, "lat2": lat2 },
+    let meta = json!({
+        "planview": {
+            "pixels": { "x1": x1, "y1": y1, "x2": x2, "y2": y2 },
+            "latlng": { "lng1": lng1, "lat1": lat1, "lng2": lng2, "lat2": lat2 },
+        },
+        "width": picture.width,
+        "height": picture.height,
     });
-    std::fs::write(dir.join(format!("{id}.json")), planview.to_string())?;
+    std::fs::write(dir.join(format!("{id}.json")), meta.to_string())?;
     crate::term::success(&format!("[{icao}] Drew {id} in {}", crate::term::human_secs(t0.elapsed().as_secs_f64())));
     Ok(if night { picture.night } else { picture.day })
 }
@@ -256,11 +357,7 @@ pub fn image(icao: &str, id: &str, night: bool) -> Result<Vec<u8>> {
 pub fn thumbnail(icao: &str, id: &str, night: bool) -> Result<Vec<u8>> {
     let icao = icao.to_uppercase();
     let found = procedures_for(&icao)?;
-    let title = approach::approaches(&found)
-        .into_iter()
-        .find(|p| chart_id(&icao, p) == id)
-        .map(approach::title_of)
-        .ok_or_else(|| anyhow!("{id} is not one of {icao}'s charts"))?;
+    let title = entries(&icao, &found).into_iter().find(|e| e.id == id).map(|e| e.name).ok_or_else(|| anyhow!("{id} is not one of {icao}'s charts"))?;
     approach::thumbnail(&title, &icao, night)
 }
 
