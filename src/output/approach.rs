@@ -2081,9 +2081,13 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     box_outline(c, x, y, w, h, 1.2, INK);
     let legs = final_legs(ch.procedure);
     let alts: Vec<f64> = legs.iter().filter_map(|l| l.altitude_ft).collect();
-    let top_ft = alts.iter().cloned().fold(ch.tdze_ft + 1200.0, f64::max) + 200.0;
-    // The top third of the box belongs to the names, so the descent is drawn under them.
-    let base_ft = ch.tdze_ft - 200.0;
+    // Room above the highest altitude flown for the figure written on it, and no more:
+    // a band sized for twelve hundred feet of headroom whatever the approach does is
+    // mostly empty paper on an approach that never goes above three thousand.
+    let highest = alts.iter().cloned().fold(ch.tdze_ft + 600.0, f64::max);
+    let top_ft = highest + (highest - ch.tdze_ft) * 0.08;
+    // A little below the touchdown elevation, so the ground line is not the box's floor.
+    let base_ft = ch.tdze_ft - (highest - ch.tdze_ft) * 0.06;
     let ground_y = y + 26.0;
     let scale_y = (h - 58.0) / (top_ft - base_ft).max(100.0) as f32;
     let at_ft = |ft: f64| ground_y + ((ft - ch.tdze_ft) as f32).max(-20.0) * scale_y;
@@ -2104,17 +2108,52 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         let Some(m) = ch.patch.height_at(thr.0 + dn, thr.1 + de) else { continue };
         ground.push((at_nm(nm), at_ft(m / 0.3048)));
     }
-    if ground.len() > 2 {
-        c.set_fill_gray(0.88);
-        c.move_to(ground[0].0, ground_y - 12.0);
-        for (px, py) in &ground {
-            c.line_to(*px, py.max(ground_y - 12.0));
+    // The ground, filled down to the floor of the band. Where the approach crosses water
+    // the model reads sea level, which drawn in the same grey as a hill is a flat strip
+    // under the aeroplane that looks like a mistake; it is tinted as water instead, the
+    // way the plan view tints it, so a reader sees the coast go by.
+    let floor_y = ground_y - 13.0;
+    let sea_y = at_ft(ch.tdze_ft.min(WATER_FT));
+    let fill_run = |c: &mut Content, run: &[(f32, f32)], tint: (f32, f32, f32)| {
+        if run.len() < 2 {
+            return;
         }
-        c.line_to(ground[ground.len() - 1].0, ground_y - 12.0);
+        c.set_fill_rgb(tint.0, tint.1, tint.2);
+        c.move_to(run[0].0, floor_y);
+        for (px, py) in run {
+            c.line_to(*px, py.max(floor_y));
+        }
+        c.line_to(run[run.len() - 1].0, floor_y);
         c.close_path();
         c.fill_nonzero();
+    };
+    if ground.len() > 2 {
+        let is_water = |p: &(f32, f32)| p.1 <= sea_y + 0.4;
+        let mut run: Vec<(f32, f32)> = Vec::new();
+        let mut wet = is_water(&ground[0]);
+        for point in &ground {
+            if is_water(point) != wet && run.len() > 1 {
+                run.push(*point);
+                fill_run(c, &run, if wet { WATER_TINT } else { (0.86, 0.86, 0.86) });
+                let last = *run.last().unwrap();
+                run = vec![last];
+                wet = !wet;
+            }
+            run.push(*point);
+        }
+        fill_run(c, &run, if wet { WATER_TINT } else { (0.86, 0.86, 0.86) });
     }
     line(c, left - 30.0, ground_y, right, ground_y, 1.0, INK);
+    // The strip itself, where the approach ends, and the elevation of it. A plate draws
+    // the runway as a heavy bar so the eye knows which end of the band is the ground it
+    // is landing on.
+    if let Some(size) = ch.runway_size {
+        let run = (size.0 / 1852.0).clamp(0.4, 4.0);
+        let bar = (at_nm(0.0) - at_nm(run)).abs().clamp(14.0, 60.0);
+        c.set_fill_gray(INK);
+        c.rect(at_nm(0.0) - bar, ground_y - 2.6, bar, 2.6);
+        c.fill_nonzero();
+    }
 
     // The descent as it is actually flown, which is what a chart draws: level at each
     // altitude until the next descent begins, down to the next, level again, and from the
@@ -2188,6 +2227,18 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
             c.line_to(point.0, point.1);
         }
         c.stroke();
+    }
+    // The descent the approach is designed around, drawn dotted under the steps that fly
+    // it. A plate shows both: the solid line is what an aeroplane does, the dotted one is
+    // the path it is meant to stay on the whole way down, and a step-down that dips below
+    // it is the thing a crew is looking for.
+    if let Some(from_nm) = faf_nm.filter(|nm| *nm > 1.0) {
+        if let Some((_, from_ft, _)) = fixes.iter().find(|(nm, _, _)| (nm - from_nm).abs() < 0.4) {
+            c.save_state();
+            c.set_dash_pattern([1.6, 2.2], 0.0);
+            line(c, at_nm(from_nm), at_ft(*from_ft), at_nm(0.0), tch, 0.8, 0.3);
+            c.restore_state();
+        }
     }
     // The points the altitudes are written at, which are the fixes themselves.
     let points: Vec<(f32, f32, &Leg)> = fixes.iter().map(|(nm, ft, leg)| (at_nm(*nm), at_ft(*ft), *leg)).collect();
@@ -2385,7 +2436,14 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     if let Some(run) = longest {
         let (a, b) = (run[0], run[1]);
         let s = format!("{:.2}\u{b0}", descent_angle_deg(ch));
-        text_centred(c, font, 7.0, (a.0 + b.0) / 2.0 + 20.0, (a.1 + b.1) / 2.0 - 10.0, &s, 0.15);
+        // On the path, a third of the way down it, and boxed out of whatever is ruled
+        // across the band at that height — the minimum is drawn right through it.
+        let (mx, my) = (a.0 + (b.0 - a.0) * 0.34, a.1 + (b.1 - a.1) * 0.34);
+        let sw = text_width(font, 7.0, &s);
+        c.set_fill_gray(1.0);
+        c.rect(mx - sw / 2.0 - 1.5, my + 3.0, sw + 3.0, 8.5);
+        c.fill_nonzero();
+        text_centred(c, font, 7.0, mx, my + 5.0, &s, 0.15);
     }
 
     // The course flown, written along the descent with an arrow, the way a chart writes
