@@ -13,10 +13,17 @@
 //! [`Graph::compact`] builds from it on first use and keeps, so a graph built once and
 //! searched many times pays the cost of flattening only the once.
 
-use crate::dispatch::{distance_nm, LatLon};
+use super::spatial::Grid;
+use crate::dispatch::LatLon;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Instant;
+
+/// The width of a cell in [`Graph::spatial`]'s index: wide enough that a lookup at a
+/// realistic radius (a join, or a free-route direct leg's few hundred miles) touches only a
+/// handful of cells, narrow enough that a cell over a crowded part of the network still
+/// holds few enough fixes to scan.
+const SPATIAL_CELL_DEG: f64 = 2.0;
 
 /// A fix the network runs through: its name and where it is. Kept for reporting a route
 /// back in names; the search itself reads [`Compact`] and touches this only to translate
@@ -162,11 +169,16 @@ pub struct Graph {
     airway_names: Vec<String>,
     airway_index: HashMap<String, u32>,
     compact: RwLock<Option<Arc<Compact>>>,
+    spatial: RwLock<Option<Arc<Grid<u32>>>>,
+    /// A second index alongside `spatial`, of every fix rather than only ones with a
+    /// segment out of them: what [`super::directs::build`] needs, since a mid-ocean
+    /// reporting point with no airway at all is exactly what a direct leg is for.
+    spatial_all: RwLock<Option<Arc<Grid<u32>>>>,
 }
 
 impl Default for Graph {
     fn default() -> Graph {
-        Graph { fixes: Vec::new(), index: HashMap::new(), adj: Vec::new(), airway_names: Vec::new(), airway_index: HashMap::new(), compact: RwLock::new(None) }
+        Graph { fixes: Vec::new(), index: HashMap::new(), adj: Vec::new(), airway_names: Vec::new(), airway_index: HashMap::new(), compact: RwLock::new(None), spatial: RwLock::new(None), spatial_all: RwLock::new(None) }
     }
 }
 
@@ -219,6 +231,25 @@ impl Graph {
         // A search already holding the flat form would not see this: correctness before
         // speed, since adding to a graph already in use is not something a plan does.
         *self.compact.write().unwrap() = None;
+        *self.spatial.write().unwrap() = None;
+        *self.spatial_all.write().unwrap() = None;
+    }
+
+    /// Every fix in `waypoints` the network does not already have, added with no segment at
+    /// all: for a free-route direct leg to land on where nothing is published to fly between
+    /// two points, over open ocean above all. Most of what the navigation database's own
+    /// table of enroute waypoints offers here is already in the network through some airway
+    /// segment, and this is a harmless no-op for each of those — [`Graph::fix`] dedupes by
+    /// identifier and position regardless of how a fix arrived. What is left, once every
+    /// airway has had its say, is exactly the reporting points a NAT track is built from
+    /// message by message and nothing else ever joins.
+    pub fn add_fixes(&mut self, waypoints: impl IntoIterator<Item = (String, LatLon)>) {
+        for (id, pos) in waypoints {
+            self.fix(&id, pos);
+        }
+        *self.compact.write().unwrap() = None;
+        *self.spatial.write().unwrap() = None;
+        *self.spatial_all.write().unwrap() = None;
     }
 
     pub fn fixes(&self) -> &[Fix] {
@@ -253,6 +284,11 @@ impl Graph {
         for s in segs {
             g.add(&s.airway, (&s.from.0, (s.from.1, s.from.2)), (&s.to.0, (s.to.1, s.to.2)), s.one_way, s.min_ft, s.max_ft);
         }
+        // Every enroute waypoint the database knows of, airway or none: a free-route direct
+        // leg needs somewhere to land over open ocean, where nothing is published to fly at
+        // all, and this is the only place those points otherwise appear.
+        let waypoints = crate::sources::navdata::enroute_waypoints().into_iter().map(|(id, lat, lon)| (id, (lat, lon)));
+        g.add_fixes(waypoints);
         g
     }
 
@@ -333,21 +369,59 @@ impl Graph {
         c
     }
 
+    /// A coarse spatial index over every fix that has at least one segment out of it,
+    /// built on first use and kept, the same way [`Graph::compact`] is: [`Graph::nearest`]
+    /// used to be a linear scan of every fix in the network, about forty milliseconds on a
+    /// worldwide one and the largest per-plan cost left outside the search proper; this
+    /// turns that into a lookup over a handful of grid cells.
+    pub fn spatial(&self) -> Arc<Grid<u32>> {
+        if let Some(g) = self.spatial.read().unwrap().as_ref() {
+            return g.clone();
+        }
+        let mut w = self.spatial.write().unwrap();
+        if let Some(g) = w.as_ref() {
+            return g.clone();
+        }
+        let mut grid = Grid::new(SPATIAL_CELL_DEG);
+        for (i, f) in self.fixes.iter().enumerate() {
+            if !self.adj[i].is_empty() {
+                grid.insert(f.pos, i as u32);
+            }
+        }
+        let g = Arc::new(grid);
+        *w = Some(g.clone());
+        g
+    }
+
+    /// The same index as [`Graph::spatial`], but of every fix the network has, not only
+    /// ones with a segment out of them: built once and kept the same way, and what
+    /// [`super::directs::build`] reads instead, since a mid-ocean reporting point with no
+    /// airway out of it at all is exactly the fix a free-route direct leg needs to land on.
+    pub fn spatial_all(&self) -> Arc<Grid<u32>> {
+        if let Some(g) = self.spatial_all.read().unwrap().as_ref() {
+            return g.clone();
+        }
+        let mut w = self.spatial_all.write().unwrap();
+        if let Some(g) = w.as_ref() {
+            return g.clone();
+        }
+        let mut grid = Grid::new(SPATIAL_CELL_DEG);
+        for (i, f) in self.fixes.iter().enumerate() {
+            grid.insert(f.pos, i as u32);
+        }
+        let g = Arc::new(grid);
+        *w = Some(g.clone());
+        g
+    }
+
     /// The fixes with an edge out of them nearest a point, nearest first, up to `n` of
-    /// them within `within_nm`. A linear scan: called only a handful of times a plan, to
-    /// join the airports onto the network, never in the search's own inner loop.
+    /// them within `within_nm`. Read through [`Graph::spatial`], so this is a lookup over a
+    /// few grid cells rather than a scan of every fix in the network; called only a handful
+    /// of times a plan, to join the airports onto the network, never in the search's own
+    /// inner loop.
     pub fn nearest(&self, at: LatLon, n: usize, within_nm: f64) -> Vec<(u32, f64)> {
-        let mut found: Vec<(u32, f64)> = self
-            .fixes
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !self.adj[*i].is_empty())
-            .map(|(i, f)| (i as u32, distance_nm(at, f.pos)))
-            .filter(|(_, d)| *d <= within_nm)
-            .collect();
-        found.sort_by(|a, b| a.1.total_cmp(&b.1));
-        found.truncate(n);
-        found
+        let grid = self.spatial();
+        grid.near(at, within_nm).into_iter().take(n).map(|(i, d)| (*grid.get(i).0, d)).collect()
     }
 
     pub fn node_count(&self) -> usize {

@@ -31,9 +31,11 @@
 //! level, a few more for a rule's retry, a few more again for the next-best routes — without
 //! paying to zero a few hundred thousand entries every time.
 
-use super::cost::{EdgeCost, LevelMetric};
+use super::cost::{DirectCost, EdgeCost, LevelMetric};
+use super::directs::Directs;
+use super::ellipse::Ellipse;
 use super::graph::Compact;
-use super::landmarks::Landmarks;
+use super::landmarks::{GoalRows, Landmarks};
 use super::ord32::OrderedF32;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -54,6 +56,24 @@ pub struct Scratch {
 
 const NONE_VIA: i32 = -2;
 const CLIMB_VIA: i32 = -1;
+/// A free-route direct leg, not a published airway: distinct from [`NONE_VIA`], which marks
+/// a state with no parent at all and stops [`reconstruct`] there, since a direct leg sits in
+/// the middle of a route just as a real edge can. It still leaves `via_airway` as `None` in
+/// the [`Step`] it produces, which is what makes it print as `DCT` — the same convention a
+/// real, unnamed leg already uses, so [`super::assemble`](super) needs nothing new to cope
+/// with it.
+const DIRECT_VIA: i32 = -3;
+
+/// A level's free-route direct legs for one search: the adjacency built once per attempt by
+/// [`super::directs::build`], paired with a way to price a leg at each level in play. A
+/// direct leg is not an edge of the compact graph, so it is not part of `levels` — priced
+/// instead through [`DirectCost`], which a [`super::cost::LazyLevel`] implements with its own
+/// memoisation, keyed by the pair rather than a position in `Compact::edges`.
+pub struct DirectContext<'a> {
+    pub adj: &'a Directs,
+    /// One coster per level in play, in the same order as `levels`.
+    pub cost: &'a [&'a dyn DirectCost],
+}
 
 impl Scratch {
     pub fn new() -> Scratch {
@@ -128,34 +148,63 @@ fn pack(fix: u32, level_idx: u8, n_levels: usize) -> usize {
     fix as usize * n_levels + level_idx as usize
 }
 
-/// A distance-based lower bound on the cost still to fly from a fix to a target, admissible
-/// at any level: the greater of the straight line and what the landmarks can say, at the
-/// cheapest rate any level in play could possibly offer.
+/// A distance-based lower bound on the cost still to fly from a fix to whichever of several
+/// possible targets is nearest, admissible at any level: for each target, the greater of the
+/// straight line and what the landmarks can say, at the cheapest rate any level in play
+/// could possibly offer — then the least of those, since the minimum of an admissible bound
+/// to each target is itself admissible for "distance to the nearest one".
 ///
-/// Both figures are lower bounds on the distance still to fly, so the larger of the two is
-/// a lower bound as well, and it is the larger that must be taken. A landmark that cannot
-/// speak about a pair contributes nothing to `lower_bound_nm`, which then returns zero — and
-/// on a real worldwide network, where no landmark reaches every corner, that is a great many
-/// fixes. Under a search that orders on this estimate alone, a zero does not merely make the
-/// bound loose: it says the fix *is* the destination. Every such fix is then expanded before
-/// any honest one, the beam fills with them, and a destination the network plainly connects
-/// is never reached. The straight line is never zero for a fix that is not already there,
-/// which is what makes it the floor.
-fn heuristic_one(compact: &Compact, landmarks: Option<&Landmarks>, rate_per_nm: f32, from: u32, to: u32) -> f32 {
-    let straight = super::landmarks::fast_distance_nm(compact.pos(from), compact.cos_lat[from as usize] as f64, compact.pos(to)) as f32;
-    let nm = match landmarks {
-        Some(lm) if !lm.is_empty() => straight.max(lm.lower_bound_nm(from, to)),
-        _ => straight,
+/// Both the straight line and the landmark figure are lower bounds on the distance still to
+/// fly, so the larger of the two is a lower bound as well, and it is the larger that must be
+/// taken. A landmark that cannot speak about a pair contributes nothing, which is why the
+/// straight line is taken regardless — on a real worldwide network, where no landmark
+/// reaches every corner, a bound built from landmarks alone can be zero for a great many
+/// fixes, and under a search that orders on the estimate alone a zero does not merely make
+/// the bound loose: it says the fix *is* the destination. The straight line is never zero
+/// for a fix that is not already there, which is what makes it the floor.
+///
+/// Worked out in one pass over the landmark tables per push, not one per target: a
+/// landmark's distance to and from `from` (`to_v`/`from_v`, reused across pushes so this
+/// never allocates) depends only on `from`, not on which target is being considered, so it
+/// is read once per landmark here and combined against each target's own row — gathered
+/// once for the whole search by [`Landmarks::gather`], into `goal_rows`, rather than read
+/// again from tables sized by the whole network on every one of a search's pushes. Without
+/// this, a search with sixty-odd goal candidates and two dozen landmarks reads well over a
+/// thousand entries scattered through those tables on every single state it looks at.
+#[allow(clippy::too_many_arguments)]
+fn heuristic_to(compact: &Compact, landmarks: Option<&Landmarks>, goal_rows: Option<&GoalRows>, goal_fixes: &[u32], rate_per_nm: f32, from: u32, to_v: &mut [f32], from_v: &mut [f32]) -> f32 {
+    let from_pos = compact.pos(from);
+    let from_cos = compact.cos_lat[from as usize] as f64;
+    let straight_to = |t: u32| super::landmarks::fast_distance_nm(from_pos, from_cos, compact.pos(t)) as f32;
+
+    let nm = match (landmarks, goal_rows) {
+        (Some(lm), Some(rows)) if !lm.is_empty() => {
+            for l in 0..lm.len() {
+                to_v[l] = lm.to_at(l, from);
+                from_v[l] = lm.from_at(l, from);
+            }
+            goal_fixes
+                .iter()
+                .enumerate()
+                .map(|(i, &t)| {
+                    let mut bound = 0.0f32;
+                    for l in 0..lm.len() {
+                        let via_v = to_v[l] - rows.to_at(l, i);
+                        let via_t = rows.from_at(l, i) - from_v[l];
+                        if via_v.is_finite() {
+                            bound = bound.max(via_v);
+                        }
+                        if via_t.is_finite() {
+                            bound = bound.max(via_t);
+                        }
+                    }
+                    straight_to(t).max(bound)
+                })
+                .fold(f32::INFINITY, f32::min)
+        }
+        _ => goal_fixes.iter().map(|&t| straight_to(t)).fold(f32::INFINITY, f32::min),
     };
     nm * rate_per_nm
-}
-
-/// The same bound from one fix to whichever of several possible targets is nearest: the
-/// minimum of an admissible bound to each is itself admissible for "distance to the
-/// nearest one", which is what a search with more than one place it may finish at
-/// actually wants.
-fn heuristic_to(compact: &Compact, landmarks: Option<&Landmarks>, rate_per_nm: f32, from: u32, targets: &[u32]) -> f32 {
-    targets.iter().map(|&t| heuristic_one(compact, landmarks, rate_per_nm, from, t)).fold(f32::INFINITY, f32::min)
 }
 
 /// Greedy best-first: the fix that looks nearest the destination by the landmark estimate
@@ -186,10 +235,18 @@ fn heuristic_to(compact: &Compact, landmarks: Option<&Landmarks>, rate_per_nm: f
 /// destination can carry on wandering through most of a large network before it happens
 /// back onto the right track.
 ///
+/// `ellipse`, where given, prunes both kinds of neighbour a fix offers — a real edge of the
+/// compact graph and a free-route direct leg alike — to the ones that could plausibly lie on
+/// the way from the start to the goal: the cheap win that stops the search wandering off
+/// towards Iberia on its way from London to New York. `directs`, where given, adds free-route
+/// direct legs as a second kind of neighbour, tried after a fix's real edges and costed
+/// through its own [`DirectCost`] rather than a position in `Compact::edges`, since a direct
+/// leg is not one.
+///
 /// `None` when the network, as customised, does not connect any start to any goal within
 /// what the beam lets the search see.
 #[allow(clippy::too_many_arguments)]
-pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], climb: &[Vec<f32>], starts: &[(u32, &[f32])], goals: &[(u32, &[f32])], landmarks: Option<&Landmarks>, rate_per_nm: f32, beam: usize, scratch: &mut Scratch) -> Option<Found> {
+pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], directs: Option<&DirectContext>, climb: &[Vec<f32>], starts: &[(u32, &[f32])], goals: &[(u32, &[f32])], ellipse: Option<&Ellipse>, landmarks: Option<&Landmarks>, rate_per_nm: f32, beam: usize, scratch: &mut Scratch) -> Option<Found> {
     let n_levels = levels.len();
     let total = compact.node_count() * n_levels;
     if total == 0 || n_levels == 0 || starts.is_empty() || goals.is_empty() {
@@ -201,6 +258,13 @@ pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], climb: &[
     let goal_set: std::collections::HashSet<u32> = goal_fixes.iter().copied().collect();
     let goal_bias_of = |fix: u32, lvl: u8| -> f32 { goals.iter().find(|&&(f, _)| f == fix).and_then(|&(_, b)| b.get(lvl as usize).copied()).unwrap_or(0.0) };
 
+    // Gathered once for the whole search, not read from tables sized by the whole network
+    // on every push: see `heuristic_to`'s own doc comment for why.
+    let goal_rows = landmarks.filter(|lm| !lm.is_empty()).map(|lm| lm.gather(&goal_fixes));
+    let n_landmarks = landmarks.map_or(0, Landmarks::len);
+    let mut to_v = vec![0.0f32; n_landmarks];
+    let mut from_v = vec![0.0f32; n_landmarks];
+
     // The heap orders on the estimate alone (greedy), and on `g` only to break a tie
     // between two states that look equally close: this is `Open` from the prototype this
     // module replaces, carried over unchanged in spirit.
@@ -210,7 +274,7 @@ pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], climb: &[
             let s = pack(fix, lvl, n_levels);
             let bias = bias_per_level.get(lvl as usize).copied().unwrap_or(0.0);
             if bias.is_finite() && scratch.relax(s, bias, u32::MAX, NONE_VIA) {
-                let h = heuristic_to(compact, landmarks, rate_per_nm, fix, &goal_fixes);
+                let h = heuristic_to(compact, landmarks, goal_rows.as_ref(), &goal_fixes, rate_per_nm, fix, &mut to_v, &mut from_v);
                 open.push(Reverse((OrderedF32(h), OrderedF32(bias), s as u32)));
             }
         }
@@ -234,6 +298,9 @@ pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], climb: &[
         expanded += 1;
         let level = &levels[lvl as usize];
         for (p, e) in compact.out(fix).iter().enumerate() {
+            if ellipse.is_some_and(|ell| !ell.contains(compact.pos(e.to))) {
+                continue;
+            }
             let w = level.forward(compact, fix, p);
             if !w.is_finite() {
                 continue;
@@ -241,8 +308,25 @@ pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], climb: &[
             let ns = pack(e.to, lvl, n_levels);
             let ng = g + w;
             if scratch.relax(ns, ng, s as u32, e.airway_id() as i32) {
-                let h = heuristic_to(compact, landmarks, rate_per_nm, e.to, &goal_fixes);
+                let h = heuristic_to(compact, landmarks, goal_rows.as_ref(), &goal_fixes, rate_per_nm, e.to, &mut to_v, &mut from_v);
                 open.push(Reverse((OrderedF32(h), OrderedF32(ng), ns as u32)));
+            }
+        }
+        if let Some(dc) = directs {
+            for &to in dc.adj.out(fix) {
+                if ellipse.is_some_and(|ell| !ell.contains(compact.pos(to))) {
+                    continue;
+                }
+                let w = dc.cost[lvl as usize].direct(fix, to);
+                if !w.is_finite() {
+                    continue;
+                }
+                let ns = pack(to, lvl, n_levels);
+                let ng = g + w;
+                if scratch.relax(ns, ng, s as u32, DIRECT_VIA) {
+                    let h = heuristic_to(compact, landmarks, goal_rows.as_ref(), &goal_fixes, rate_per_nm, to, &mut to_v, &mut from_v);
+                    open.push(Reverse((OrderedF32(h), OrderedF32(ng), ns as u32)));
+                }
             }
         }
         for other in 0..n_levels as u8 {
@@ -256,7 +340,7 @@ pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], climb: &[
             let ns = pack(fix, other, n_levels);
             let ng = g + cw;
             if scratch.relax(ns, ng, s as u32, CLIMB_VIA) {
-                let h = heuristic_to(compact, landmarks, rate_per_nm, fix, &goal_fixes);
+                let h = heuristic_to(compact, landmarks, goal_rows.as_ref(), &goal_fixes, rate_per_nm, fix, &mut to_v, &mut from_v);
                 open.push(Reverse((OrderedF32(h), OrderedF32(ng), ns as u32)));
             }
         }
@@ -403,7 +487,7 @@ mod tests {
         let a = g.find("F0", (0.0, 0.0)).unwrap();
         let b = g.find("F5", (0.0, 5.0)).unwrap();
         let mut scratch = Scratch::new();
-        let found = greedy_best_first(&compact, &levels, &climb, &[(a, &[0.0])], &[(b, &[0.0])], None, 1.0, 64, &mut scratch).expect("a route");
+        let found = greedy_best_first(&compact, &levels, None, &climb, &[(a, &[0.0])], &[(b, &[0.0])], None, None, 1.0, 64, &mut scratch).expect("a route");
         assert_eq!(found.cost, 5.0);
         assert_eq!(found.steps.first().unwrap().fix, a);
         assert_eq!(found.steps.last().unwrap().fix, b);
@@ -421,7 +505,7 @@ mod tests {
         let a = g.find("A", (0.0, 0.0)).unwrap();
         let c = g.find("C", (5.0, 5.0)).unwrap();
         let mut scratch = Scratch::new();
-        assert!(greedy_best_first(&compact, &levels, &climb, &[(a, &[0.0])], &[(c, &[0.0])], None, 1.0, 64, &mut scratch).is_none());
+        assert!(greedy_best_first(&compact, &levels, None, &climb, &[(a, &[0.0])], &[(c, &[0.0])], None, None, 1.0, 64, &mut scratch).is_none());
     }
 
     #[test]
@@ -434,7 +518,7 @@ mod tests {
         let b = g.find("F7", (0.0, 7.0)).unwrap();
         let mut scratch = Scratch::new();
         for _ in 0..5 {
-            let found = greedy_best_first(&compact, &levels, &climb, &[(a, &[0.0])], &[(b, &[0.0])], None, 1.0, 64, &mut scratch).unwrap();
+            let found = greedy_best_first(&compact, &levels, None, &climb, &[(a, &[0.0])], &[(b, &[0.0])], None, None, 1.0, 64, &mut scratch).unwrap();
             assert_eq!(found.cost, 7.0);
         }
     }
@@ -452,8 +536,8 @@ mod tests {
         let g0 = g.find("G0", (1.0, 0.0)).unwrap();
         let f3 = g.find("F3", (0.0, 3.0)).unwrap();
         let mut scratch = Scratch::new();
-        let direct = greedy_best_first(&compact, &levels, &climb, &[(f0, &[0.0])], &[(f3, &[0.0])], None, 1.0, 64, &mut scratch).unwrap();
-        let biased = greedy_best_first(&compact, &levels, &climb, &[(g0, &[5.0])], &[(f3, &[0.0])], None, 1.0, 64, &mut scratch).unwrap();
+        let direct = greedy_best_first(&compact, &levels, None, &climb, &[(f0, &[0.0])], &[(f3, &[0.0])], None, None, 1.0, 64, &mut scratch).unwrap();
+        let biased = greedy_best_first(&compact, &levels, None, &climb, &[(g0, &[5.0])], &[(f3, &[0.0])], None, None, 1.0, 64, &mut scratch).unwrap();
         assert_eq!(direct.cost, 3.0);
         assert_eq!(biased.cost, direct.cost + 1.0 + 5.0, "one extra edge from G0 to F0, plus the bias");
     }
@@ -467,7 +551,7 @@ mod tests {
         let a = g.find("F0", (0.0, 0.0)).unwrap();
         let b = g.find("F5", (0.0, 5.0)).unwrap();
         let mut scratch = Scratch::new();
-        let found = greedy_best_first(&compact, &levels, &climb, &[(a, &[0.0])], &[(b, &[0.0])], None, 1.0, 2, &mut scratch).expect("a route");
+        let found = greedy_best_first(&compact, &levels, None, &climb, &[(a, &[0.0])], &[(b, &[0.0])], None, None, 1.0, 2, &mut scratch).expect("a route");
         assert_eq!(found.cost, 5.0);
     }
 
@@ -564,7 +648,7 @@ mod tests {
                     continue;
                 }
                 checked += 1;
-                let greedy = greedy_best_first(&compact, &levels, &climb, &[(s, &[0.0])], &[(t, &[0.0])], Some(&landmarks), 1.0, 64, &mut scratch);
+                let greedy = greedy_best_first(&compact, &levels, None, &climb, &[(s, &[0.0])], &[(t, &[0.0])], None, Some(&landmarks), 1.0, 64, &mut scratch);
                 match greedy {
                     Some(found) => {
                         // The landmark bound can only ever underestimate, so a greedy
