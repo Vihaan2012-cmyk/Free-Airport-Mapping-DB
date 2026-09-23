@@ -326,11 +326,26 @@ pub fn dispatch(opts: &DispatchOptions) -> Result<Dispatch> {
 /// this module is built on top of, and what the tests exercise directly.
 pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispatch> {
     let mut warnings: Vec<String> = Vec::new();
+    // A plan is built the way a map is: one named thing after another. Each is announced
+    // with what it found and what it cost, so that a plan that comes out wrong, or slowly,
+    // says which part of it to look at.
+    const STAGES: usize = 12;
+    let mut stage_n = 0usize;
+    let mut clock = std::time::Instant::now();
+    let mut say = |name: &str, detail: String| {
+        stage_n += 1;
+        crate::term::stage(stage_n, STAGES, name, &detail, clock.elapsed().as_millis());
+        clock = std::time::Instant::now();
+    };
 
     // The airports and the aircraft: the only things whose absence is fatal.
     let origin = p.airport(&opts.origin).ok_or_else(|| anyhow!("{} is not an airport this planner knows", opts.origin.to_uppercase()))?;
     let destination = p.airport(&opts.destination).ok_or_else(|| anyhow!("{} is not an airport this planner knows", opts.destination.to_uppercase()))?;
     let spec = p.aircraft_spec(&opts.aircraft).with_context(|| format!("{} is not an aircraft this planner knows", opts.aircraft.to_uppercase()))?;
+
+    let direct_nm = dispatch::distance_nm(origin.pos, destination.pos);
+    say("airports", format!("{} to {}, {direct_nm:.0} nm direct", origin.icao, destination.icao));
+    say("aircraft", format!("{} {}, ceiling FL{:.0}", spec.icao_type, spec.name, spec.ceiling_ft / 100.0));
 
     let bounds = Bounds::around(origin.pos, destination.pos, 300.0);
     let extra = ConditionsFile::load(opts.conditions_file.as_deref(), &mut warnings);
@@ -351,11 +366,15 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
         }
     };
 
+    say("winds aloft", if opts.offline { "still air (offline)".to_string() } else { "forecast".to_string() });
+
     // The reports at both ends.
     let origin_metar = if opts.offline { None } else { p.metar(&origin.icao).map_err(|e| warnings.push(format!("{} METAR not available: {e:#}", origin.icao))).ok() };
     let destination_metar = if opts.offline { None } else { p.metar(&destination.icao).map_err(|e| warnings.push(format!("{} METAR not available: {e:#}", destination.icao))).ok() };
     let origin_taf = if opts.offline { None } else { p.taf(&origin.icao).map_err(|e| warnings.push(format!("{} TAF not available: {e:#}", origin.icao))).ok() };
     let destination_taf = if opts.offline { None } else { p.taf(&destination.icao).map_err(|e| warnings.push(format!("{} TAF not available: {e:#}", destination.icao))).ok() };
+
+    say("reports", format!("{} METAR, {} TAF", [&origin_metar, &destination_metar].iter().filter(|m| m.is_some()).count(), [&origin_taf, &destination_taf].iter().filter(|t| t.is_some()).count()));
 
     // The hazards: SIGMETs, conflict zones, NOTAM areas, and the file.
     let mut hazards: Vec<Hazard> = Vec::new();
@@ -373,6 +392,8 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
         }
     }
     hazards.extend(extra.hazards.clone());
+
+    say("hazards", format!("{} area(s) to keep out of or pay for", hazards.len()));
 
     // The rules: RAD in Europe, oceanic tracks over an ocean, ETOPS for an approved twin.
     let europe = is_european(&origin.icao) || is_european(&destination.icao);
@@ -404,7 +425,9 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
     } else {
         Vec::new()
     };
+    say("oceanic tracks", if !ocean { "not an ocean crossing".to_string() } else { format!("{} track(s)", tracks.len()) });
     let graph = p.network(&tracks);
+    say("airway network", format!("{} fixes, {} edges", graph.fixes().len(), graph.compact().edge_count()));
     let track_rule = (!tracks.is_empty()).then(|| route::oceanic::TrackRule::new(tracks));
 
     let needs_etops = spec.engines == 2 && spec.etops_minutes.is_some() && trip_nm > 400.0;
@@ -414,6 +437,8 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
         warnings.push(format!("ETOPS {} planned round {} candidate diversion airport(s)", spec.etops_minutes.unwrap_or(180), airports.len()));
         route::etops::Etops::new(spec.etops_minutes.unwrap_or(180), tas, airports)
     });
+
+    say("rules", format!("RAD {}, ETOPS {}", if rad.is_some() { "on" } else { "off" }, if etops.is_some() { "on" } else { "off" }));
 
     let mut edge_rules: Vec<&dyn EdgeRule> = Vec::new();
     if let Some(r) = &rad {
@@ -439,6 +464,8 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
             Box::new(SimpleCost { tas_kt: tas_from_mach(&spec), kg_per_hour: burn_from_weight(&spec), ceiling_ft: spec.ceiling_ft, air: wind.as_ref(), max_tailwind_kt: 220.0 })
         }
     };
+
+    say("cost model", format!("cost index {:.0}, {:.0} kg without fuel", opts.cost_index, zfw_kg));
 
     // The candidate levels: the one asked for, or a few round the aircraft's usual cruise.
     let track_deg = dispatch::bearing_deg(origin.pos, destination.pos);
@@ -477,11 +504,13 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
         avoid_firs: &opts.avoid_firs,
         free_route: true,
     };
+    say("levels", levels.iter().map(|l| format!("FL{:.0}", l / 100.0)).collect::<Vec<_>>().join(" "));
     let mut found = p.plan_routes(&graph, &req, 1).map_err(|e| anyhow!("no usable route from {} to {}: {e:#}", origin.icao, destination.icao))?;
     if found.is_empty() {
         anyhow::bail!("no route found from {} to {}", origin.icao, destination.icao);
     }
     let route = found.remove(0);
+    say("route", format!("{} points, {:.0} nm, {:.0}% over direct", route.points.len(), route.distance_nm(), (route.distance_nm() / direct_nm.max(1.0) - 1.0) * 100.0));
 
     let violations: Vec<Violation> = route_rules.iter().flat_map(|r| r.check_route(&route)).collect();
     let firs = p.fir_crossings(&route);

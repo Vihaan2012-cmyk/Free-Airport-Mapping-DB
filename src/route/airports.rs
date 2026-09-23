@@ -8,6 +8,7 @@
 
 use super::spatial::Grid;
 use crate::dispatch::{Airport, LatLon};
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 struct Entry {
@@ -19,8 +20,16 @@ fn index() -> &'static Grid<Entry> {
     static INDEX: OnceLock<Grid<Entry>> = OnceLock::new();
     INDEX.get_or_init(|| {
         let mut grid = Grid::new(3.0);
+        // Every runway in one pass, then the longest at each airport: asking the database
+        // per airport means opening it twenty thousand times over, which costs forty
+        // seconds against the eighty-seven milliseconds a route search takes.
+        let mut longest_at: HashMap<String, f64> = HashMap::new();
+        for r in crate::sources::navdata::all_runways() {
+            let entry = longest_at.entry(r.icao).or_insert(0.0);
+            *entry = entry.max(r.length_ft);
+        }
         for row in crate::sources::navdata::all_airports() {
-            let longest = crate::sources::navdata::runways(&row.icao).into_iter().map(|r| r.length_ft).fold(0.0f64, f64::max);
+            let longest = longest_at.get(&row.icao).copied().unwrap_or(0.0);
             let pos = (row.lat, row.lon);
             grid.insert(pos, Entry { airport: Airport { icao: row.icao, name: row.name, pos, elevation_ft: row.elevation_ft }, longest_runway_ft: longest });
         }

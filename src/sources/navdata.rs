@@ -1233,6 +1233,36 @@ pub struct RunwayRow {
     pub lon: f64,
 }
 
+/// Every runway in the database, in one pass.
+///
+/// `runways` opens the database afresh and asks it for one airport, which is the right
+/// shape for a plan that wants the runways at two of them. Anything that wants all of them
+/// — the airport index a diversion search is built on — must not call it in a loop: at
+/// twenty thousand airports, opening a hundred-and-sixty-megabyte file that many times took
+/// forty seconds, against the eighty-seven milliseconds the route search itself needs.
+pub fn all_runways() -> Vec<RunwayRow> {
+    let Some((connection, table)) = open_table("runways") else { return Vec::new() };
+    let sql = format!(
+        "select airport_identifier, runway_identifier, runway_length, \
+         coalesce(runway_true_bearing, runway_magnetic_bearing), runway_latitude, runway_longitude \
+         from \"{table}\""
+    );
+    let Ok(mut statement) = connection.prepare(&sql) else { return Vec::new() };
+    let rows = statement.query_map([], runway_row);
+    rows.map(|r| r.flatten().filter(|w| !w.ident.is_empty()).collect()).unwrap_or_default()
+}
+
+fn runway_row(row: &rusqlite::Row) -> rusqlite::Result<RunwayRow> {
+    Ok(RunwayRow {
+        icao: row.get::<_, String>(0)?.trim().to_uppercase(),
+        ident: row.get::<_, String>(1)?.trim().trim_start_matches("RW").trim_start_matches('0').to_string(),
+        length_ft: row.get::<_, Option<f64>>(2)?.unwrap_or(0.0),
+        bearing_true_deg: row.get::<_, Option<f64>>(3).ok().flatten(),
+        lat: row.get::<_, f64>(4)?,
+        lon: row.get::<_, f64>(5)?,
+    })
+}
+
 /// Every runway published for an airport: what a route search picks the departure and
 /// arrival ends from.
 pub fn runways(icao: &str) -> Vec<RunwayRow> {
@@ -1246,16 +1276,7 @@ pub fn runways(icao: &str) -> Vec<RunwayRow> {
          from \"{table}\" where airport_identifier = ?1"
     );
     let Ok(mut statement) = connection.prepare(&sql) else { return Vec::new() };
-    let rows = statement.query_map([icao.to_uppercase()], |row| {
-        Ok(RunwayRow {
-            icao: row.get::<_, String>(0)?.trim().to_uppercase(),
-            ident: row.get::<_, String>(1)?.trim().trim_start_matches("RW").trim_start_matches('0').to_string(),
-            length_ft: row.get::<_, Option<f64>>(2)?.unwrap_or(0.0),
-            bearing_true_deg: row.get::<_, Option<f64>>(3).ok().flatten(),
-            lat: row.get::<_, f64>(4)?,
-            lon: row.get::<_, f64>(5)?,
-        })
-    });
+    let rows = statement.query_map([icao.to_uppercase()], runway_row);
     rows.map(|r| r.flatten().filter(|w| !w.ident.is_empty()).collect()).unwrap_or_default()
 }
 
