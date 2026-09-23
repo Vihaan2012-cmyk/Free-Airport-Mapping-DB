@@ -170,7 +170,13 @@ fn mora_at(pos: crate::dispatch::LatLon) -> Option<f64> {
 
 /// A synthetic profile point not tied to a filed waypoint: the top of climb, a step climb,
 /// the top of descent.
-fn synthetic_point(ident: &str, kind: ProfileKind, pos: crate::dispatch::LatLon, via: &str, alt_ft: f64, dist_nm: f64, time_min: f64, weight_kg: f64, tow_kg: f64, track_true_deg: f64, mach: f64, air: Air) -> ProfilePoint {
+///
+/// `weight_kg` is the aircraft's whole gross weight there; `zfw_kg` is what it weighs with
+/// no fuel at all, fixed for the flight, so `weight_kg - zfw_kg` is what is actually left in
+/// the tanks — not the same number as the gross weight itself, which is what this used to
+/// report as `fuel_remaining_kg`.
+#[allow(clippy::too_many_arguments)]
+fn synthetic_point(ident: &str, kind: ProfileKind, pos: crate::dispatch::LatLon, via: &str, alt_ft: f64, dist_nm: f64, time_min: f64, weight_kg: f64, tow_kg: f64, zfw_kg: f64, track_true_deg: f64, mach: f64, air: Air) -> ProfilePoint {
     let tas_kt = atmosphere::tas_from_mach(mach, air.temp_c);
     let gs_kt = air.ground_speed(track_true_deg, tas_kt);
     ProfilePoint {
@@ -182,7 +188,7 @@ fn synthetic_point(ident: &str, kind: ProfileKind, pos: crate::dispatch::LatLon,
         dist_nm,
         time_min,
         fuel_used_kg: (tow_kg - weight_kg).max(0.0),
-        fuel_remaining_kg: weight_kg,
+        fuel_remaining_kg: (weight_kg - zfw_kg).max(0.0),
         gross_kg: weight_kg,
         track_true_deg,
         tas_kt,
@@ -262,7 +268,7 @@ fn fly_once(t: &TypeData, route: &FiledRoute, air: &dyn WindField, tow_kg: f64, 
                     time += climb_here.time_min;
                     weight = climb_here.end_weight_kg;
                     cruise_trace.push((dist, time, next_level, weight));
-                    step_points.push(synthetic_point(&format!("STEP{}", step_climbs.len() + 1), ProfileKind::StepClimb, pos_along(points, &route_dist, dist.min(tod_dist)), "", next_level, dist, time, weight, tow_kg, track, mach, local));
+                    step_points.push(synthetic_point(&format!("STEP{}", step_climbs.len() + 1), ProfileKind::StepClimb, pos_along(points, &route_dist, dist.min(tod_dist)), "", next_level, dist, time, weight, tow_kg, zfw_kg, track, mach, local));
                     step_climbs.push((format!("{:.0} nm from the origin", dist), next_level));
                     level = next_level;
                     continue;
@@ -298,7 +304,16 @@ fn fly_once(t: &TypeData, route: &FiledRoute, air: &dyn WindField, tow_kg: f64, 
         } else {
             let from_dest = total_nm - d;
             let (ttg, a, wt) = interp_trace(&descent.trace, from_dest);
-            (cruise_end_time + (descent.time_min - ttg), a, wt)
+            // The descent was integrated backwards from an assumed landing weight
+            // (`landing_weight_est`) that has nothing to do with the weight the cruise
+            // actually arrived at the top of descent with, so `wt` on its own is not on
+            // the same footing as `cruise_end_weight` — using it as the aircraft's weight
+            // here is what used to make FUELUSED and FUELREM jump backwards right after
+            // TOD. What carries over correctly is the *fuel burned since the top of
+            // descent* (`descent.end_weight_kg - wt`, both on the descent's own scale),
+            // subtracted from the real weight at TOD.
+            let burned_since_tod = (descent.end_weight_kg - wt).max(0.0);
+            (cruise_end_time + (descent.time_min - ttg), a, cruise_end_weight - burned_since_tod)
         };
         // A SID or STAR altitude constraint at this fix: loosely respected by pulling the
         // logged altitude to sit inside it, rather than re-flying the climb or descent to
@@ -316,15 +331,15 @@ fn fly_once(t: &TypeData, route: &FiledRoute, air: &dyn WindField, tow_kg: f64, 
         wind_sum += local_air.wind_kt;
         isa_sum += local_air.isa_dev(alt_ft);
         n += 1.0;
-        profile.push(synthetic_point(&wp.ident, ProfileKind::Waypoint, wp.pos, &wp.via, alt_ft, d, t_min, w_kg, tow_kg, track, phase_mach, local_air));
+        profile.push(synthetic_point(&wp.ident, ProfileKind::Waypoint, wp.pos, &wp.via, alt_ft, d, t_min, w_kg, tow_kg, zfw_kg, track, phase_mach, local_air));
     }
     // The top of climb and the top of descent, inserted in their place by distance.
     let toc_pos = pos_along(points, &route_dist, toc_dist);
     let toc_air = air.air(toc_pos, cruise_level, start_time + chrono::Duration::milliseconds((toc_time * 60_000.0) as i64));
-    profile.push(synthetic_point("TOC", ProfileKind::TopOfClimb, toc_pos, "", cruise_level, toc_dist, toc_time, toc_weight, tow_kg, initial_track, mach, toc_air));
+    profile.push(synthetic_point("TOC", ProfileKind::TopOfClimb, toc_pos, "", cruise_level, toc_dist, toc_time, toc_weight, tow_kg, zfw_kg, initial_track, mach, toc_air));
     let tod_pos = pos_along(points, &route_dist, tod_dist);
     let tod_air = air.air(tod_pos, level, start_time + chrono::Duration::milliseconds((cruise_end_time * 60_000.0) as i64));
-    profile.push(synthetic_point("TOD", ProfileKind::TopOfDescent, tod_pos, "", level, tod_dist, cruise_end_time, cruise_end_weight, tow_kg, final_track, mach, tod_air));
+    profile.push(synthetic_point("TOD", ProfileKind::TopOfDescent, tod_pos, "", level, tod_dist, cruise_end_time, cruise_end_weight, tow_kg, zfw_kg, final_track, mach, tod_air));
     profile.extend(step_points);
     profile.sort_by(|a, b| a.dist_nm.total_cmp(&b.dist_nm));
 
@@ -406,12 +421,17 @@ pub fn plan(req: &PerfRequest) -> anyhow::Result<PerfPlan> {
         d if d < 800.0 => 37_000.0,
         _ => f64::MAX,
     };
+    // The cap applies whichever way the level got here: a level the route search already
+    // chose is just as capable of being too high for the distance as one worked out fresh
+    // here, since the search picks from candidates built around the aircraft's usual
+    // cruise (`nominal_cruise_ft`) with no notion of how short this particular trip is.
     let requested_level = req.route.cruise_ft;
     let initial_level = if requested_level > 1000.0 {
         requested_level
     } else {
-        aero::optimum_altitude_ft(&t, zfw_target * 1.15, mach).min(distance_cap_ft)
+        aero::optimum_altitude_ft(&t, zfw_target * 1.15, mach)
     }
+    .min(distance_cap_ft)
     .min(t.ceiling_ft);
 
     let mut tow_kg = (zfw_target + rough_trip_fuel_kg(&t, zfw_target, trip_nm, mach) * 1.12).min(t.mtow_kg);
@@ -499,15 +519,22 @@ pub fn plan(req: &PerfRequest) -> anyhow::Result<PerfPlan> {
     }
 
     // The point of no return for the route as a whole: where turning back to the origin
-    // takes as long, at normal cruise speed, as pressing on to the destination.
+    // takes as long, at normal cruise speed, as pressing on to the destination. Like the
+    // equal-time points above, this only means something where a diversion is genuinely
+    // far away — `req.etp_airports` is how `ofp` tells this module the flight is oceanic or
+    // under an ETOPS rule, and an empty list is how it says it is not.
     let pnr_case = etp::EtpCase { tas_kt: mach_tas(&t, mach), level_ft: flight.cruise_level_used, burn_kg_min: contingency_rate };
-    let no_return = etp::find(&polyline, req.route.origin.pos, req.route.destination.pos, req.air, &eta_at, &pnr_case).map(|(dist_nm, pos, time_min)| {
-        let when = eta_at(dist_nm);
-        let local = req.air.air(pos, flight.cruise_level_used, when);
-        let frac = (dist_nm / trip_nm.max(0.01)).clamp(0.0, 1.0);
-        let weight_kg = tow_kg - flight.trip_fuel_kg * frac;
-        synthetic_point("PNR", ProfileKind::NoReturn, pos, "", flight.cruise_level_used, dist_nm, time_min, weight_kg, tow_kg, bearing_deg(req.route.origin.pos, req.route.destination.pos), mach, local)
-    });
+    let no_return = if req.etp_airports.len() >= 2 {
+        etp::find(&polyline, req.route.origin.pos, req.route.destination.pos, req.air, &eta_at, &pnr_case).map(|(dist_nm, pos, time_min)| {
+            let when = eta_at(dist_nm);
+            let local = req.air.air(pos, flight.cruise_level_used, when);
+            let frac = (dist_nm / trip_nm.max(0.01)).clamp(0.0, 1.0);
+            let weight_kg = tow_kg - flight.trip_fuel_kg * frac;
+            synthetic_point("PNR", ProfileKind::NoReturn, pos, "", flight.cruise_level_used, dist_nm, time_min, weight_kg, tow_kg, zfw_target, bearing_deg(req.route.origin.pos, req.route.destination.pos), mach, local)
+        })
+    } else {
+        None
+    };
 
     Ok(PerfPlan {
         profile: flight.profile,
@@ -611,15 +638,18 @@ mod tests {
     }
 
     /// Calibration: trip fuel and flight time against a publicly reported figure for the
-    /// type over roughly the given distance, at a tolerance wide enough for a model that
-    /// flies a great-circle direct routing with no vectoring, holding or step-off, and
-    /// derives its drag polar and TSFC from public geometry and typical reported figures
-    /// rather than a manufacturer's own performance database. The reference figures are the
-    /// widely reported average cruise fuel flow and block-time figures for each type at
-    /// roughly this stage length (airline and manufacturer fuel-burn literature, general
-    /// aviation-press consensus) rather than a single cited flight, since no licensed
-    /// performance chart was used to produce them.
-    fn calibration_case(icao: &str, nm: f64, payload_frac: f64, cruise_ft: f64, ref_fuel_kg: f64, ref_minutes: f64, tolerance: f64) {
+    /// type over roughly the given distance. Fuel is checked tightly (12%): the type table's
+    /// cruise TSFC is a single scalar per type calibrated directly against this figure, so
+    /// there is no excuse for it drifting far. Time is checked loosely (25%): this model
+    /// flies a great-circle direct routing at a fixed econ Mach with no vectoring, holding,
+    /// step-off or ATC-driven speed restriction, none of which the TSFC knob can correct
+    /// for, and the reference block times bundle in all of that real-world slack. The
+    /// reference figures themselves are the widely reported average cruise fuel flow and
+    /// block-time figures for each type at roughly this stage length (airline and
+    /// manufacturer fuel-burn literature, general aviation-press consensus, cross-checked
+    /// where possible against a published flight-plan analysis) rather than a single cited
+    /// flight, since no licensed performance chart was used to produce them.
+    fn calibration_case(icao: &str, nm: f64, payload_frac: f64, cruise_ft: f64, ref_fuel_kg: f64, ref_minutes: f64) {
         let spec = aircraft::lookup(icao).unwrap().to_spec();
         let still = StillAir;
         let to = crate::dispatch::travel((51.5, 0.0), 90.0, nm);
@@ -630,37 +660,47 @@ mod tests {
         let flight_min = plan.profile.iter().map(|p| p.time_min).fold(0.0, f64::max);
         let fuel_err = (plan.fuel.trip_kg - ref_fuel_kg).abs() / ref_fuel_kg;
         let time_err = (flight_min - ref_minutes).abs() / ref_minutes;
-        assert!(fuel_err <= tolerance, "{icao}/{nm}nm: trip fuel {:.0} kg vs reference {ref_fuel_kg:.0} kg ({:.0}% off, tolerance {:.0}%)", plan.fuel.trip_kg, fuel_err * 100.0, tolerance * 100.0);
-        assert!(time_err <= tolerance, "{icao}/{nm}nm: flight time {flight_min:.0} min vs reference {ref_minutes:.0} min ({:.0}% off, tolerance {:.0}%)", time_err * 100.0, tolerance * 100.0);
+        const FUEL_TOLERANCE: f64 = 0.12;
+        const TIME_TOLERANCE: f64 = 0.25;
+        assert!(fuel_err <= FUEL_TOLERANCE, "{icao}/{nm}nm: trip fuel {:.0} kg vs reference {ref_fuel_kg:.0} kg ({:.0}% off, tolerance {:.0}%)", plan.fuel.trip_kg, fuel_err * 100.0, FUEL_TOLERANCE * 100.0);
+        assert!(time_err <= TIME_TOLERANCE, "{icao}/{nm}nm: flight time {flight_min:.0} min vs reference {ref_minutes:.0} min ({:.0}% off, tolerance {:.0}%)", time_err * 100.0, TIME_TOLERANCE * 100.0);
     }
 
-    // A20N, ~200 nm: a short domestic sector. Reference: roughly 1,300-1,600 kg trip fuel
-    // and 35-45 minutes airborne, from widely reported A320neo short-sector fuel figures.
+    // A20N, ~200 nm: a short domestic sector. Reference: roughly 1,450 kg trip fuel from
+    // the widely reported ~2,300-2,400 kg/h total A320neo cruise burn (theflyingengineer.com,
+    // pilotrise.com), and 38 minutes airborne.
     #[test]
     fn calibration_a20n_200nm() {
-        calibration_case("A20N", 200.0, 0.60, 0.0, 1_450.0, 38.0, 0.30);
+        calibration_case("A20N", 200.0, 0.60, 0.0, 1_450.0, 38.0);
     }
 
-    // B738, ~1,000 nm: a typical medium-haul sector at a published ~2,400-2,500 kg/h
-    // cruise burn (737-800 Airplane Characteristics literature), roughly 5,800 kg trip
-    // fuel and 2 h 30 in the air.
+    // B738, ~1,000 nm: a typical medium-haul sector at a published ~2,500-2,600 kg/h
+    // (850 USG/h) cruise burn (flyawaysimulation.com; 737 Airplane Characteristics
+    // literature), roughly 5,800 kg trip fuel and 2 h 30 in the air. This is the figure the
+    // task that tightened this calibration named directly: the model used to land at 4,778
+    // kg here, 18% light.
     #[test]
     fn calibration_b738_1000nm() {
-        calibration_case("B738", 1_000.0, 0.70, 0.0, 5_800.0, 150.0, 0.30);
+        calibration_case("B738", 1_000.0, 0.70, 0.0, 5_800.0, 150.0);
     }
 
     // A359, ~4,500 nm: a long-haul sector at a widely reported ~5,700-6,200 kg/h A350-900
     // cruise burn, roughly 56 tonnes trip fuel and just under 10 hours in the air.
     #[test]
     fn calibration_a359_4500nm() {
-        calibration_case("A359", 4_500.0, 0.75, 0.0, 56_000.0, 590.0, 0.25);
+        calibration_case("A359", 4_500.0, 0.75, 0.0, 56_000.0, 590.0);
     }
 
     // B77W, ~5,500 nm: an ultra-long-haul sector at a widely reported ~7,500-7,900 kg/h
-    // 777-300ER cruise burn, roughly 88 tonnes trip fuel and about 11 h 40 in the air.
+    // 777-300ER cruise burn, cross-checked against Aircraft Commerce's published GE90-115B
+    // LHR-NRT/NRT-LHR block fuel from Jeppesen flight plans (Issue 60, Oct/Nov 2008):
+    // 26,901-29,468 USG (roughly 81,500-89,300 kg) over 5,200-5,471 nm ESAD, which includes
+    // taxi and reserves this model's trip fuel does not — consistent with this model's
+    // smaller trip-only figure sitting a little under that range. Roughly 88 tonnes trip
+    // fuel and about 11 h 40 in the air.
     #[test]
     fn calibration_b77w_5500nm() {
-        calibration_case("B77W", 5_500.0, 0.75, 0.0, 88_000.0, 700.0, 0.25);
+        calibration_case("B77W", 5_500.0, 0.75, 0.0, 88_000.0, 700.0);
     }
 
     // A388, ~7,000 nm: the longest missions the A380 flew, at a widely reported
@@ -668,6 +708,6 @@ mod tests {
     // the air.
     #[test]
     fn calibration_a388_7000nm() {
-        calibration_case("A388", 7_000.0, 0.75, 0.0, 155_000.0, 840.0, 0.25);
+        calibration_case("A388", 7_000.0, 0.75, 0.0, 155_000.0, 840.0);
     }
 }
