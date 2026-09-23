@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.0.0 (2026-09-23)
+
+The first release that does everything it set out to: a moving map on every airport in
+the world, and charts on the tablets, from nothing but free data and what is already on
+the machine.
+
+- **Charts on the tablets.** The iniBuilds A350, the PMDG 777 and 737 and the Synaptic
+  A220 EFB now list and show charts served by the bridge, with no Navigraph account.
+  `amdb-bridge charts on|off|status`, `amdbgen tablet-charts on|off|status` (no
+  administrator rights needed) and a *Tablet charts* button in the desktop app turn it on
+  and off; the original script is kept inside the patched one and put back exactly.
+  Each airport lists its departures, arrivals and approaches, and they are drawn ahead
+  of being asked for, so a tablet no longer waits on the first page.
+- **Departure and arrival charts.** The simulator's SID and STAR records are now read in
+  full — runway transitions, the common route and the enroute transitions, with speed
+  limits — and drawn one procedure to a page with MSA, holds, transition altitude,
+  frequencies, grid MORA and airspace, as `amdbgen procedure-chart`.
+- **Approach charts, closer to what a pilot expects.** Terrain in bands relative to the
+  field, the highest peaks marked, DME arcs flown as arcs, step-down bars on the profile,
+  straight-in visibility from the EU-OPS table and circling never below straight-in.
+  Minimum safe altitude rings were drawn rotated half a turn on every chart; they are
+  now the right way round. A beacon sharing its ident with another is taken nearest the
+  airport (Kathmandu's KTM was once found in the Arabian Sea).
+- **Moving maps answered again.** A change in 0.6 to how tablet requests were told apart
+  dropped every moving-map request on the floor; it no longer does.
+- **`amdbgen patch-status`** lists every patchable aircraft in every Community folder,
+  MSFS 2020 and 2024, and whether it is patched.
+- Obstacles fetched from OpenStreetMap are kept for thirty days rather than one, which
+  took several minutes off the first chart of a session.
+
 ## 0.6.1 (2026-09-23)
 
 - **The GM5 A220 moving map is patched again**, with its author's permission. It was
