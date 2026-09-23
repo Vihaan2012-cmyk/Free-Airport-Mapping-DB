@@ -39,7 +39,7 @@ rayon = "1"
 prost = "0.14"
 log = { version = "0.4", features = ["std"] }
 console = "0.16"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 # Read-only access to the navigation databases the aircraft already ship.
 rusqlite = { version = "0.37", features = ["bundled"] }
 tiny-skia = "0.11"

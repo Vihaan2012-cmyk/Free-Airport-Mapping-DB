@@ -15,6 +15,7 @@ pub mod progress;
 pub mod server;
 pub mod service;
 pub mod settings;
+pub mod simbrief;
 pub mod store;
 pub mod tls;
 
