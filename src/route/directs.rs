@@ -59,40 +59,40 @@ impl Directs {
 /// the rule that keeps this list short and every leg on it a genuine shortcut rather than a
 /// detour dressed as one.
 ///
-/// `all_grid` is [`super::graph::Graph::spatial_all`]: built once, over every fix the
-/// network has and not only ones with an airway out of them, because a mid-ocean reporting
-/// point with no published airway at all — exactly what a North Atlantic crossing has
-/// instead of one — is precisely what a direct leg needs to land on.
-///
-/// With an ellipse, the fixes worth even asking about are drawn from `all_grid` by a circle
-/// round `origin` alone, of the ellipse's own limit: any point inside the ellipse is, in
-/// particular, no further than that from one focus by itself, since the distance to the
-/// other focus can only add to the sum, never subtract from it. That circle is a superset of
-/// the ellipse — cheap to be generous with, since [`Ellipse::contains`] still filters it
-/// exactly — but it is what turns this from a pass over every fix the network has into a
-/// lookup over the few thousand that could possibly matter, on every attempt that builds
-/// one. With no ellipse at all there is no cheaper superset to draw from, and the whole
-/// network genuinely is in play.
-pub fn build(compact: &Compact, all_grid: &Grid<u32>, ellipse: Option<&Ellipse>, origin: LatLon, destination: LatLon, max_nm: f64) -> Directs {
+/// Every fix is read off `compact` directly — not only ones with an airway out of them,
+/// because a mid-ocean reporting point with no published airway at all — exactly what a
+/// North Atlantic crossing has instead of one — is precisely what a direct leg needs to land
+/// on — and a plain pass over the whole network rather than a lookup keyed off a grid round
+/// `origin` alone. A circle round one focus was tried first, on the reasoning that any point
+/// inside the ellipse is, in particular, no further than the ellipse's own limit from that
+/// focus; it is a correct superset, but a loose one on a long-haul route, where a thin
+/// ellipse is still tens of thousands of miles-squared and the circle needed to be sure of
+/// catching all of it is barely smaller than the network itself — worse than the plain pass
+/// it was meant to save, once the grid lookups and the sort it also pays for are counted.
+/// Reading every fix's position directly costs a fixed sum over the whole network, the same
+/// whether the two ends are two hundred miles apart or ten thousand.
+pub fn build(compact: &Compact, ellipse: Option<&Ellipse>, destination: LatLon, max_nm: f64) -> Directs {
     let n = compact.node_count();
     let inside = |p: LatLon| ellipse.is_none_or(|e| e.contains(p));
-    let candidates: Vec<u32> = match ellipse {
-        Some(e) => all_grid.near(origin, e.limit_nm()).into_iter().map(|(i, _)| *all_grid.get(i).0).collect(),
-        None => (0..n as u32).collect(),
-    };
 
     let mut grid: Grid<u32> = Grid::new(CELL_DEG);
-    for &node in &candidates {
+    for node in 0..n as u32 {
         let pos = compact.pos(node);
         if inside(pos) {
             grid.insert(pos, node);
         }
     }
 
+    // A fix already carrying a few real edges out of it has no need of a synthetic
+    // shortcut: it is not the sparse spot a direct leg exists for, and giving it one
+    // anyway is what was actually making a long-haul route both slower and worse — see
+    // this module's own doc comment above. `>= 3` is a first cut, not yet swept (see the
+    // TODO in `route::mod`'s `REFINE_MAX_NM`).
+    const WELL_CONNECTED_OUT_DEGREE: usize = 3;
     let mut rows: Vec<Vec<u32>> = vec![Vec::new(); n];
-    for &node in &candidates {
+    for node in 0..n as u32 {
         let pos = compact.pos(node);
-        if !inside(pos) {
+        if !inside(pos) || compact.out(node).len() >= WELL_CONNECTED_OUT_DEGREE {
             continue;
         }
         let own_dist = distance_nm(pos, destination);
@@ -146,9 +146,8 @@ mod tests {
     fn a_direct_leg_never_goes_backwards() {
         let (g, o, d) = line_with_a_stray();
         let compact = g.compact();
-        let all_grid = g.spatial_all();
         let ellipse = Ellipse::new(o, d, 5.0, 500.0); // fat enough to hold everything.
-        let directs = build(&compact, &all_grid, Some(&ellipse), o, d, 1000.0);
+        let directs = build(&compact, Some(&ellipse), d, 1000.0);
         for node in 0..compact.node_count() as u32 {
             let own = distance_nm(compact.pos(node), d);
             for &nb in directs.out(node) {
@@ -162,13 +161,12 @@ mod tests {
     fn a_fix_outside_the_ellipse_is_never_offered_or_offered_to() {
         let (g, o, d) = line_with_a_stray();
         let compact = g.compact();
-        let all_grid = g.spatial_all();
         let stray = g.find("STRAY", (30.0, 3.5)).unwrap();
         // Thin enough that the stray fix, thirty degrees off the direct line, sits well
         // outside it.
         let ellipse = Ellipse::new(o, d, 1.05, 50.0);
         assert!(!ellipse.contains(compact.pos(stray)));
-        let directs = build(&compact, &all_grid, Some(&ellipse), o, d, 1000.0);
+        let directs = build(&compact, Some(&ellipse), d, 1000.0);
         assert!(directs.out(stray).is_empty(), "a fix outside the ellipse should have no direct-leg neighbours of its own");
         for node in 0..compact.node_count() as u32 {
             assert!(!directs.out(node).contains(&stray), "the stray fix outside the ellipse was offered as a direct-leg neighbour");
@@ -179,11 +177,10 @@ mod tests {
     fn nothing_further_than_max_nm_is_offered() {
         let (g, o, d) = line_with_a_stray();
         let compact = g.compact();
-        let all_grid = g.spatial_all();
         let ellipse = Ellipse::new(o, d, 5.0, 500.0);
         // Each fix here is exactly one degree (about 60 nm) from the next: a maximum leg
         // shorter than that should leave every fix with no neighbours at all.
-        let directs = build(&compact, &all_grid, Some(&ellipse), o, d, 30.0);
+        let directs = build(&compact, Some(&ellipse), d, 30.0);
         for node in 0..compact.node_count() as u32 {
             for &nb in directs.out(node) {
                 assert!(distance_nm(compact.pos(node), compact.pos(nb)) <= 30.0 + 1e-6);
