@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.4 (2026-09-23)
+
+- **Tracks are drawn round.** A procedure is coded as fixes joined by straight legs, and
+  drawn literally that is a polyline with a sharp angle at every fix — a shape no
+  published chart has, because no aircraft flies it. Each turn is now a tangent arc of
+  about a mile's radius. That is what turns Madeira's squared-off run out to FUN08, across
+  to ABUSU and back down to FUN7 into the racetrack the plate draws over it: the course
+  reversal was in our data all along, drawn as three corners.
+
+- **The missed approach is written the way a plate writes it.** It used to read "Track
+  137, then direct FUSUL, then hold at FUSUL" from legs that say a good deal more than
+  that. It now reads "Track heading 137° to intercept FUN R-170, proceed to FUSUL
+  climbing to 3000' and hold" — the radial the heading is flown to meet, the altitude
+  climbed to, and the way round the turn goes where the procedure codes one.
+
+- **Circling speeds are circling speeds.** The Max Kts column printed the speed each
+  category crosses the threshold at — 90/120/140/165 — where a circling table is headed
+  by the speed it may circle at: 100/135/180/205. Every figure in the column was thirty
+  knots light.
+
+- **A circling-only approach gives its whole width to the circling minima.** Two thirds
+  of the band was ruled for a straight-in that does not exist, so four cells sat empty
+  where a plate has the minimum.
+
 ## 0.5.3 (2026-09-22)
 
 The plan view, which was the weakest part of the page.
