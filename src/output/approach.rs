@@ -2095,8 +2095,16 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     let thr = ch.threshold.unwrap_or((ch.airport.lat, ch.airport.lon));
     // How far out the profile runs: to the farthest fix on the final, or ten miles.
     let total_nm = legs.iter().filter_map(|l| fix_distance_nm(l, thr)).fold(9.0, f64::max);
-    let (left, right) = (x + 46.0, x + w - 54.0);
-    let at_nm = |nm: f64| right - (nm / total_nm) as f32 * (right - left);
+    // Which way the band reads. An approach with any westerly component is flown right
+    // to left across a north-up plan, and a plate turns its profile to match, so the
+    // runway sits at whichever end the aeroplane actually arrives at.
+    let westbound = track_deg.to_radians().sin() < 0.0;
+    let (left, right) = if westbound { (x + 54.0, x + w - 46.0) } else { (x + 46.0, x + w - 54.0) };
+    // Nought miles is the threshold, and it goes at the end the approach ends at.
+    let (near_x, far_x) = if westbound { (left, right) } else { (right, left) };
+    let at_nm = |nm: f64| near_x + (nm / total_nm) as f32 * (far_x - near_x);
+    // Which way along the paper the aeroplane is travelling: -1 when it reads leftwards.
+    let onward: f32 = if westbound { -1.0 } else { 1.0 };
 
     // The ground under the approach, from the terrain model.
     let back = (track_deg + 180.0).to_radians();
@@ -2143,7 +2151,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         }
         fill_run(c, &run, if wet { WATER_TINT } else { (0.86, 0.86, 0.86) });
     }
-    line(c, left - 30.0, ground_y, right, ground_y, 1.0, INK);
+    line(c, far_x - 30.0 * onward, ground_y, near_x, ground_y, 1.0, INK);
     // The strip itself, where the approach ends, and the elevation of it. A plate draws
     // the runway as a heavy bar so the eye knows which end of the band is the ground it
     // is landing on.
@@ -2151,7 +2159,9 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         let run = (size.0 / 1852.0).clamp(0.4, 4.0);
         let bar = (at_nm(0.0) - at_nm(run)).abs().clamp(14.0, 60.0);
         c.set_fill_gray(INK);
-        c.rect(at_nm(0.0) - bar, ground_y - 2.6, bar, 2.6);
+        // The strip runs back from the threshold, whichever way back is.
+        let x0 = if westbound { at_nm(0.0) } else { at_nm(0.0) - bar };
+        c.rect(x0, ground_y - 2.6, bar, 2.6);
         c.fill_nonzero();
     }
 
@@ -2204,7 +2214,11 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     // The beacon itself, where the approach passes over one. A chart stands a tapered
     // column on the ground under the path at that point, because passing the station is
     // the moment the instrument reverses and a crew looks for it on the picture.
-    if let Some(beacon) = dme_reference(ch) {
+    // Only where the approach is actually flown over it. On an ILS the procedure is
+    // measured from the localiser's own equipment, and a VOR that happens to sit near the
+    // field is not a station the approach passes: drawing its column puts a grey spike
+    // through the runway for no reason.
+    if let Some(beacon) = dme_reference(ch).filter(|_| ch.glidepath_deg.is_none()) {
         let nm = ((beacon.lat - thr.0) * 60.0).hypot((beacon.lon - thr.1) * 60.0 * thr.0.to_radians().cos().max(0.05));
         if nm > 0.3 && nm < total_nm {
             let bx = at_nm(nm);
@@ -2326,7 +2340,7 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     let name_row = y + h - 11.0;
     let mut last_x = f32::NEG_INFINITY;
     for (_, px, _py, name, under) in &marks {
-        if *px - last_x < 30.0 {
+        if (*px - last_x).abs() < 30.0 {
             continue;
         }
         last_x = *px;
@@ -2428,10 +2442,11 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     // plate puts the figure on the slope rather than only in the table below, because
     // that is where it is looked for.
     // The longest sloping run on the path, which is the one the eye takes for the
-    // descent and so the one the figure belongs against.
+    // descent and so the one the figure belongs against. It descends onwards, which is
+    // rightwards or leftwards depending on which way the band reads.
     let longest = path
         .windows(2)
-        .filter(|p| p[0].1 - p[1].1 > 6.0 && p[1].0 - p[0].0 > 24.0)
+        .filter(|p| p[0].1 - p[1].1 > 6.0 && (p[1].0 - p[0].0) * onward > 24.0)
         .max_by(|a, b| (a[1].0 - a[0].0).total_cmp(&(b[1].0 - b[0].0)));
     if let Some(run) = longest {
         let (a, b) = (run[0], run[1]);
@@ -2457,14 +2472,16 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
         let (mx, my) = ((a.1 + b.1) / 2.0, (a.2 + b.2) / 2.0);
         let written = format!("{course:03.0}\u{b0}");
         let wide = text_width(bold, 7.0, &written);
-        let left = mx - wide / 2.0 - 5.0;
-        label(c, bold, 7.0, left, my + 6.0, &written, INK);
-        let tip = left + wide + 8.0;
-        line(c, tip - 6.0, my + 8.5, tip, my + 8.5, 0.7, INK);
+        // The text sits beside the path and the arrow beyond it, pointing the way the
+        // aeroplane is travelling — which on a band that reads leftwards is leftwards.
+        let text_left = mx - wide / 2.0 - 5.0 * onward;
+        label(c, bold, 7.0, text_left, my + 6.0, &written, INK);
+        let tip = if onward > 0.0 { text_left + wide + 8.0 } else { text_left - 8.0 };
+        line(c, tip - 6.0 * onward, my + 8.5, tip, my + 8.5, 0.7, INK);
         c.set_fill_gray(INK);
-        c.move_to(tip + 2.5, my + 8.5);
-        c.line_to(tip - 1.0, py_offset(my, 10.3));
-        c.line_to(tip - 1.0, py_offset(my, 6.7));
+        c.move_to(tip + 2.5 * onward, my + 8.5);
+        c.line_to(tip - 1.0 * onward, py_offset(my, 10.3));
+        c.line_to(tip - 1.0 * onward, py_offset(my, 6.7));
         c.close_path();
         c.fill_nonzero();
     }
@@ -2492,9 +2509,17 @@ fn draw_profile(c: &mut Content, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     c.fill_nonzero();
 
     // Glidepath angle and threshold crossing height, in the corner a chart puts them.
-    text(c, font, 6.5, at_nm(0.0) + 8.0, tch + 9.0, &format!("TCH {crossing_ft:.0}'"), 0.3);
-    text(c, font, 6.5, at_nm(0.0) + 8.0, tch - 1.0, &format!("TDZE {:.0}'", ch.tdze_ft), 0.3);
-    text(c, font, 6.0, x + 6.0, y + 6.0, &format!("{total_nm:.1} NM"), 0.35);
+    // Beyond the threshold, on the far side from the approach.
+    let beyond = at_nm(0.0) - 8.0 * onward;
+    if westbound {
+        text_right(c, font, 6.5, beyond, tch - 9.0, &format!("TCH {crossing_ft:.0}'"), 0.3);
+        text_right(c, font, 6.5, beyond, tch - 18.0, &format!("TDZE {:.0}'", ch.tdze_ft), 0.3);
+        text_right(c, font, 6.0, x + w - 6.0, y + 6.0, &format!("{total_nm:.1} NM"), 0.35);
+    } else {
+        text(c, font, 6.5, beyond, tch + 9.0, &format!("TCH {crossing_ft:.0}'"), 0.3);
+        text(c, font, 6.5, beyond, tch - 1.0, &format!("TDZE {:.0}'", ch.tdze_ft), 0.3);
+        text(c, font, 6.0, x + 6.0, y + 6.0, &format!("{total_nm:.1} NM"), 0.35);
+    }
 
     // From the final approach fix to the missed approach point, and how long that takes
     // at the speeds an aeroplane flies it: a crew times the last segment, so a chart
