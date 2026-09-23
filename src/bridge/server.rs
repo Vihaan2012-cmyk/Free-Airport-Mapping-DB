@@ -86,7 +86,8 @@ fn handle_charts(store: &Store, req: Request, path: &str) -> Option<Request> {
         }
         return None;
     }
-    let p = path.find("/v2/charts/")?;
+    // Anything else is not a chart request, and goes back to be answered as a map one.
+    let Some(p) = path.find("/v2/charts/") else { return Some(req) };
     let rest: Vec<String> = path[p + "/v2/charts/".len()..].trim_matches('/').split('/').map(str::to_string).collect();
     let query = req.url().split_once('?').map(|(_, q)| q.to_string()).unwrap_or_default();
     let night = parse_query(&query).get("theme").and_then(Value::as_str).is_some_and(|t| t.eq_ignore_ascii_case("night") || t.eq_ignore_ascii_case("dark"));
