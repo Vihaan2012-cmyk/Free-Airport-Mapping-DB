@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.5 (2026-09-23)
+
+- **Published holds are drawn.** A hold at an initial approach fix is somewhere to wait
+  for the approach, not a leg of it, so nothing in the coded route mentions it — it lives
+  in the navigation database's own holding table, against the fix's name. We read that
+  table for the missed approach and never asked it about anything else, which is why
+  Madeira drew one racetrack where the plate has two. Every fix on the chart is now asked
+  about, and each hold is drawn where it is flown, with its inbound course and its
+  maximum holding altitude.
+
+- **The circling minima carry a visibility.** A minimum with no visibility beside it is
+  half a minimum, and outside the United States we read no published one, so the table
+  from PANS-OPS is printed and headed as the standard it is. Where a state's own chart
+  was read, that visibility is used and this column does not appear.
+
+- **The missed approach point is given as a distance**: "MAP at D3.6 FUN", which is how a
+  crew flying a non-precision approach knows where it ends.
+
 ## 0.5.4 (2026-09-23)
 
 - **Tracks are drawn round.** A procedure is coded as fixes joined by straight legs, and
