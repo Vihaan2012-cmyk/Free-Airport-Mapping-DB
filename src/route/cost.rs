@@ -17,10 +17,17 @@
 
 use super::graph::{Compact, Edge, Graph};
 use super::hazard::Shape;
-use crate::dispatch::{CostModel, EdgeQuery, EdgeRule, Hazard, HazardKind, LegQuery, Verdict};
+use crate::dispatch::{CostModel, EdgeQuery, EdgeRule, Hazard, HazardKind, LatLon, LegQuery, Verdict};
 use chrono::{DateTime, Utc};
 use rayon::prelude::*;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+
+/// The airway name a free-route direct leg is costed and reported under: not a published
+/// airway at all, so every rule that reads [`EdgeQuery::airway`] sees exactly what a
+/// controller would see in the route string, and [`super::search::reconstruct`] never needs
+/// to invent a name for a leg whose `via_airway` is `None`.
+pub const DIRECT: &str = "DCT";
 
 /// The cost of flying the network at one level, frozen at one time: one entry per forward
 /// edge, parallel to [`Compact::edges`], `f32::INFINITY` where the level, a hazard to be
@@ -117,21 +124,20 @@ impl HazardShapes {
     }
 }
 
-/// What one edge costs at one level, worked out in full: filtered by the level and the
-/// aircraft's ceiling, then by whether it is clear of a hazard to be avoided, then by
-/// every rule, then costed and, where a hazard prices it rather than closing it, marked
-/// up. `f32::INFINITY` where the edge is closed outright. The one place [`CostModel::leg`]
-/// is ever called, whether the caller asks for every edge up front or one at a time as a
-/// search touches it.
+/// What one leg costs, worked out in full: filtered by whether it is clear of a hazard to be
+/// avoided, then by every rule, then costed and, where a hazard prices it rather than
+/// closing it, marked up. `f32::INFINITY` where the leg is closed outright. The one place
+/// [`CostModel::leg`] is ever called, whether the leg is a real edge of the compact graph
+/// costed up front or one at a time as a search touches it, or a free-route direct leg that
+/// is not an edge of the graph at all — the two are priced by exactly this, differing only
+/// in the airway name a rule sees ([`super::search`] wires a direct leg through with `DCT`)
+/// and in whether an edge's own published limits close it before this is ever reached.
 #[allow(clippy::too_many_arguments)]
-fn cost_edge(graph: &Graph, level_ft: f64, ceiling: f64, shapes: &HazardShapes, frozen: &Frozen, from: u32, to: u32, from_pos: crate::dispatch::LatLon, to_pos: crate::dispatch::LatLon, e: &Edge) -> (f32, f32) {
-    if !e.allowed_at(level_ft, ceiling) {
-        return (f32::INFINITY, 0.0);
-    }
+fn cost_leg(from_id: &str, from_pos: LatLon, to_id: &str, to_pos: LatLon, airway: &str, level_ft: f64, shapes: &HazardShapes, frozen: &Frozen) -> (f32, f32) {
     if shapes.avoid.iter().any(|s| s.crossed_by(from_pos, to_pos)) {
         return (f32::INFINITY, 0.0);
     }
-    let q = EdgeQuery { from: graph.fix_id(from), from_pos, to: graph.fix_id(to), to_pos, airway: graph.airway_name(e.airway_id()), level_ft, when: frozen.when, origin: frozen.origin, destination: frozen.destination };
+    let q = EdgeQuery { from: from_id, from_pos, to: to_id, to_pos, airway, level_ft, when: frozen.when, origin: frozen.origin, destination: frozen.destination };
     let mut factor = 1.0f64;
     let mut forbidden = false;
     for rule in frozen.edge_rules {
@@ -152,6 +158,17 @@ fn cost_edge(graph: &Graph, level_ft: f64, ceiling: f64, shapes: &HazardShapes, 
     let lq = LegQuery { from: from_pos, to: to_pos, level_ft, when: frozen.when, flown_nm: frozen.flown_nm };
     let leg = frozen.cost.leg(&lq).times(factor);
     (leg.value(frozen.cost_index) as f32, leg.minutes as f32)
+}
+
+/// What one edge of the compact graph costs at one level: filtered first by the edge's own
+/// published limits and the aircraft's ceiling, then priced by [`cost_leg`] exactly as any
+/// other leg is.
+#[allow(clippy::too_many_arguments)]
+fn cost_edge(graph: &Graph, level_ft: f64, ceiling: f64, shapes: &HazardShapes, frozen: &Frozen, from: u32, to: u32, from_pos: LatLon, to_pos: LatLon, e: &Edge) -> (f32, f32) {
+    if !e.allowed_at(level_ft, ceiling) {
+        return (f32::INFINITY, 0.0);
+    }
+    cost_leg(graph.fix_id(from), from_pos, graph.fix_id(to), to_pos, graph.airway_name(e.airway_id()), level_ft, shapes, frozen)
 }
 
 /// One level's array, every edge costed up front. The eager path: right next to
@@ -209,6 +226,13 @@ pub struct LazyLevel<'a> {
     cost: Vec<Cell<f32>>,
     minutes: Vec<Cell<f32>>,
     costed: Cell<usize>,
+    /// A free-route direct leg is not an edge of the compact graph, so it has no place in
+    /// `cost` to be memoised at: this is its own memoisation, keyed by the pair of fixes it
+    /// joins, filled the first time the search asks about a given pair and kept from then on
+    /// for the rest of this level's searches — exactly the reason `cost` exists, for a leg
+    /// that `cost` was never sized to hold.
+    directs: RefCell<HashMap<(u32, u32), f32>>,
+    directs_costed: Cell<usize>,
 }
 
 impl<'a> LazyLevel<'a> {
@@ -216,7 +240,7 @@ impl<'a> LazyLevel<'a> {
         let n = compact.edges.len();
         let shapes = HazardShapes::at(frozen.hazards, frozen.when, level_ft);
         let ceiling = frozen.cost.ceiling_ft();
-        LazyLevel { level_ft, graph, compact, frozen, shapes, ceiling, cost: vec![Cell::new(f32::NAN); n], minutes: vec![Cell::new(f32::NAN); n], costed: Cell::new(0) }
+        LazyLevel { level_ft, graph, compact, frozen, shapes, ceiling, cost: vec![Cell::new(f32::NAN); n], minutes: vec![Cell::new(f32::NAN); n], costed: Cell::new(0), directs: RefCell::new(HashMap::new()), directs_costed: Cell::new(0) }
     }
 
     fn cost_at(&self, flat: usize, from: u32, to: u32, e: &Edge) -> f32 {
@@ -251,6 +275,30 @@ impl<'a> LazyLevel<'a> {
     pub fn edges_costed(&self) -> usize {
         self.costed.get()
     }
+
+    /// A free-route direct leg between two fixes, priced exactly as a real edge is —
+    /// obeying the hazards, every [`EdgeRule`] (as `DCT`), and the aircraft's ceiling — but
+    /// through the pair-keyed memoisation `directs` holds rather than a position in
+    /// `Compact::edges`, since a direct leg is not one. `f32::INFINITY` above the aircraft's
+    /// ceiling, or where a hazard or a rule closes it.
+    pub fn direct(&self, from: u32, to: u32) -> f32 {
+        if self.level_ft > self.ceiling {
+            return f32::INFINITY;
+        }
+        if let Some(&c) = self.directs.borrow().get(&(from, to)) {
+            return c;
+        }
+        let (c, _) = cost_leg(self.graph.fix_id(from), self.compact.pos(from), self.graph.fix_id(to), self.compact.pos(to), DIRECT, self.level_ft, &self.shapes, &self.frozen);
+        self.directs.borrow_mut().insert((from, to), c);
+        self.directs_costed.set(self.directs_costed.get() + 1);
+        c
+    }
+
+    /// How many distinct direct-leg pairs this level actually had to price: kept apart from
+    /// [`LazyLevel::edges_costed`], since a direct leg is never one of `Compact`'s own edges.
+    pub fn directs_costed(&self) -> usize {
+        self.directs_costed.get()
+    }
 }
 
 impl EdgeCost for LazyLevel<'_> {
@@ -259,6 +307,21 @@ impl EdgeCost for LazyLevel<'_> {
     }
     fn backward(&self, compact: &Compact, node: u32, pos_in_row: usize) -> f32 {
         LazyLevel::backward(self, compact, node, pos_in_row)
+    }
+}
+
+/// What a search's direct-leg expansion needs from a level's cost: a `DirectCost` and an
+/// [`EdgeCost`] are two views of the same [`LazyLevel`], asked for different things — an
+/// edge of the compact graph by position, a direct leg by the pair of fixes it joins — so
+/// they are kept as separate traits rather than one, and a caller with no directs to offer
+/// (a test with a hand-built [`LevelMetric`], say) need not implement this at all.
+pub trait DirectCost {
+    fn direct(&self, from: u32, to: u32) -> f32;
+}
+
+impl DirectCost for LazyLevel<'_> {
+    fn direct(&self, from: u32, to: u32) -> f32 {
+        LazyLevel::direct(self, from, to)
     }
 }
 
