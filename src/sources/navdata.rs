@@ -1188,9 +1188,162 @@ fn category(code: &str) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------------
+// Airports and runways, for `route::airports`.
+// ---------------------------------------------------------------------------------
+
+/// One row of the airport table: identifier, name, position and field elevation.
+#[derive(Debug, Clone)]
+pub struct AirportRow {
+    pub icao: String,
+    pub name: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub elevation_ft: f64,
+}
+
+/// Every airport in the navigation database, for `route::airports` to load once into its
+/// own spatial index rather than ask this crate's connection for one at a time.
+pub fn all_airports() -> Vec<AirportRow> {
+    let Some((connection, table)) = open_table("airports") else { return Vec::new() };
+    let sql = format!("select airport_identifier, airport_name, airport_ref_latitude, airport_ref_longitude, elevation from \"{table}\"");
+    let Ok(mut statement) = connection.prepare(&sql) else { return Vec::new() };
+    let rows = statement.query_map([], |row| {
+        Ok(AirportRow {
+            icao: row.get::<_, String>(0)?.trim().to_uppercase(),
+            name: row.get::<_, Option<String>>(1)?.unwrap_or_default().trim().to_string(),
+            lat: row.get::<_, f64>(2)?,
+            lon: row.get::<_, f64>(3)?,
+            elevation_ft: row.get::<_, Option<f64>>(4)?.unwrap_or(0.0),
+        })
+    });
+    rows.map(|r| r.flatten().filter(|a| !a.icao.is_empty()).collect()).unwrap_or_default()
+}
+
+/// One row of the runway table: which airport, its identifier, its length and where its
+/// threshold is.
+#[derive(Debug, Clone)]
+pub struct RunwayRow {
+    pub icao: String,
+    /// Without the "RW" the table itself prefixes it with: "09L", not "RW09L".
+    pub ident: String,
+    pub length_ft: f64,
+    pub bearing_true_deg: Option<f64>,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+/// Every runway published for an airport: what a route search picks the departure and
+/// arrival ends from.
+pub fn runways(icao: &str) -> Vec<RunwayRow> {
+    let Some((connection, table)) = open_table("runways") else { return Vec::new() };
+    // Not every database carries a true bearing alongside the magnetic one this file
+    // already reads elsewhere; where it does not, the magnetic figure is close enough
+    // that a runway is never picked against the wind by more than a token amount.
+    let sql = format!(
+        "select airport_identifier, runway_identifier, runway_length, \
+         coalesce(runway_true_bearing, runway_magnetic_bearing), runway_latitude, runway_longitude \
+         from \"{table}\" where airport_identifier = ?1"
+    );
+    let Ok(mut statement) = connection.prepare(&sql) else { return Vec::new() };
+    let rows = statement.query_map([icao.to_uppercase()], |row| {
+        Ok(RunwayRow {
+            icao: row.get::<_, String>(0)?.trim().to_uppercase(),
+            ident: row.get::<_, String>(1)?.trim().trim_start_matches("RW").trim_start_matches('0').to_string(),
+            length_ft: row.get::<_, Option<f64>>(2)?.unwrap_or(0.0),
+            bearing_true_deg: row.get::<_, Option<f64>>(3).ok().flatten(),
+            lat: row.get::<_, f64>(4)?,
+            lon: row.get::<_, f64>(5)?,
+        })
+    });
+    rows.map(|r| r.flatten().filter(|w| !w.ident.is_empty()).collect()).unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------------
+// SIDs and STARs, for the route search to join a flight plan onto the airways with.
+// ---------------------------------------------------------------------------------
+
+/// Which family of procedure a leg belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcedureKind {
+    Sid,
+    Star,
+}
+
+/// One leg of a published SID or STAR, as the ARINC 424 tables write it: which procedure,
+/// which transition it belongs to (blank for the common portion, "RWxx" for a leg specific
+/// to one runway), its place in sequence, the fix, and what it constrains a flight to.
+#[derive(Debug, Clone)]
+pub struct ProcedureLeg {
+    pub procedure: String,
+    pub transition: String,
+    pub seqno: i64,
+    pub fix: String,
+    pub lat: f64,
+    pub lon: f64,
+    /// '+' at or above `altitude1_ft`, '-' at or below it, 'B' between it and
+    /// `altitude2_ft`; blank means exactly at `altitude1_ft`.
+    pub altitude_description: String,
+    pub altitude1_ft: Option<f64>,
+    pub altitude2_ft: Option<f64>,
+    pub speed_max_kt: Option<f64>,
+}
+
+/// Every leg of every SID or STAR published at an airport, in the order each procedure is
+/// flown. `route::procedures` groups these into named procedures — a runway-specific start,
+/// a common middle, an enroute transition at the far end for a SID and the other way about
+/// for a STAR — and picks the one that fits the runway and the rest of the flight.
+pub fn procedure_legs(icao: &str, kind: ProcedureKind) -> Vec<ProcedureLeg> {
+    let suffix = match kind {
+        ProcedureKind::Sid => "sids",
+        ProcedureKind::Star => "stars",
+    };
+    let Some((connection, table)) = open_table(suffix) else { return Vec::new() };
+    let sql = format!(
+        "select procedure_identifier, transition_identifier, sequence_number, waypoint_identifier, waypoint_latitude, waypoint_longitude, \
+         altitude_description, altitude1, altitude2, speed_limit \
+         from \"{table}\" where airport_identifier = ?1 order by procedure_identifier, transition_identifier, sequence_number"
+    );
+    let Ok(mut statement) = connection.prepare(&sql) else { return Vec::new() };
+    let rows = statement.query_map([icao.to_uppercase()], |row| {
+        Ok(ProcedureLeg {
+            procedure: row.get::<_, String>(0)?.trim().to_string(),
+            transition: row.get::<_, Option<String>>(1)?.unwrap_or_default().trim().to_uppercase(),
+            seqno: row.get::<_, i64>(2).unwrap_or_default(),
+            fix: row.get::<_, Option<String>>(3)?.unwrap_or_default().trim().to_string(),
+            lat: row.get::<_, Option<f64>>(4)?.unwrap_or_default(),
+            lon: row.get::<_, Option<f64>>(5)?.unwrap_or_default(),
+            altitude_description: row.get::<_, Option<String>>(6)?.unwrap_or_default().trim().to_string(),
+            altitude1_ft: row.get::<_, Option<f64>>(7).ok().flatten(),
+            altitude2_ft: row.get::<_, Option<f64>>(8).ok().flatten(),
+            speed_max_kt: row.get::<_, Option<f64>>(9).ok().flatten(),
+        })
+    });
+    rows.map(|r| r.flatten().filter(|l| !l.fix.is_empty() && !l.procedure.is_empty()).collect()).unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the database on this machine says of its airports, runways and SIDs. Run by
+    /// hand: there is no aircraft navigation database on a build machine to check it
+    /// against automatically.
+    #[test]
+    #[ignore]
+    fn airports_runways_and_sids_from_the_installed_database() {
+        let airports = all_airports();
+        println!("airports: {}", airports.len());
+        if let Some(a) = airports.iter().find(|a| a.icao == "KJFK") {
+            println!("KJFK: {a:?}");
+            for rw in runways(&a.icao) {
+                println!("  {rw:?}");
+            }
+            for leg in procedure_legs(&a.icao, ProcedureKind::Sid).iter().take(20) {
+                println!("  SID {leg:?}");
+            }
+        }
+    }
 
     /// What the database on this machine says round Kennedy. Run by hand.
     #[test]
