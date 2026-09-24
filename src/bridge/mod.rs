@@ -12,6 +12,7 @@ pub mod hosts;
 pub mod patcher;
 pub mod platform;
 pub mod progress;
+pub mod planner;
 pub mod server;
 pub mod service;
 pub mod settings;

@@ -47,7 +47,7 @@ ab_glyph = "0.2"
 png = "0.17"
 
 [target.'cfg(windows)'.dependencies]
-native-windows-gui = { version = "1.0.13", default-features = false, features = ["high-dpi", "tray-notification", "message-window", "list-view", "file-dialog", "notice", "animation-timer", "menu", "frame", "image-list", "textbox", "embed-resource"] }
+native-windows-gui = { version = "1.0.13", default-features = false, features = ["high-dpi", "tray-notification", "message-window", "list-view", "file-dialog", "notice", "animation-timer", "menu", "frame", "image-list", "textbox", "embed-resource", "image-decoder"] }
 winapi = { version = "0.3.9", features = ["synchapi", "handleapi", "winbase", "winerror", "shellapi", "winuser", "securitybaseapi", "sddl", "minwinbase", "winnt", "errhandlingapi", "shlobj", "knownfolders", "combaseapi", "processthreadsapi"] }
 
 [build-dependencies]

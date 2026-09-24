@@ -13,11 +13,62 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const LOG_LINES: usize = 500;
+
+/// Where the planning panel starts, and how wide the window is with and without it. The panel
+/// is built at this offset always and simply falls outside a narrow window, so showing it is a
+/// resize and not a rebuild.
+/// A plan being worked out, watched while it runs.
+///
+/// The search reports where it has reached as it reaches there; this collects those, the window
+/// redraws the map from them a few times a second, and the route appears as it is found rather
+/// than all at once at the end.
+#[derive(Default)]
+struct Planning {
+    reached: Mutex<Vec<amdbgen::dispatch::LatLon>>,
+    best: Mutex<Option<Vec<amdbgen::dispatch::LatLon>>>,
+    ends: Mutex<Option<(amdbgen::dispatch::LatLon, amdbgen::dispatch::LatLon)>>,
+    done: AtomicBool,
+    outcome: Mutex<Option<Result<(String, String), String>>>,
+}
+
+impl amdbgen::route::progress::Sink for Planning {
+    fn event(&self, event: amdbgen::route::progress::Event) {
+        use amdbgen::route::progress::Event as E;
+        match event {
+            E::Started { origin, destination } => {
+                if let Ok(mut e) = self.ends.lock() {
+                    *e = Some((origin, destination));
+                }
+            }
+            E::Reached { at, .. } => {
+                if let Ok(mut r) = self.reached.lock() {
+                    if r.len() < 40_000 {
+                        r.push(at);
+                    }
+                }
+            }
+            E::Best { path, .. } => {
+                if let Ok(mut b) = self.best.lock() {
+                    *b = Some(path);
+                }
+            }
+            E::Finished { .. } => {}
+        }
+    }
+}
+
+const PANEL_X: i32 = 660;
+const NARROW: u32 = 640;
+const WIDE: u32 = 1024;
+/// The map inside the panel, in pixels. Drawn by the same renderer that writes `route-map`.
+const MAP_W: i32 = 344;
+const MAP_H: i32 = 182;
 
 // Status colours, readable on the system dialog background.
 const GREEN: [u8; 3] = [16, 124, 16];
@@ -318,6 +369,10 @@ enum Phase {
 struct State {
     settings: Settings,
     running: Option<Running>,
+    planner_open: bool,
+    planning: Option<Arc<Planning>>,
+    /// The image frame keeps only a handle, so the bitmap it shows has to be held here.
+    plan_bitmap: Option<nwg::Bitmap>,
     phase: Phase,
     error: String,
     instance: Instance,
@@ -350,6 +405,38 @@ struct Ui {
     install: nwg::Button,
     remove: nwg::Button,
     refresh: nwg::Button,
+    planner: nwg::Button,
+
+    // The planning panel, which the window widens to show.
+    plan_header: nwg::Label,
+    plan_from_label: nwg::Label,
+    plan_from: nwg::TextInput,
+    plan_to_label: nwg::Label,
+    plan_to: nwg::TextInput,
+    plan_altn_label: nwg::Label,
+    plan_altn: nwg::TextInput,
+    plan_type_label: nwg::Label,
+    plan_type: nwg::TextInput,
+    plan_level_label: nwg::Label,
+    plan_level: nwg::TextInput,
+    plan_ci_label: nwg::Label,
+    plan_ci: nwg::TextInput,
+    plan_pax_label: nwg::Label,
+    plan_pax: nwg::TextInput,
+    plan_payload_label: nwg::Label,
+    plan_payload: nwg::TextInput,
+    plan_flight_label: nwg::Label,
+    plan_flight: nwg::TextInput,
+    plan_reg_label: nwg::Label,
+    plan_reg: nwg::TextInput,
+    plan_offline: nwg::CheckBox,
+    plan_rvsm: nwg::CheckBox,
+    plan_go: nwg::Button,
+    plan_status: nwg::Label,
+    plan_result: nwg::Label,
+    plan_route: nwg::TextBox,
+    plan_map: nwg::ImageFrame,
+    plan_timer: nwg::AnimationTimer,
 
     charts_header: nwg::Label,
     chart_icao_label: nwg::Label,
@@ -479,6 +566,58 @@ impl App {
         nwg::Button::builder().parent(w).text("Install or update A220 map").position((20, 292)).size((220, 30)).build(&mut ui.install)?;
         nwg::Button::builder().parent(w).text("Remove A220 map").position((248, 292)).size((160, 30)).build(&mut ui.remove)?;
         nwg::Button::builder().parent(w).text("Refresh").position((520, 292)).size((100, 30)).build(&mut ui.refresh)?;
+        nwg::Button::builder().parent(w).text("Flight planning").position((416, 292)).size((96, 30)).build(&mut ui.planner)?;
+
+        // ---- The planning panel ----------------------------------------------------
+        // Everything here sits to the right of the window's own width, so it is simply not
+        // on screen until the window is widened for it. Drawn in the window rather than in
+        // a page because that is where the rest of this program is.
+        const PX: i32 = PANEL_X;
+        nwg::Label::builder().parent(w).text("Flight planning").font(Some(&ui.font_header)).position((PX, 14)).size((520, 24)).build(&mut ui.plan_header)?;
+
+        let mut y = 48;
+        nwg::Label::builder().parent(w).text("Depart").font(Some(&ui.font_small)).position((PX, y)).size((76, 18)).build(&mut ui.plan_from_label)?;
+        nwg::Label::builder().parent(w).text("Arrive").font(Some(&ui.font_small)).position((PX + 86, y)).size((76, 18)).build(&mut ui.plan_to_label)?;
+        nwg::Label::builder().parent(w).text("Alternate").font(Some(&ui.font_small)).position((PX + 172, y)).size((86, 18)).build(&mut ui.plan_altn_label)?;
+        nwg::Label::builder().parent(w).text("Aircraft").font(Some(&ui.font_small)).position((PX + 268, y)).size((76, 18)).build(&mut ui.plan_type_label)?;
+        y += 19;
+        nwg::TextInput::builder().parent(w).limit(4).text("VOBL").position((PX, y)).size((76, 25)).build(&mut ui.plan_from)?;
+        nwg::TextInput::builder().parent(w).limit(4).text("KJFK").position((PX + 86, y)).size((76, 25)).build(&mut ui.plan_to)?;
+        nwg::TextInput::builder().parent(w).limit(4).placeholder_text(Some("AUTO")).position((PX + 172, y)).size((86, 25)).build(&mut ui.plan_altn)?;
+        nwg::TextInput::builder().parent(w).limit(4).text("B77W").position((PX + 268, y)).size((76, 25)).build(&mut ui.plan_type)?;
+
+        y += 34;
+        nwg::Label::builder().parent(w).text("Level").font(Some(&ui.font_small)).position((PX, y)).size((76, 18)).build(&mut ui.plan_level_label)?;
+        nwg::Label::builder().parent(w).text("Cost index").font(Some(&ui.font_small)).position((PX + 86, y)).size((76, 18)).build(&mut ui.plan_ci_label)?;
+        nwg::Label::builder().parent(w).text("Passengers").font(Some(&ui.font_small)).position((PX + 172, y)).size((86, 18)).build(&mut ui.plan_pax_label)?;
+        nwg::Label::builder().parent(w).text("Payload kg").font(Some(&ui.font_small)).position((PX + 268, y)).size((86, 18)).build(&mut ui.plan_payload_label)?;
+        y += 19;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((PX, y)).size((76, 25)).build(&mut ui.plan_level)?;
+        nwg::TextInput::builder().parent(w).text("60").position((PX + 86, y)).size((76, 25)).build(&mut ui.plan_ci)?;
+        nwg::TextInput::builder().parent(w).text("350").position((PX + 172, y)).size((86, 25)).build(&mut ui.plan_pax)?;
+        nwg::TextInput::builder().parent(w).text("45000").position((PX + 268, y)).size((86, 25)).build(&mut ui.plan_payload)?;
+
+        y += 34;
+        nwg::Label::builder().parent(w).text("Callsign").font(Some(&ui.font_small)).position((PX, y)).size((76, 18)).build(&mut ui.plan_flight_label)?;
+        nwg::Label::builder().parent(w).text("Registration").font(Some(&ui.font_small)).position((PX + 86, y)).size((86, 18)).build(&mut ui.plan_reg_label)?;
+        y += 19;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((PX, y)).size((76, 25)).build(&mut ui.plan_flight)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((PX + 86, y)).size((86, 25)).build(&mut ui.plan_reg)?;
+        nwg::CheckBox::builder().parent(w).text("Offline").check_state(nwg::CheckBoxState::Checked).position((PX + 180, y + 2)).size((78, 22)).build(&mut ui.plan_offline)?;
+        nwg::CheckBox::builder().parent(w).text("RVSM").check_state(nwg::CheckBoxState::Checked).position((PX + 264, y + 2)).size((78, 22)).build(&mut ui.plan_rvsm)?;
+
+        y += 36;
+        nwg::Button::builder().parent(w).text("Generate").position((PX, y)).size((120, 30)).build(&mut ui.plan_go)?;
+        nwg::Label::builder().parent(w).text("idle").font(Some(&ui.font_small)).position((PX + 130, y + 7)).size((214, 18)).build(&mut ui.plan_status)?;
+
+        y += 38;
+        nwg::ImageFrame::builder().parent(w).position((PX, y)).size((MAP_W, MAP_H)).build(&mut ui.plan_map)?;
+        y += MAP_H + 8;
+        nwg::Label::builder().parent(w).text("").font(Some(&ui.font_small)).position((PX, y)).size((MAP_W, 18)).build(&mut ui.plan_result)?;
+        y += 22;
+        nwg::TextBox::builder().parent(w).readonly(true).flags(nwg::TextBoxFlags::VISIBLE | nwg::TextBoxFlags::VSCROLL).font(Some(&ui.font_small)).position((PX, y)).size((MAP_W, 86)).build(&mut ui.plan_route)?;
+
+        nwg::AnimationTimer::builder().parent(w).interval(Duration::from_millis(400)).active(false).build(&mut ui.plan_timer)?;
 
         // Options
         // ---- Approach charts -------------------------------------------------------
@@ -557,6 +696,9 @@ impl App {
             state: RefCell::new(State {
                 settings,
                 running: None,
+                planner_open: false,
+                planning: None,
+                plan_bitmap: None,
                 phase: Phase::Stopped,
                 error: String::new(),
                 instance,
@@ -632,6 +774,10 @@ impl App {
                     self.install_map();
                 } else if handle == ui.remove.handle {
                     self.remove_map();
+                } else if handle == ui.planner.handle {
+                    self.toggle_planner();
+                } else if handle == ui.plan_go.handle {
+                    self.start_planning();
                 } else if handle == ui.refresh.handle {
                     self.refresh_inventory();
                 } else if handle == ui.chart_find.handle {
@@ -684,7 +830,15 @@ impl App {
                 }
             }
             E::OnTimerTick if handle == ui.timer.handle => self.tick(),
-            E::OnNotice if handle == ui.notice.handle => self.drain(),
+            E::OnTimerTick if handle == ui.plan_timer.handle => self.tick_planning(),
+            E::OnNotice if handle == ui.notice.handle => {
+                self.drain();
+                // A plan finishing wakes the window through the same notice, so the panel is
+                // brought up to date whenever anything else is.
+                if self.state.borrow().planning.is_some() {
+                    self.tick_planning();
+                }
+            }
             _ => {}
         }
     }
@@ -1092,6 +1246,146 @@ impl App {
             }
             shared.wake();
         });
+    }
+
+    /// Show or hide the planning panel, by widening the window for it.
+    ///
+    /// Every control of the panel is built beyond the narrow window's own width, so it is
+    /// already there and simply not on screen; showing it is a resize.
+    fn toggle_planner(&self) {
+        let open = !self.state.borrow().planner_open;
+        self.state.borrow_mut().planner_open = open;
+        let (w, h) = self.ui.window.size();
+        let _ = w;
+        self.ui.window.set_size(if open { WIDE } else { NARROW }, h);
+        self.ui.planner.set_text(if open { "Hide planning" } else { "Flight planning" });
+        if open {
+            self.redraw_plan();
+        }
+    }
+
+    /// Work out a plan, in a thread of its own, watching the search as it runs.
+    fn start_planning(&self) {
+        if self.state.borrow().planning.as_ref().is_some_and(|p| !p.done.load(Ordering::Relaxed)) {
+            return;
+        }
+        let text = |c: &nwg::TextInput| c.text().trim().to_uppercase();
+        let number = |c: &nwg::TextInput, fallback: f64| c.text().trim().parse::<f64>().unwrap_or(fallback);
+
+        let mut opts = amdbgen::ofp::DispatchOptions::new(text(&self.ui.plan_from), text(&self.ui.plan_to), text(&self.ui.plan_type));
+        opts.payload_kg = number(&self.ui.plan_payload, 0.0);
+        opts.passengers = number(&self.ui.plan_pax, 0.0) as u32;
+        opts.cost_index = number(&self.ui.plan_ci, 30.0);
+        opts.offline = self.ui.plan_offline.check_state() == nwg::CheckBoxState::Checked;
+        opts.rvsm = self.ui.plan_rvsm.check_state() == nwg::CheckBoxState::Checked;
+        let altn = text(&self.ui.plan_altn);
+        opts.alternate = (!altn.is_empty()).then_some(altn);
+        let flight = text(&self.ui.plan_flight);
+        opts.flight_number = (!flight.is_empty()).then_some(flight);
+        let reg = text(&self.ui.plan_reg);
+        opts.registration = (!reg.is_empty()).then_some(reg);
+        let level = text(&self.ui.plan_level);
+        opts.level = level.trim_start_matches("FL").parse::<f64>().ok().map(|v| if v < 1000.0 { v * 100.0 } else { v });
+
+        let planning = Arc::new(Planning::default());
+        self.state.borrow_mut().planning = Some(planning.clone());
+        self.ui.plan_status.set_text("searching...");
+        self.ui.plan_result.set_text("");
+        self.ui.plan_route.set_text("");
+        self.ui.plan_go.set_enabled(false);
+        self.ui.plan_timer.start();
+
+        let notice = self.shared.notice.lock().ok().and_then(|n| *n);
+        std::thread::spawn(move || {
+            amdbgen::route::progress::watch(Some(planning.clone()));
+            let planned = amdbgen::ofp::dispatch(&opts);
+            amdbgen::route::progress::watch(None);
+            if let Ok(mut out) = planning.outcome.lock() {
+                *out = Some(match planned {
+                    Ok(d) => {
+                        let ground = d.route.distance_nm();
+                        let direct = amdbgen::dispatch::distance_nm(d.route.origin.pos, d.route.destination.pos);
+                        Ok((
+                            format!(
+                                "{} nm flown, {} nm direct ({:+.0}%), {} kg block",
+                                ground.round(),
+                                direct.round(),
+                                (ground / direct.max(1.0) - 1.0) * 100.0,
+                                d.perf.fuel.block_kg.round()
+                            ),
+                            d.route.route_string(),
+                        ))
+                    }
+                    Err(e) => Err(format!("{e:#}")),
+                });
+            }
+            planning.done.store(true, Ordering::Relaxed);
+            if let Some(n) = notice {
+                n.notice();
+            }
+        });
+    }
+
+    /// Redraw the panel's map from whatever the search has reported so far.
+    fn redraw_plan(&self) {
+        use amdbgen::output::routemap::{self, Map};
+        let held = self.state.borrow().planning.clone();
+        let (reached, best, ends) = match &held {
+            Some(p) => (
+                p.reached.lock().map(|r| r.clone()).unwrap_or_default(),
+                p.best.lock().map(|b| b.clone()).unwrap_or_default(),
+                p.ends.lock().map(|e| *e).unwrap_or_default(),
+            ),
+            None => (Vec::new(), None, None),
+        };
+        let (origin, destination) = ends.unwrap_or(((0.0, 0.0), (0.0, 0.0)));
+        let map = Map {
+            origin,
+            destination,
+            origin_name: self.ui.plan_from.text().trim().to_uppercase(),
+            destination_name: self.ui.plan_to.text().trim().to_uppercase(),
+            route: best.unwrap_or_default().into_iter().map(|p| (String::new(), p)).collect(),
+            ellipses: Vec::new(),
+            corridor: Vec::new(),
+            network: amdbgen::route::Graph::shared().fixes().iter().map(|f| f.pos).collect(),
+            explored: reached,
+            floor: Vec::new(),
+            caption: String::new(),
+        };
+        let Ok(png) = routemap::png_bytes(&map, MAP_W as f32, MAP_H as f32, 1.0) else { return };
+        let mut bitmap = nwg::Bitmap::default();
+        if nwg::Bitmap::builder().source_bin(Some(&png)).build(&mut bitmap).is_ok() {
+            self.ui.plan_map.set_bitmap(Some(&bitmap));
+            // The frame keeps only a handle, so the bitmap has to outlive this call.
+            self.state.borrow_mut().plan_bitmap = Some(bitmap);
+        }
+    }
+
+    /// Called while a plan is being worked out: redraw, and finish when it is done.
+    fn tick_planning(&self) {
+        self.redraw_plan();
+        let held = self.state.borrow().planning.clone();
+        let Some(p) = held else { return };
+        if !p.done.load(Ordering::Relaxed) {
+            let n = p.reached.lock().map(|r| r.len()).unwrap_or(0);
+            self.ui.plan_status.set_text(&format!("searching... {} states", n * 512));
+            return;
+        }
+        self.ui.plan_timer.stop();
+        self.ui.plan_go.set_enabled(true);
+        match p.outcome.lock().ok().and_then(|o| o.clone()) {
+            Some(Ok((summary, route))) => {
+                self.ui.plan_status.set_text("planned");
+                self.ui.plan_result.set_text(&summary);
+                self.ui.plan_route.set_text(&route);
+            }
+            Some(Err(e)) => {
+                self.ui.plan_status.set_text("no route");
+                self.ui.plan_route.set_text(&e);
+            }
+            None => self.ui.plan_status.set_text("stopped"),
+        }
+        self.state.borrow_mut().planning = None;
     }
 
     fn refresh_inventory(&self) {

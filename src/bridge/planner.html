@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flight Planning</title>
+<style>
+  :root {
+    --ink: #1b1d21; --dim: #6a7078; --line: #d9dde3; --panel: #fff; --ground: #f2f4f7;
+    --accent: #1f6feb; --route: #cc1f28; --look: #e0a83c; --net: #c3c9d2; --warn: #b4551f;
+    --off: #aeb4bd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #e6e9ee; --dim: #98a0ab; --line: #2b3038; --panel: #171a1f; --ground: #0f1115;
+      --net: #39404a; --off: #4a515b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #e6e9ee; --dim: #98a0ab; --line: #2b3038; --panel: #171a1f; --ground: #0f1115;
+    --net: #39404a; --off: #4a515b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font: 13px/1.4 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: grid; grid-template-columns: 372px 1fr; height: 100vh;
+  }
+  /* As a sidebar in an aircraft the map goes on top and the form runs beneath it. */
+  @media (max-width: 900px) {
+    body { grid-template-columns: 1fr; grid-template-rows: 38vh auto; height: auto; }
+    main { order: -1; }
+  }
+  aside { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; padding: 14px; }
+  h1 { font-size: 15px; margin: 0 0 1px; letter-spacing: -.01em; }
+  .sub { color: var(--dim); font-size: 11px; margin-bottom: 14px; }
+
+  section { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 10px; overflow: hidden; }
+  section > h2 {
+    font: 600 11px/1 inherit; text-transform: uppercase; letter-spacing: .08em; color: var(--dim);
+    margin: 0; padding: 9px 11px; background: var(--ground); border-bottom: 1px solid var(--line);
+    display: flex; justify-content: space-between; align-items: center; cursor: pointer;
+  }
+  section > div { padding: 9px 11px 11px; }
+  section.shut > div { display: none; }
+  section > h2 em { font-style: normal; font-size: 10px; color: var(--dim); }
+
+  .row { display: grid; gap: 7px; }
+  .r2 { grid-template-columns: 1fr 1fr; }
+  .r3 { grid-template-columns: 1fr 1fr 1fr; }
+  label { display: block; font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 6px 0 2px; }
+  input, select {
+    width: 100%; padding: 6px 7px; font: inherit; color: var(--ink);
+    background: var(--ground); border: 1px solid var(--line); border-radius: 5px; min-width: 0;
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  input:disabled, select:disabled { color: var(--off); cursor: not-allowed; }
+  textarea {
+    width: 100%; min-height: 62px; padding: 6px 7px; resize: vertical; color: var(--ink);
+    background: var(--ground); border: 1px solid var(--line); border-radius: 5px;
+    font: 11px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  }
+
+  /* A switch, and the ones that are not ours to switch yet are plainly not. */
+  .sw { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 12px; }
+  .sw input { width: 34px; height: 19px; appearance: none; background: var(--off); border: 0; border-radius: 10px; position: relative; cursor: pointer; transition: background .15s; }
+  .sw input:checked { background: var(--accent); }
+  .sw input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .sw input:checked::after { transform: translateX(15px); }
+  .sw input:disabled { opacity: .45; cursor: not-allowed; }
+  .fixed { color: var(--dim); }
+  .fixed::after { content: " fixed"; font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: var(--off); }
+
+  button.go { width: 100%; margin: 2px 0 10px; padding: 10px; font: 600 13px/1 inherit; color: #fff; background: var(--accent); border: 0; border-radius: 6px; cursor: pointer; }
+  button.go:disabled { opacity: .55; cursor: default; }
+
+  .stat { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; font-variant-numeric: tabular-nums; }
+  .stat span:first-child { color: var(--dim); }
+  .bad { color: var(--warn); }
+  code { font: 11px/1.5 ui-monospace, Menlo, Consolas, monospace; word-break: break-word; display: block; color: var(--dim); }
+
+  main { position: relative; overflow: hidden; background: var(--ground); }
+  canvas { display: block; width: 100%; height: 100%; }
+  .key { position: absolute; left: 10px; bottom: 8px; display: flex; flex-wrap: wrap; gap: 9px; font-size: 10px; color: var(--dim); background: color-mix(in srgb, var(--panel) 85%, transparent); padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); }
+  .key i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Flight Planning</h1>
+  <div class="sub">amdbgen &middot; the search drawn as it runs</div>
+
+  <button class="go" id="go">Generate</button>
+
+  <section><h2>Flight Info<em>&#9662;</em></h2><div>
+    <div class="row r3">
+      <div><label>Airline (ICAO)</label><input id="airline" placeholder="ZZZ" maxlength="3" spellcheck="false"></div>
+      <div><label>Flight Number</label><input id="fltnum" placeholder="0000" inputmode="numeric"></div>
+      <div><label>ATC Callsign</label><input id="callsign" placeholder="AUTO" spellcheck="false"></div>
+    </div>
+    <div class="row r3">
+      <div><label>Depart</label><input id="from" value="VOBL" maxlength="4" spellcheck="false"></div>
+      <div><label>Arrive</label><input id="to" value="KJFK" maxlength="4" spellcheck="false"></div>
+      <div><label>Alternate</label><input id="alternate" placeholder="AUTO" maxlength="4" spellcheck="false"></div>
+    </div>
+    <label>Departure Time (EOBT, UTC)</label><input id="eobt" type="datetime-local">
+  </div></section>
+
+  <section><h2>Aircraft<em>&#9662;</em></h2><div>
+    <div class="row r2">
+      <div><label>Type</label><input id="aircraft" value="B77W" maxlength="4" spellcheck="false"></div>
+      <div><label>Registration</label><input id="reg" placeholder="AUTO" spellcheck="false"></div>
+    </div>
+    <div class="row r3">
+      <div><label>Climb</label><select disabled><option>AUTO</option></select></div>
+      <div><label>Cruise</label><select disabled><option>AUTO</option></select></div>
+      <div><label>Descent</label><select disabled><option>AUTO</option></select></div>
+    </div>
+  </div></section>
+
+  <section><h2>Selections<em>&#9662;</em></h2><div>
+    <div class="row r2">
+      <div><label>OFP Layout</label><select id="layout"><option>LIDO</option></select></div>
+      <div><label>AIRAC Cycle</label><input id="airac" disabled value="installed"></div>
+    </div>
+    <div class="row r3">
+      <div><label>Units</label><select disabled><option>KG</option></select></div>
+      <div><label>Taxi Out</label><input id="taxiout" value="20" disabled></div>
+      <div><label>Taxi In</label><input id="taxiin" value="8" disabled></div>
+    </div>
+    <div class="row r3">
+      <div><label>Flight Rules</label><select disabled><option>IFR</option></select></div>
+      <div><label>Type</label><select disabled><option>Scheduled</option></select></div>
+      <div><label>Alternates</label><select disabled><option>1</option></select></div>
+    </div>
+    <div style="margin-top:8px">
+      <div class="sw"><span>Detailed navlog</span><input type="checkbox" checked disabled></div>
+      <div class="sw"><span>ETOPS planning</span><input type="checkbox" id="etops" checked disabled></div>
+      <div class="sw"><span>Plan step climbs</span><input type="checkbox" id="steps" checked disabled></div>
+      <div class="sw"><span>Runway analysis</span><input type="checkbox" disabled></div>
+      <div class="sw"><span>Hazards &amp; conflict zones</span><input type="checkbox" id="hazards" checked disabled></div>
+      <div class="sw"><span>RVSM</span><input type="checkbox" id="rvsm" checked></div>
+      <div class="sw"><span>Offline &mdash; still air</span><input type="checkbox" id="offline" checked></div>
+    </div>
+  </div></section>
+
+  <section><h2>Optional Entries<em>&#9662;</em></h2><div>
+    <div class="row r3">
+      <div><label>Dep Runway</label><input id="deprwy" placeholder="AUTO" spellcheck="false" disabled></div>
+      <div><label>Arr Runway</label><input id="arrrwy" placeholder="AUTO" spellcheck="false" disabled></div>
+      <div><label>Altitude</label><input id="level" placeholder="AUTO" spellcheck="false"></div>
+    </div>
+    <div class="row r3">
+      <div><label>Passengers</label><input id="pax" value="350" inputmode="numeric"></div>
+      <div><label>Payload kg</label><input id="payload" value="45000" inputmode="numeric"></div>
+      <div><label>Cost Index</label><input id="ci" value="60" inputmode="numeric"></div>
+    </div>
+    <label>Avoid FIRs (comma separated)</label><input id="avoid" placeholder="none" spellcheck="false">
+  </div></section>
+
+  <section class="shut"><h2>Route<em>&#9662;</em></h2><div>
+    <label>Selected Route</label>
+    <textarea id="route_in" placeholder="Left empty, the route is found. Entering one is not read yet."></textarea>
+  </div></section>
+
+  <section><h2>Result<em>&#9662;</em></h2><div>
+    <div class="stat"><span>Status</span><span id="status">idle</span></div>
+    <div class="stat"><span>Searched</span><span id="explored">&mdash;</span></div>
+    <div class="stat"><span>Ground</span><span id="ground">&mdash;</span></div>
+    <div class="stat"><span>Direct</span><span id="direct">&mdash;</span></div>
+    <div class="stat"><span>Over</span><span id="over">&mdash;</span></div>
+    <div class="stat"><span>Block fuel</span><span id="fuel">&mdash;</span></div>
+    <div style="margin-top:7px"><code id="route"></code></div>
+  </div></section>
+</aside>
+
+<main>
+  <canvas id="map"></canvas>
+  <div class="key">
+    <span><i style="background:var(--net)"></i>network</span>
+    <span><i style="background:var(--look)"></i>searched</span>
+    <span><i style="background:var(--route)"></i>route</span>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const canvas = $('map'), ctx = canvas.getContext('2d');
+let network = null, reached = [], best = null, ends = null, centreLon = 0, cursor = 0, timer = null;
+
+for (const h of document.querySelectorAll('section > h2')) h.onclick = () => h.parentElement.classList.toggle('shut');
+
+// The clock starts an hour out, as a plan filed now would.
+(() => { const d = new Date(Date.now() + 3600e3); $('eobt').value = d.toISOString().slice(0, 16); })();
+
+function project(lat, lon) {
+  let d = ((lon - centreLon + 180) % 360 + 360) % 360 - 180;
+  return [(d + 180) / 360 * canvas.width, (90 - lat) / 180 * canvas.height];
+}
+function wraps(a, b) { const f = p => ((p - centreLon + 180) % 360 + 360) % 360 - 180; return Math.abs(f(a) - f(b)) > 180; }
+function css(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+function fit() {
+  const r = canvas.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.round(r.width * dpr));
+  canvas.height = Math.max(1, Math.round(r.height * dpr));
+  draw();
+}
+addEventListener('resize', fit);
+
+function draw() {
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = css('--line'); ctx.lineWidth = 1; ctx.globalAlpha = .6; ctx.beginPath();
+  for (let lat = -60; lat <= 60; lat += 30) { const y = (90 - lat) / 180 * h; ctx.moveTo(0, y); ctx.lineTo(w, y); }
+  for (let k = 0; k < 360; k += 30) { const x = k / 360 * w; ctx.moveTo(x, 0); ctx.lineTo(x, h); }
+  ctx.stroke(); ctx.globalAlpha = 1;
+
+  if (network) {
+    ctx.fillStyle = css('--net');
+    for (let i = 0; i < network.length; i += 2) { const [x, y] = project(network[i] / 100, network[i + 1] / 100); ctx.fillRect(x, y, 1, 1); }
+  }
+  if (reached.length) {
+    ctx.fillStyle = css('--look');
+    for (let i = 0; i < reached.length; i++) {
+      ctx.globalAlpha = .25 + .75 * (i / reached.length);
+      const [x, y] = project(reached[i][0], reached[i][1]);
+      ctx.fillRect(x - 1, y - 1, 2.5, 2.5);
+    }
+    ctx.globalAlpha = 1;
+  }
+  if (best && best.path.length > 1) {
+    ctx.strokeStyle = css('--route'); ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.beginPath();
+    let open = false;
+    for (let i = 1; i < best.path.length; i++) {
+      const a = best.path[i - 1], b = best.path[i];
+      if (wraps(a[1], b[1])) { open = false; continue; }
+      if (!open) { const p = project(a[0], a[1]); ctx.moveTo(p[0], p[1]); open = true; }
+      const q = project(b[0], b[1]); ctx.lineTo(q[0], q[1]);
+    }
+    ctx.stroke();
+  }
+  if (ends) {
+    ctx.fillStyle = css('--accent');
+    for (const p of [ends.origin, ends.destination]) { if (p) { const [x, y] = project(p[0], p[1]); ctx.fillRect(x - 3, y - 3, 6, 6); } }
+  }
+}
+
+fetch('plan/network.bin').then(r => r.arrayBuffer()).then(b => { network = new Int16Array(b); draw(); }).catch(() => {});
+
+function stop() { if (timer) { clearInterval(timer); timer = null; } $('go').disabled = false; }
+
+async function poll() {
+  let s; try { s = await (await fetch('plan/events?since=' + cursor)).json(); } catch (e) { return; }
+  if (s.idle) return;
+  if (s.reached && s.reached.length) reached = reached.concat(s.reached);
+  cursor = s.cursor ?? cursor;
+  if (s.best) best = s.best;
+  if (s.origin || s.destination) {
+    ends = { origin: s.origin, destination: s.destination };
+    if (s.origin && s.destination) {
+      let d = ((s.destination[1] - s.origin[1] + 180) % 360 + 360) % 360 - 180;
+      centreLon = s.origin[1] + d / 2;
+    }
+  }
+  $('explored').textContent = reached.length ? (reached.length * 512).toLocaleString() + ' states' : '—';
+  draw();
+  if (s.error) { $('status').textContent = 'no route'; $('status').className = 'bad'; $('route').textContent = s.error; stop(); return; }
+  if (s.done && s.summary) {
+    const r = s.summary;
+    $('status').textContent = 'planned'; $('status').className = '';
+    $('ground').textContent = r.ground_nm.toLocaleString() + ' nm';
+    $('direct').textContent = r.direct_nm.toLocaleString() + ' nm';
+    $('over').textContent = r.over_pct + '%';
+    $('fuel').textContent = r.block_kg.toLocaleString() + ' kg';
+    $('route').textContent = r.route;
+    stop();
+  }
+}
+
+$('go').onclick = async () => {
+  reached = []; best = null; cursor = 0;
+  $('status').textContent = 'searching'; $('status').className = '';
+  for (const k of ['ground', 'direct', 'over', 'fuel']) $(k).textContent = '—';
+  $('route').textContent = ''; $('go').disabled = true;
+  const flight = ($('callsign').value.trim() || ($('airline').value.trim() + $('fltnum').value.trim())).toUpperCase();
+  const q = new URLSearchParams({
+    from: $('from').value, to: $('to').value, aircraft: $('aircraft').value,
+    alternate: $('alternate').value, level: $('level').value,
+    ci: $('ci').value, pax: $('pax').value, payload: $('payload').value,
+    flight, reg: $('reg').value, eobt: $('eobt').value, avoid: $('avoid').value,
+    rvsm: $('rvsm').checked ? '1' : '0',
+    offline: $('offline').checked ? '1' : '0',
+  });
+  try { await fetch('plan/start?' + q.toString()); }
+  catch (e) { $('status').textContent = 'the bridge did not answer'; $('status').className = 'bad'; stop(); return; }
+  timer = setInterval(poll, 250);
+};
+
+fit();
+</script>
+</body>
+</html>
