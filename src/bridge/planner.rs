@@ -140,6 +140,19 @@ fn start(params: &Map<String, Value>) -> Arc<Run> {
 
         match planned {
             Ok(d) => {
+                // The route as it is read back, not merely item 15: the airports and the
+                // runways in use are the part a crew copies, and the part that makes the SID
+                // and the STAR mean anything.
+                let end = |icao: &str, rwy: Option<&String>| match rwy {
+                    Some(r) if !r.is_empty() => format!("{icao}/{r}"),
+                    _ => icao.to_string(),
+                };
+                let read_back = format!(
+                    "{} {} {}",
+                    end(&d.route.origin.icao, d.route.dep_runway.as_ref()),
+                    d.route.route_string(),
+                    end(&d.route.destination.icao, d.route.arr_runway.as_ref())
+                );
                 let ground = d.route.distance_nm();
                 let direct = crate::dispatch::distance_nm(d.route.origin.pos, d.route.destination.pos);
                 if let Ok(mut s) = thread_run.summary.lock() {
@@ -151,7 +164,7 @@ fn start(params: &Map<String, Value>) -> Arc<Run> {
                         "direct_nm": direct.round(),
                         "over_pct": ((ground / direct.max(1.0) - 1.0) * 100.0).round(),
                         "block_kg": d.perf.fuel.block_kg.round(),
-                        "route": d.route.route_string(),
+                        "route": read_back,
                         "fixes": d.route.points.iter().map(|w| json!({ "ident": w.ident, "pos": [w.pos.0, w.pos.1] })).collect::<Vec<_>>(),
                     }));
                 }
@@ -195,6 +208,9 @@ pub fn handle(req: tiny_http::Request, path: &str, params: &Map<String, Value>, 
     match rest {
         "" => respond_bytes(req, 200, "text/html; charset=utf-8", PAGE.as_bytes().to_vec()),
         "/network.bin" => respond_bytes(req, 200, "application/octet-stream", network_bytes()),
+        // The world's coastlines, the same twenty kilobytes the drawn maps use, so the page is
+        // a map and not a scatter of dots.
+        "/land.bin" => respond_bytes(req, 200, "application/octet-stream", include_bytes!("../../data/world_land.bin").to_vec()),
         "/start" => {
             let run = start(params);
             respond_json(req, 200, json!({ "id": run.id }).to_string());

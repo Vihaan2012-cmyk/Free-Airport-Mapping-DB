@@ -48,7 +48,9 @@ png = "0.17"
 
 [target.'cfg(windows)'.dependencies]
 native-windows-gui = { version = "1.0.13", default-features = false, features = ["high-dpi", "tray-notification", "message-window", "list-view", "file-dialog", "notice", "animation-timer", "menu", "frame", "image-list", "textbox", "embed-resource", "image-decoder"] }
+raw-window-handle = "0.6.2"
 winapi = { version = "0.3.9", features = ["synchapi", "handleapi", "winbase", "winerror", "shellapi", "winuser", "securitybaseapi", "sddl", "minwinbase", "winnt", "errhandlingapi", "shlobj", "knownfolders", "combaseapi", "processthreadsapi"] }
+wry = "0.57.0"
 
 [build-dependencies]
 embed-resource = "3"

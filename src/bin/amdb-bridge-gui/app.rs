@@ -372,7 +372,9 @@ struct State {
     settings: Settings,
     running: Option<Running>,
     planner_open: bool,
-    planning: Option<Arc<Planning>>,
+    /// The panel's web view, kept alive for as long as the window is: dropping it takes the
+    /// view down with it.
+    webview: Option<wry::WebView>,
     /// The image frame keeps only a handle, so the bitmap it shows has to be held here.
     plan_bitmap: Option<nwg::Bitmap>,
     phase: Phase,
@@ -409,103 +411,10 @@ struct Ui {
     refresh: nwg::Button,
     planner: nwg::Button,
 
-    // The planning panel, which the window widens to show.
+    // The planning panel. It is a web view rather than a wall of Windows controls: the form
+    // is forty fields of cards, dropdowns and switches beside a live map, which is a page's
+    // natural shape and not a dialog's. It lives inside this window all the same.
     plan_header: nwg::Label,
-    plan_airline_label: nwg::Label,
-    plan_airline: nwg::TextInput,
-    plan_fltnum_label: nwg::Label,
-    plan_fltnum: nwg::TextInput,
-    plan_flight_label: nwg::Label,
-    plan_flight: nwg::TextInput,
-    plan_fltrule_label: nwg::Label,
-    plan_fltrule: nwg::TextInput,
-    plan_from_label: nwg::Label,
-    plan_from: nwg::TextInput,
-    plan_to_label: nwg::Label,
-    plan_to: nwg::TextInput,
-    plan_altn_label: nwg::Label,
-    plan_altn: nwg::TextInput,
-    plan_altcount_label: nwg::Label,
-    plan_altcount: nwg::TextInput,
-    plan_type_label: nwg::Label,
-    plan_type: nwg::TextInput,
-    plan_airframe_label: nwg::Label,
-    plan_airframe: nwg::TextInput,
-    plan_eobt_label: nwg::Label,
-    plan_eobt: nwg::TextInput,
-    plan_blocktime_label: nwg::Label,
-    plan_blocktime: nwg::TextInput,
-    plan_climb_label: nwg::Label,
-    plan_climb: nwg::TextInput,
-    plan_cruise_label: nwg::Label,
-    plan_cruise: nwg::TextInput,
-    plan_ci_label: nwg::Label,
-    plan_ci: nwg::TextInput,
-    plan_descent_label: nwg::Label,
-    plan_descent: nwg::TextInput,
-    plan_layout_label: nwg::Label,
-    plan_layout: nwg::TextInput,
-    plan_airac_label: nwg::Label,
-    plan_airac: nwg::TextInput,
-    plan_units_label: nwg::Label,
-    plan_units: nwg::TextInput,
-    plan_maps_label: nwg::Label,
-    plan_maps: nwg::TextInput,
-    plan_rules_label: nwg::Label,
-    plan_rules: nwg::TextInput,
-    plan_taxiout_label: nwg::Label,
-    plan_taxiout: nwg::TextInput,
-    plan_taxiin_label: nwg::Label,
-    plan_taxiin: nwg::TextInput,
-    plan_level_label: nwg::Label,
-    plan_level: nwg::TextInput,
-    plan_deprwy_label: nwg::Label,
-    plan_deprwy: nwg::TextInput,
-    plan_arrrwy_label: nwg::Label,
-    plan_arrrwy: nwg::TextInput,
-    plan_pax_label: nwg::Label,
-    plan_pax: nwg::TextInput,
-    plan_payload_label: nwg::Label,
-    plan_payload: nwg::TextInput,
-    plan_freight_label: nwg::Label,
-    plan_freight: nwg::TextInput,
-    plan_zfw_label: nwg::Label,
-    plan_zfw: nwg::TextInput,
-    plan_reg_label: nwg::Label,
-    plan_reg: nwg::TextInput,
-    plan_avoid_label: nwg::Label,
-    plan_avoid: nwg::TextInput,
-    plan_contfuel_label: nwg::Label,
-    plan_contfuel: nwg::TextInput,
-    plan_resfuel_label: nwg::Label,
-    plan_resfuel: nwg::TextInput,
-    plan_taxifuel_label: nwg::Label,
-    plan_taxifuel: nwg::TextInput,
-    plan_blockfuel_label: nwg::Label,
-    plan_blockfuel: nwg::TextInput,
-    plan_arrfuel_label: nwg::Label,
-    plan_arrfuel: nwg::TextInput,
-    plan_melfuel_label: nwg::Label,
-    plan_melfuel: nwg::TextInput,
-    plan_atcfuel_label: nwg::Label,
-    plan_atcfuel: nwg::TextInput,
-    plan_extrafuel_label: nwg::Label,
-    plan_extrafuel: nwg::TextInput,
-    plan_navlog: nwg::CheckBox,
-    plan_etops: nwg::CheckBox,
-    plan_steps: nwg::CheckBox,
-    plan_rwyanalysis: nwg::CheckBox,
-    plan_notams: nwg::CheckBox,
-    plan_firnotams: nwg::CheckBox,
-    plan_hazards: nwg::CheckBox,
-    plan_rvsm: nwg::CheckBox,
-    plan_offline: nwg::CheckBox,
-    plan_go: nwg::Button,
-    plan_status: nwg::Label,
-    plan_result: nwg::Label,
-    plan_route: nwg::TextBox,
-    plan_map: nwg::ImageFrame,
-    plan_timer: nwg::AnimationTimer,
 
     charts_header: nwg::Label,
     chart_icao_label: nwg::Label,
@@ -641,129 +550,8 @@ impl App {
         // Everything here sits to the right of the window's own width, so it is simply not
         // on screen until the window is widened for it. Drawn in the window rather than in
         // a page because that is where the rest of this program is.
-        const PX: i32 = PANEL_X;
-        // Four columns of form on the left, the map beside it. Everything a dispatcher expects
-        // is on the page; the ones this planner settles for you are shown greyed rather than
-        // left out, so what the plan assumed is visible instead of only in the code.
-        const C: [i32; 4] = [PANEL_X, PANEL_X + 134, PANEL_X + 268, PANEL_X + 402];
-        const FW: i32 = 124;
-        const MAP_X: i32 = PANEL_X + 556;
-        nwg::Label::builder().parent(w).text("Flight planning").font(Some(&ui.font_header)).position((PX, 12)).size((400, 22)).build(&mut ui.plan_header)?;
+        nwg::Label::builder().parent(w).text("Flight planning").font(Some(&ui.font_header)).position((PANEL_X, 12)).size((400, 22)).build(&mut ui.plan_header)?;
 
-        nwg::Label::builder().parent(w).text("Airline").font(Some(&ui.font_small)).position((C[0], 40)).size((FW, 16)).build(&mut ui.plan_airline_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("ZZZ")).position((C[0], 58)).size((FW, 23)).build(&mut ui.plan_airline)?;
-        nwg::Label::builder().parent(w).text("Flight number").font(Some(&ui.font_small)).position((C[1], 40)).size((FW, 16)).build(&mut ui.plan_fltnum_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("0000")).position((C[1], 58)).size((FW, 23)).build(&mut ui.plan_fltnum)?;
-        nwg::Label::builder().parent(w).text("ATC callsign").font(Some(&ui.font_small)).position((C[2], 40)).size((FW, 16)).build(&mut ui.plan_flight_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((C[2], 58)).size((FW, 23)).build(&mut ui.plan_flight)?;
-        nwg::Label::builder().parent(w).text("Type of flight").font(Some(&ui.font_small)).position((C[3], 40)).size((FW, 16)).build(&mut ui.plan_fltrule_label)?;
-        nwg::TextInput::builder().parent(w).text("Scheduled").readonly(true).position((C[3], 58)).size((FW, 23)).build(&mut ui.plan_fltrule)?;
-        nwg::Label::builder().parent(w).text("Depart").font(Some(&ui.font_small)).position((C[0], 88)).size((FW, 16)).build(&mut ui.plan_from_label)?;
-        nwg::TextInput::builder().parent(w).text("WSSS").position((C[0], 106)).size((FW, 23)).build(&mut ui.plan_from)?;
-        nwg::Label::builder().parent(w).text("Arrive").font(Some(&ui.font_small)).position((C[1], 88)).size((FW, 16)).build(&mut ui.plan_to_label)?;
-        nwg::TextInput::builder().parent(w).text("YBBN").position((C[1], 106)).size((FW, 23)).build(&mut ui.plan_to)?;
-        nwg::Label::builder().parent(w).text("Alternate").font(Some(&ui.font_small)).position((C[2], 88)).size((FW, 16)).build(&mut ui.plan_altn_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((C[2], 106)).size((FW, 23)).build(&mut ui.plan_altn)?;
-        nwg::Label::builder().parent(w).text("Alternates").font(Some(&ui.font_small)).position((C[3], 88)).size((FW, 16)).build(&mut ui.plan_altcount_label)?;
-        nwg::TextInput::builder().parent(w).text("1").readonly(true).position((C[3], 106)).size((FW, 23)).build(&mut ui.plan_altcount)?;
-        nwg::Label::builder().parent(w).text("Aircraft").font(Some(&ui.font_small)).position((C[0], 136)).size((FW, 16)).build(&mut ui.plan_type_label)?;
-        nwg::TextInput::builder().parent(w).text("B77W").position((C[0], 154)).size((FW, 23)).build(&mut ui.plan_type)?;
-        nwg::Label::builder().parent(w).text("Airframe").font(Some(&ui.font_small)).position((C[1], 136)).size((FW, 16)).build(&mut ui.plan_airframe_label)?;
-        nwg::TextInput::builder().parent(w).text("Default").readonly(true).position((C[1], 154)).size((FW, 23)).build(&mut ui.plan_airframe)?;
-        nwg::Label::builder().parent(w).text("Off blocks UTC").font(Some(&ui.font_small)).position((C[2], 136)).size((FW, 16)).build(&mut ui.plan_eobt_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("HHMM")).position((C[2], 154)).size((FW, 23)).build(&mut ui.plan_eobt)?;
-        nwg::Label::builder().parent(w).text("Sched block time").font(Some(&ui.font_small)).position((C[3], 136)).size((FW, 16)).build(&mut ui.plan_blocktime_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("H:MM")).readonly(true).position((C[3], 154)).size((FW, 23)).build(&mut ui.plan_blocktime)?;
-        nwg::Label::builder().parent(w).text("Climb profile").font(Some(&ui.font_small)).position((C[0], 184)).size((FW, 16)).build(&mut ui.plan_climb_label)?;
-        nwg::TextInput::builder().parent(w).text("AUTO").readonly(true).position((C[0], 202)).size((FW, 23)).build(&mut ui.plan_climb)?;
-        nwg::Label::builder().parent(w).text("Cruise").font(Some(&ui.font_small)).position((C[1], 184)).size((FW, 16)).build(&mut ui.plan_cruise_label)?;
-        nwg::TextInput::builder().parent(w).text("CI").readonly(true).position((C[1], 202)).size((FW, 23)).build(&mut ui.plan_cruise)?;
-        nwg::Label::builder().parent(w).text("Cost index").font(Some(&ui.font_small)).position((C[2], 184)).size((FW, 16)).build(&mut ui.plan_ci_label)?;
-        nwg::TextInput::builder().parent(w).text("60").position((C[2], 202)).size((FW, 23)).build(&mut ui.plan_ci)?;
-        nwg::Label::builder().parent(w).text("Descent profile").font(Some(&ui.font_small)).position((C[3], 184)).size((FW, 16)).build(&mut ui.plan_descent_label)?;
-        nwg::TextInput::builder().parent(w).text("AUTO").readonly(true).position((C[3], 202)).size((FW, 23)).build(&mut ui.plan_descent)?;
-        nwg::Label::builder().parent(w).text("OFP layout").font(Some(&ui.font_small)).position((C[0], 232)).size((FW, 16)).build(&mut ui.plan_layout_label)?;
-        nwg::TextInput::builder().parent(w).text("LIDO").readonly(true).position((C[0], 250)).size((FW, 23)).build(&mut ui.plan_layout)?;
-        nwg::Label::builder().parent(w).text("AIRAC cycle").font(Some(&ui.font_small)).position((C[1], 232)).size((FW, 16)).build(&mut ui.plan_airac_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("installed")).readonly(true).position((C[1], 250)).size((FW, 23)).build(&mut ui.plan_airac)?;
-        nwg::Label::builder().parent(w).text("Units").font(Some(&ui.font_small)).position((C[2], 232)).size((FW, 16)).build(&mut ui.plan_units_label)?;
-        nwg::TextInput::builder().parent(w).text("KG").readonly(true).position((C[2], 250)).size((FW, 23)).build(&mut ui.plan_units)?;
-        nwg::Label::builder().parent(w).text("Flight maps").font(Some(&ui.font_small)).position((C[3], 232)).size((FW, 16)).build(&mut ui.plan_maps_label)?;
-        nwg::TextInput::builder().parent(w).text("Detailed").readonly(true).position((C[3], 250)).size((FW, 23)).build(&mut ui.plan_maps)?;
-        nwg::Label::builder().parent(w).text("Flight rules").font(Some(&ui.font_small)).position((C[0], 280)).size((FW, 16)).build(&mut ui.plan_rules_label)?;
-        nwg::TextInput::builder().parent(w).text("IFR").readonly(true).position((C[0], 298)).size((FW, 23)).build(&mut ui.plan_rules)?;
-        nwg::Label::builder().parent(w).text("Taxi out (min)").font(Some(&ui.font_small)).position((C[1], 280)).size((FW, 16)).build(&mut ui.plan_taxiout_label)?;
-        nwg::TextInput::builder().parent(w).text("20").readonly(true).position((C[1], 298)).size((FW, 23)).build(&mut ui.plan_taxiout)?;
-        nwg::Label::builder().parent(w).text("Taxi in (min)").font(Some(&ui.font_small)).position((C[2], 280)).size((FW, 16)).build(&mut ui.plan_taxiin_label)?;
-        nwg::TextInput::builder().parent(w).text("8").readonly(true).position((C[2], 298)).size((FW, 23)).build(&mut ui.plan_taxiin)?;
-        nwg::Label::builder().parent(w).text("Altitude").font(Some(&ui.font_small)).position((C[3], 280)).size((FW, 16)).build(&mut ui.plan_level_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((C[3], 298)).size((FW, 23)).build(&mut ui.plan_level)?;
-        nwg::Label::builder().parent(w).text("Departure runway").font(Some(&ui.font_small)).position((C[0], 328)).size((FW, 16)).build(&mut ui.plan_deprwy_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).readonly(true).position((C[0], 346)).size((FW, 23)).build(&mut ui.plan_deprwy)?;
-        nwg::Label::builder().parent(w).text("Arrival runway").font(Some(&ui.font_small)).position((C[1], 328)).size((FW, 16)).build(&mut ui.plan_arrrwy_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).readonly(true).position((C[1], 346)).size((FW, 23)).build(&mut ui.plan_arrrwy)?;
-        nwg::Label::builder().parent(w).text("Passengers").font(Some(&ui.font_small)).position((C[2], 328)).size((FW, 16)).build(&mut ui.plan_pax_label)?;
-        nwg::TextInput::builder().parent(w).text("300").position((C[2], 346)).size((FW, 23)).build(&mut ui.plan_pax)?;
-        nwg::Label::builder().parent(w).text("Payload kg").font(Some(&ui.font_small)).position((C[3], 328)).size((FW, 16)).build(&mut ui.plan_payload_label)?;
-        nwg::TextInput::builder().parent(w).text("40000").position((C[3], 346)).size((FW, 23)).build(&mut ui.plan_payload)?;
-        nwg::Label::builder().parent(w).text("Freight kg").font(Some(&ui.font_small)).position((C[0], 376)).size((FW, 16)).build(&mut ui.plan_freight_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("NONE")).readonly(true).position((C[0], 394)).size((FW, 23)).build(&mut ui.plan_freight)?;
-        nwg::Label::builder().parent(w).text("Zero fuel weight").font(Some(&ui.font_small)).position((C[1], 376)).size((FW, 16)).build(&mut ui.plan_zfw_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).readonly(true).position((C[1], 394)).size((FW, 23)).build(&mut ui.plan_zfw)?;
-        nwg::Label::builder().parent(w).text("Registration").font(Some(&ui.font_small)).position((C[2], 376)).size((FW, 16)).build(&mut ui.plan_reg_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((C[2], 394)).size((FW, 23)).build(&mut ui.plan_reg)?;
-        nwg::Label::builder().parent(w).text("Avoid FIRs").font(Some(&ui.font_small)).position((C[3], 376)).size((FW, 16)).build(&mut ui.plan_avoid_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("none")).position((C[3], 394)).size((FW, 23)).build(&mut ui.plan_avoid)?;
-        nwg::Label::builder().parent(w).text("Contingency fuel").font(Some(&ui.font_small)).position((C[0], 424)).size((FW, 16)).build(&mut ui.plan_contfuel_label)?;
-        nwg::TextInput::builder().parent(w).text("Auto").readonly(true).position((C[0], 442)).size((FW, 23)).build(&mut ui.plan_contfuel)?;
-        nwg::Label::builder().parent(w).text("Reserve fuel").font(Some(&ui.font_small)).position((C[1], 424)).size((FW, 16)).build(&mut ui.plan_resfuel_label)?;
-        nwg::TextInput::builder().parent(w).text("Auto").readonly(true).position((C[1], 442)).size((FW, 23)).build(&mut ui.plan_resfuel)?;
-        nwg::Label::builder().parent(w).text("Taxi fuel").font(Some(&ui.font_small)).position((C[2], 424)).size((FW, 16)).build(&mut ui.plan_taxifuel_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).readonly(true).position((C[2], 442)).size((FW, 23)).build(&mut ui.plan_taxifuel)?;
-        nwg::Label::builder().parent(w).text("Block fuel").font(Some(&ui.font_small)).position((C[3], 424)).size((FW, 16)).build(&mut ui.plan_blockfuel_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).readonly(true).position((C[3], 442)).size((FW, 23)).build(&mut ui.plan_blockfuel)?;
-        nwg::Label::builder().parent(w).text("Arrival fuel").font(Some(&ui.font_small)).position((C[0], 472)).size((FW, 16)).build(&mut ui.plan_arrfuel_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).readonly(true).position((C[0], 490)).size((FW, 23)).build(&mut ui.plan_arrfuel)?;
-        nwg::Label::builder().parent(w).text("MEL fuel").font(Some(&ui.font_small)).position((C[1], 472)).size((FW, 16)).build(&mut ui.plan_melfuel_label)?;
-        nwg::TextInput::builder().parent(w).text("0").readonly(true).position((C[1], 490)).size((FW, 23)).build(&mut ui.plan_melfuel)?;
-        nwg::Label::builder().parent(w).text("ATC fuel").font(Some(&ui.font_small)).position((C[2], 472)).size((FW, 16)).build(&mut ui.plan_atcfuel_label)?;
-        nwg::TextInput::builder().parent(w).text("0").readonly(true).position((C[2], 490)).size((FW, 23)).build(&mut ui.plan_atcfuel)?;
-        nwg::Label::builder().parent(w).text("Extra / tankering").font(Some(&ui.font_small)).position((C[3], 472)).size((FW, 16)).build(&mut ui.plan_extrafuel_label)?;
-        nwg::TextInput::builder().parent(w).text("0").readonly(true).position((C[3], 490)).size((FW, 23)).build(&mut ui.plan_extrafuel)?;
-
-        nwg::CheckBox::builder().parent(w).text("Detailed navlog").check_state(nwg::CheckBoxState::Checked).position((C[0], 522)).size((FW + 8, 21)).build(&mut ui.plan_navlog)?;
-        nwg::CheckBox::builder().parent(w).text("ETOPS planning").check_state(nwg::CheckBoxState::Checked).position((C[1], 522)).size((FW + 8, 21)).build(&mut ui.plan_etops)?;
-        nwg::CheckBox::builder().parent(w).text("Plan stepclimbs").check_state(nwg::CheckBoxState::Checked).position((C[2], 522)).size((FW + 8, 21)).build(&mut ui.plan_steps)?;
-        nwg::CheckBox::builder().parent(w).text("Runway analysis").position((C[3], 522)).size((FW + 8, 21)).build(&mut ui.plan_rwyanalysis)?;
-        nwg::CheckBox::builder().parent(w).text("Include NOTAMs").check_state(nwg::CheckBoxState::Checked).position((C[0], 546)).size((FW + 8, 21)).build(&mut ui.plan_notams)?;
-        nwg::CheckBox::builder().parent(w).text("FIR NOTAMs").check_state(nwg::CheckBoxState::Checked).position((C[1], 546)).size((FW + 8, 21)).build(&mut ui.plan_firnotams)?;
-        nwg::CheckBox::builder().parent(w).text("Hazards").check_state(nwg::CheckBoxState::Checked).position((C[2], 546)).size((FW + 8, 21)).build(&mut ui.plan_hazards)?;
-        nwg::CheckBox::builder().parent(w).text("RVSM").check_state(nwg::CheckBoxState::Checked).position((C[3], 546)).size((FW + 8, 21)).build(&mut ui.plan_rvsm)?;
-        nwg::CheckBox::builder().parent(w).text("Offline (still air)").check_state(nwg::CheckBoxState::Checked).position((C[0], 570)).size((FW + 8, 21)).build(&mut ui.plan_offline)?;
-        for c in [&ui.plan_navlog, &ui.plan_etops, &ui.plan_steps, &ui.plan_rwyanalysis, &ui.plan_notams, &ui.plan_firnotams, &ui.plan_hazards] {
-            c.set_enabled(false);
-        }
-
-        let by = 604;
-        nwg::Button::builder().parent(w).text("Generate").position((C[0], by)).size((FW, 30)).build(&mut ui.plan_go)?;
-        nwg::Label::builder().parent(w).text("idle").font(Some(&ui.font_small)).position((C[1], by + 8)).size((390, 18)).build(&mut ui.plan_status)?;
-
-        // What came of the plan, under the form it was asked for with, so a reader's eye goes
-        // down one column rather than across the page and back.
-        nwg::Label::builder().parent(w).text("").font(Some(&ui.font_small)).position((C[0], by + 38)).size((526, 18)).build(&mut ui.plan_result)?;
-        nwg::TextBox::builder()
-            .parent(w)
-            .readonly(true)
-            .flags(nwg::TextBoxFlags::VISIBLE | nwg::TextBoxFlags::VSCROLL)
-            .font(Some(&ui.font_small))
-            .position((C[0], by + 60))
-            .size((526, 132))
-            .build(&mut ui.plan_route)?;
-
-        // The map takes the whole of the right-hand side.
-        nwg::ImageFrame::builder().parent(w).position((MAP_X, 40)).size((MAP_W, MAP_H)).build(&mut ui.plan_map)?;
-
-        nwg::AnimationTimer::builder().parent(w).interval(Duration::from_millis(400)).active(false).build(&mut ui.plan_timer)?;
 
         // Options
         // ---- Approach charts -------------------------------------------------------
@@ -843,7 +631,7 @@ impl App {
                 settings,
                 running: None,
                 planner_open: false,
-                planning: None,
+                webview: None,
                 plan_bitmap: None,
                 phase: Phase::Stopped,
                 error: String::new(),
@@ -922,8 +710,7 @@ impl App {
                     self.remove_map();
                 } else if handle == ui.planner.handle {
                     self.toggle_planner();
-                } else if handle == ui.plan_go.handle {
-                    self.start_planning();
+
                 } else if handle == ui.refresh.handle {
                     self.refresh_inventory();
                 } else if handle == ui.chart_find.handle {
@@ -976,15 +763,7 @@ impl App {
                 }
             }
             E::OnTimerTick if handle == ui.timer.handle => self.tick(),
-            E::OnTimerTick if handle == ui.plan_timer.handle => self.tick_planning(),
-            E::OnNotice if handle == ui.notice.handle => {
-                self.drain();
-                // A plan finishing wakes the window through the same notice, so the panel is
-                // brought up to date whenever anything else is.
-                if self.state.borrow().planning.is_some() {
-                    self.tick_planning();
-                }
-            }
+            E::OnNotice if handle == ui.notice.handle => self.drain(),
             _ => {}
         }
     }
@@ -1396,174 +1175,72 @@ impl App {
 
     /// Show or hide the planning panel, by widening the window for it.
     ///
-    /// Every control of the panel is built beyond the narrow window's own width, so it is
-    /// already there and simply not on screen; showing it is a resize.
+    /// The panel is a web view inside this window, not a browser and not a wall of Windows
+    /// controls. What it shows is forty fields of cards, dropdowns and switches beside a map
+    /// that fills in while the search runs, which is a page's natural shape; the plain Windows
+    /// controls this window is otherwise built from have no card, no dropdown worth the name and
+    /// no canvas at all, and forty of them laid out by hand came out looking like a tax form.
+    ///
+    /// The page is served by the bridge, so the bridge has to be running for there to be
+    /// anything to show. Asked for while stopped, this starts it and says so.
     fn toggle_planner(&self) {
         let open = !self.state.borrow().planner_open;
-        self.state.borrow_mut().planner_open = open;
-        let (w, h) = self.ui.window.size();
-        let _ = w;
-        self.ui.window.set_size(if open { WIDE } else { NARROW }, h);
-        self.ui.planner.set_text(if open { "Hide planning" } else { "Flight planning" });
         if open {
-            self.redraw_plan();
-        }
-    }
-
-    /// Work out a plan, in a thread of its own, watching the search as it runs.
-    fn start_planning(&self) {
-        if self.state.borrow().planning.as_ref().is_some_and(|p| !p.done.load(Ordering::Relaxed)) {
-            return;
-        }
-        let text = |c: &nwg::TextInput| c.text().trim().to_uppercase();
-        let number = |c: &nwg::TextInput, fallback: f64| c.text().trim().parse::<f64>().unwrap_or(fallback);
-
-        let mut opts = amdbgen::ofp::DispatchOptions::new(text(&self.ui.plan_from), text(&self.ui.plan_to), text(&self.ui.plan_type));
-        opts.payload_kg = number(&self.ui.plan_payload, 0.0);
-        opts.passengers = number(&self.ui.plan_pax, 0.0) as u32;
-        opts.cost_index = number(&self.ui.plan_ci, 30.0);
-        opts.offline = self.ui.plan_offline.check_state() == nwg::CheckBoxState::Checked;
-        opts.rvsm = self.ui.plan_rvsm.check_state() == nwg::CheckBoxState::Checked;
-        let altn = text(&self.ui.plan_altn);
-        opts.alternate = (!altn.is_empty()).then_some(altn);
-        // The callsign, or the airline and number put together, which is what a callsign is
-        // when nobody has typed one.
-        let typed = text(&self.ui.plan_flight);
-        let joined = format!("{}{}", text(&self.ui.plan_airline), text(&self.ui.plan_fltnum));
-        let flight = if typed.is_empty() { joined } else { typed };
-        opts.flight_number = (!flight.is_empty()).then_some(flight);
-        let avoid = text(&self.ui.plan_avoid);
-        opts.avoid_firs = avoid.split(',').map(|p| p.trim().to_uppercase()).filter(|p| !p.is_empty()).collect();
-        // Off blocks as `HHMM`, taken as the next such time; left empty it stays an hour from
-        // now, which is what `DispatchOptions::new` already chose.
-        let when = self.ui.plan_eobt.text().trim().to_string();
-        if when.len() == 4 {
-            if let (Ok(hh), Ok(mm)) = (when[..2].parse::<u32>(), when[2..].parse::<u32>()) {
-                use chrono::{Datelike, TimeZone, Utc};
-                let now = Utc::now();
-                if let Some(t) = Utc.with_ymd_and_hms(now.year(), now.month(), now.day(), hh.min(23), mm.min(59), 0).single() {
-                    opts.off_block = if t < now { t + chrono::Duration::days(1) } else { t };
+            let port = self.state.borrow().running.as_ref().map(|r| r.http_port);
+            let Some(port) = port else {
+                self.log_line("Flight planning needs the bridge running: starting it, then press it again");
+                if self.state.borrow().phase != Phase::Starting {
+                    self.start_serving(true);
+                }
+                return;
+            };
+            if self.state.borrow().webview.is_none() {
+                match self.build_webview(port) {
+                    Ok(view) => self.state.borrow_mut().webview = Some(view),
+                    Err(e) => {
+                        self.log_line(&format!("Flight planning could not open: {e:#}"));
+                        return;
+                    }
                 }
             }
         }
-        let reg = text(&self.ui.plan_reg);
-        opts.registration = (!reg.is_empty()).then_some(reg);
-        let level = text(&self.ui.plan_level);
-        opts.level = level.trim_start_matches("FL").parse::<f64>().ok().map(|v| if v < 1000.0 { v * 100.0 } else { v });
-
-        let planning = Arc::new(Planning::default());
-        self.state.borrow_mut().planning = Some(planning.clone());
-        self.ui.plan_status.set_text("searching...");
-        self.ui.plan_result.set_text("");
-        self.ui.plan_route.set_text("");
-        self.ui.plan_go.set_enabled(false);
-        self.ui.plan_timer.start();
-
-        let notice = self.shared.notice.lock().ok().and_then(|n| *n);
-        std::thread::spawn(move || {
-            amdbgen::route::progress::watch(Some(planning.clone()));
-            let planned = amdbgen::ofp::dispatch(&opts);
-            amdbgen::route::progress::watch(None);
-            if let Ok(mut out) = planning.outcome.lock() {
-                *out = Some(match planned {
-                    Ok(d) => {
-                        let ground = d.route.distance_nm();
-                        let direct = amdbgen::dispatch::distance_nm(d.route.origin.pos, d.route.destination.pos);
-                        Ok((
-                            format!(
-                                "{} nm flown, {} nm direct ({:+.0}%), {} kg block",
-                                ground.round(),
-                                direct.round(),
-                                (ground / direct.max(1.0) - 1.0) * 100.0,
-                                d.perf.fuel.block_kg.round()
-                            ),
-                            {
-                                // The route as it is read back, not merely item 15: the two
-                                // airports with the runways in use at each end, which is what a
-                                // crew copies and what makes the SID and STAR mean anything.
-                                let end = |icao: &str, rwy: Option<&String>| match rwy {
-                                    Some(r) if !r.is_empty() => format!("{icao}/{r}"),
-                                    _ => icao.to_string(),
-                                };
-                                format!(
-                                    "{} {} {}",
-                                    end(&d.route.origin.icao, d.route.dep_runway.as_ref()),
-                                    d.route.route_string(),
-                                    end(&d.route.destination.icao, d.route.arr_runway.as_ref())
-                                )
-                            },
-                        ))
-                    }
-                    Err(e) => Err(format!("{e:#}")),
-                });
-            }
-            planning.done.store(true, Ordering::Relaxed);
-            if let Some(n) = notice {
-                n.notice();
-            }
-        });
-    }
-
-    /// Redraw the panel's map from whatever the search has reported so far.
-    fn redraw_plan(&self) {
-        use amdbgen::output::routemap::{self, Map};
-        let held = self.state.borrow().planning.clone();
-        let (reached, best, ends) = match &held {
-            Some(p) => (
-                p.reached.lock().map(|r| r.clone()).unwrap_or_default(),
-                p.best.lock().map(|b| b.clone()).unwrap_or_default(),
-                p.ends.lock().map(|e| *e).unwrap_or_default(),
-            ),
-            None => (Vec::new(), None, None),
-        };
-        let (origin, destination) = ends.unwrap_or(((0.0, 0.0), (0.0, 0.0)));
-        let map = Map {
-            origin,
-            destination,
-            origin_name: self.ui.plan_from.text().trim().to_uppercase(),
-            destination_name: self.ui.plan_to.text().trim().to_uppercase(),
-            route: best.unwrap_or_default().into_iter().map(|p| (String::new(), p)).collect(),
-            ellipses: Vec::new(),
-            corridor: Vec::new(),
-            network: amdbgen::route::Graph::shared().fixes().iter().map(|f| f.pos).collect(),
-            explored: reached,
-            floor: Vec::new(),
-            caption: String::new(),
-        };
-        let Ok(png) = routemap::png_bytes(&map, MAP_W as f32, MAP_H as f32, 1.0) else { return };
-        let mut bitmap = nwg::Bitmap::default();
-        if nwg::Bitmap::builder().source_bin(Some(&png)).build(&mut bitmap).is_ok() {
-            self.ui.plan_map.set_bitmap(Some(&bitmap));
-            // The frame keeps only a handle, so the bitmap has to outlive this call.
-            self.state.borrow_mut().plan_bitmap = Some(bitmap);
+        self.state.borrow_mut().planner_open = open;
+        let (_, h) = self.ui.window.size();
+        self.ui.window.set_size(if open { WIDE } else { NARROW }, h);
+        self.ui.planner.set_text(if open { "Hide planning" } else { "Flight planning" });
+        if let Some(view) = self.state.borrow().webview.as_ref() {
+            let _ = view.set_visible(open);
         }
     }
 
-    /// Called while a plan is being worked out: redraw, and finish when it is done.
-    fn tick_planning(&self) {
-        self.redraw_plan();
-        let held = self.state.borrow().planning.clone();
-        let Some(p) = held else { return };
-        if !p.done.load(Ordering::Relaxed) {
-            let n = p.reached.lock().map(|r| r.len()).unwrap_or(0);
-            self.ui.plan_status.set_text(&format!("searching... {} states", n * 512));
-            return;
-        }
-        self.ui.plan_timer.stop();
-        self.ui.plan_go.set_enabled(true);
-        match p.outcome.lock().ok().and_then(|o| o.clone()) {
-            Some(Ok((summary, route))) => {
-                self.ui.plan_status.set_text("planned");
-                self.ui.plan_result.set_text(&summary);
-                self.ui.plan_route.set_text(&route);
+    /// Put a web view in the window, filling the panel's side of it.
+    fn build_webview(&self, port: u16) -> anyhow::Result<wry::WebView> {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle};
+        use std::num::NonZeroIsize;
+
+        // The window this view is a child of, handed over the way `raw-window-handle` asks for
+        // it: the toolkit gives a bare HWND and wry wants the handle type around it.
+        struct Parent(isize);
+        impl HasWindowHandle for Parent {
+            fn window_handle(&self) -> Result<WindowHandle<'_>, raw_window_handle::HandleError> {
+                let hwnd = NonZeroIsize::new(self.0).ok_or(raw_window_handle::HandleError::Unavailable)?;
+                let raw = RawWindowHandle::Win32(Win32WindowHandle::new(hwnd));
+                // The handle lives exactly as long as the window, which outlives the view.
+                Ok(unsafe { WindowHandle::borrow_raw(raw) })
             }
-            Some(Err(e)) => {
-                self.ui.plan_status.set_text("no route");
-                self.ui.plan_route.set_text(&e);
-            }
-            None => self.ui.plan_status.set_text("stopped"),
         }
-        self.state.borrow_mut().planning = None;
+
+        let hwnd = nwg::ControlHandle::from(&self.ui.window).hwnd().ok_or_else(|| anyhow::anyhow!("the window has no handle yet"))? as isize;
+        let (_, height) = self.ui.window.size();
+        let view = wry::WebViewBuilder::new()
+            .with_url(format!("http://127.0.0.1:{port}/plan"))
+            .with_bounds(wry::Rect {
+                position: wry::dpi::LogicalPosition::new(PANEL_X, 40).into(),
+                size: wry::dpi::LogicalSize::new((WIDE as i32 - PANEL_X - 16).max(320), (height as i32 - 56).max(240)).into(),
+            })
+            .with_background_color((246, 248, 250, 255))
+            .build_as_child(&Parent(hwnd))?;
+        Ok(view)
     }
 
     fn refresh_inventory(&self) {
