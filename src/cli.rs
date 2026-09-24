@@ -154,6 +154,9 @@ enum Cmd {
     /// hazards planned round, printed as an operational flight plan and saved where the
     /// bridge's SimBrief-compatible API will find it for the tablets.
     Dispatch(DispatchArgs),
+    /// Draw one route on a world map, with the network, the search's own ellipses and the
+    /// strips the winds were fetched over, for seeing why a route went the way it did.
+    RouteMap(RouteMapArgs),
     /// A departure (SID) or arrival (STAR) chart, from the simulator's navigation data.
     ProcedureChart {
         icao: String,
@@ -495,6 +498,32 @@ pub struct PreviewArgs {
 }
 
 #[derive(Args, Clone)]
+pub struct RouteMapArgs {
+    /// Origin ICAO code.
+    pub origin: String,
+    /// Destination ICAO code.
+    pub destination: String,
+    /// ICAO aircraft type designator, e.g. B77W.
+    #[arg(long)]
+    pub aircraft: String,
+    #[arg(long, default_value_t = 0.0)]
+    pub payload: f64,
+    /// A cruise level, e.g. FL350. Left out, the planner chooses.
+    #[arg(long)]
+    pub level: Option<String>,
+    #[arg(long, default_value_t = 30.0)]
+    pub ci: f64,
+    /// Do not use the network: still air, no reports.
+    #[arg(long)]
+    pub offline: bool,
+    /// Where the picture goes.
+    #[arg(long)]
+    pub out: Option<PathBuf>,
+    #[arg(long, default_value_t = 1.0)]
+    pub scale: f32,
+}
+
+#[derive(Debug, clap::Args)]
 pub struct DispatchArgs {
     /// Origin ICAO code.
     origin: String,
@@ -1311,6 +1340,7 @@ pub fn run() -> Result<()> {
             Ok(())
         }
         Cmd::Dispatch(a) => dispatch_cmd(a),
+        Cmd::RouteMap(a) => route_map_cmd(a),
         Cmd::ApproachChart { icao, runway, approach, star, list, kind, out, png, scale, open } => {
             approach_chart_cmd(&icao, approach.as_deref().or(runway.as_deref()), star.as_deref(), list, kind.as_deref(), out, png, scale, open)
         }
@@ -1746,5 +1776,62 @@ fn preview_cmd(p: PreviewArgs, kind: Preview) -> Result<()> {
     if p.open {
         open_in_browser(&out);
     }
+    Ok(())
+}
+
+/// A picture of one route: the network it was found in, the region the search was confined to,
+/// the strips the winds came from, and the way it actually went.
+fn route_map_cmd(a: RouteMapArgs) -> Result<()> {
+    use crate::dispatch::LatLon;
+    use crate::ofp::{self, DispatchOptions};
+    use crate::output::routemap::{self, Map};
+    use crate::route::ellipse::Ellipse;
+
+    let mut opts = DispatchOptions::new(a.origin.to_uppercase(), a.destination.to_uppercase(), a.aircraft.to_uppercase());
+    opts.payload_kg = a.payload;
+
+    opts.cost_index = a.ci;
+    opts.level = a.level.as_deref().map(parse_level).transpose()?;
+    opts.offline = a.offline;
+
+    term::start(&format!("Drawing {} {} -> {}", opts.aircraft, opts.origin, opts.destination));
+    let d = ofp::dispatch(&opts)?;
+
+    let (origin, destination) = (d.route.origin.pos, d.route.destination.pos);
+    let (factors, slack) = crate::route::stage_ellipses();
+    let ellipses = factors
+        .iter()
+        .map(|&k| {
+            let e = Ellipse::new(origin, destination, k, slack);
+            (k, routemap::ellipse_outline(origin, destination, &|f| e.half_width_nm(f), 160))
+        })
+        .collect();
+
+    let ground = d.route.distance_nm();
+    let direct = crate::dispatch::distance_nm(origin, destination);
+    let map = Map {
+        origin,
+        destination,
+        origin_name: d.route.origin.icao.clone(),
+        destination_name: d.route.destination.icao.clone(),
+        route: d.route.points.iter().map(|w| (w.ident.clone(), w.pos)).collect(),
+        ellipses,
+        corridor: Ellipse::new(origin, destination, 1.0, 1.0).corridor(300.0),
+        network: crate::route::Graph::shared().fixes().iter().map(|f| f.pos).collect::<Vec<LatLon>>(),
+        caption: format!(
+            "{} -> {}  {}  {:.0} nm flown, {:.0} nm direct ({:+.0}%)  {} fixes",
+            d.route.origin.icao,
+            d.route.destination.icao,
+            d.spec.icao_type,
+            ground,
+            direct,
+            (ground / direct.max(1.0) - 1.0) * 100.0,
+            d.route.points.len()
+        ),
+    };
+
+    let out = a.out.clone().unwrap_or_else(|| PathBuf::from(format!("{}-{}.png", opts.origin, opts.destination)));
+    routemap::write(&map, &out, a.scale)?;
+    term::success(&format!("{}", out.display()));
     Ok(())
 }

@@ -42,6 +42,7 @@ pub mod airports;
 pub mod airspace;
 pub mod cost;
 pub mod directs;
+pub mod bridge;
 pub mod ellipse;
 pub mod etops;
 pub mod graph;
@@ -270,6 +271,13 @@ struct Stage {
 /// altogether and the direct leg lengthen to what an ocean crossing needs — tried last and
 /// only because trying it always would let a route stretch a direct leg across a gap real
 /// free-route airspace would never allow, where a narrower rung already had an answer.
+/// The ellipse each rung of [`STAGES`] confines the search to, widest last, and the slack every
+/// one of them is drawn with: what a picture of the search has to draw to show where it was
+/// allowed to look.
+pub fn stage_ellipses() -> (Vec<f64>, f64) {
+    (STAGES.iter().filter_map(|s| s.ellipse_factor).collect(), ELLIPSE_SLACK_NM)
+}
+
 const STAGES: [Stage; 5] = [
     Stage { join_width: ENTRY_CANDIDATES, ellipse_factor: Some(1.08), direct_max_nm: MAX_DIRECT_NM },
     Stage { join_width: 24, ellipse_factor: Some(1.25), direct_max_nm: MAX_DIRECT_NM },
