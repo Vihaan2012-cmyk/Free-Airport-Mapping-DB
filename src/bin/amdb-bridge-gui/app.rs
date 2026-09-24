@@ -65,12 +65,12 @@ impl amdbgen::route::progress::Sink for Planning {
 
 const PANEL_X: i32 = 660;
 const NARROW: u32 = 640;
-const WIDE: u32 = 1800;
+const WIDE: u32 = 1940;
 /// The map inside the panel, in pixels. Drawn by the same renderer that writes `route-map`, at
 /// the two-to-one the whole world takes on an equirectangular page, and big enough that a route
 /// across a hemisphere is a route and not a smudge.
-const MAP_W: i32 = 680;
-const MAP_H: i32 = 340;
+const MAP_W: i32 = 700;
+const MAP_H: i32 = 350;
 
 // Status colours, readable on the system dialog background.
 const GREEN: [u8; 3] = [16, 124, 16];
@@ -411,53 +411,95 @@ struct Ui {
 
     // The planning panel, which the window widens to show.
     plan_header: nwg::Label,
+    plan_airline_label: nwg::Label,
+    plan_airline: nwg::TextInput,
+    plan_fltnum_label: nwg::Label,
+    plan_fltnum: nwg::TextInput,
+    plan_flight_label: nwg::Label,
+    plan_flight: nwg::TextInput,
+    plan_fltrule_label: nwg::Label,
+    plan_fltrule: nwg::TextInput,
     plan_from_label: nwg::Label,
     plan_from: nwg::TextInput,
     plan_to_label: nwg::Label,
     plan_to: nwg::TextInput,
     plan_altn_label: nwg::Label,
     plan_altn: nwg::TextInput,
+    plan_altcount_label: nwg::Label,
+    plan_altcount: nwg::TextInput,
     plan_type_label: nwg::Label,
     plan_type: nwg::TextInput,
-    plan_level_label: nwg::Label,
-    plan_level: nwg::TextInput,
-    plan_ci_label: nwg::Label,
-    plan_ci: nwg::TextInput,
-    plan_pax_label: nwg::Label,
-    plan_pax: nwg::TextInput,
-    plan_payload_label: nwg::Label,
-    plan_payload: nwg::TextInput,
-    plan_flight_label: nwg::Label,
-    plan_flight: nwg::TextInput,
-    plan_reg_label: nwg::Label,
-    plan_reg: nwg::TextInput,
-    plan_airline_label: nwg::Label,
-    plan_airline: nwg::TextInput,
-    plan_fltnum_label: nwg::Label,
-    plan_fltnum: nwg::TextInput,
+    plan_airframe_label: nwg::Label,
+    plan_airframe: nwg::TextInput,
     plan_eobt_label: nwg::Label,
     plan_eobt: nwg::TextInput,
-    plan_avoid_label: nwg::Label,
-    plan_avoid: nwg::TextInput,
+    plan_blocktime_label: nwg::Label,
+    plan_blocktime: nwg::TextInput,
+    plan_climb_label: nwg::Label,
+    plan_climb: nwg::TextInput,
+    plan_cruise_label: nwg::Label,
+    plan_cruise: nwg::TextInput,
+    plan_ci_label: nwg::Label,
+    plan_ci: nwg::TextInput,
+    plan_descent_label: nwg::Label,
+    plan_descent: nwg::TextInput,
     plan_layout_label: nwg::Label,
     plan_layout: nwg::TextInput,
+    plan_airac_label: nwg::Label,
+    plan_airac: nwg::TextInput,
     plan_units_label: nwg::Label,
     plan_units: nwg::TextInput,
+    plan_maps_label: nwg::Label,
+    plan_maps: nwg::TextInput,
     plan_rules_label: nwg::Label,
     plan_rules: nwg::TextInput,
     plan_taxiout_label: nwg::Label,
     plan_taxiout: nwg::TextInput,
     plan_taxiin_label: nwg::Label,
     plan_taxiin: nwg::TextInput,
-    plan_altcount_label: nwg::Label,
-    plan_altcount: nwg::TextInput,
+    plan_level_label: nwg::Label,
+    plan_level: nwg::TextInput,
+    plan_deprwy_label: nwg::Label,
+    plan_deprwy: nwg::TextInput,
+    plan_arrrwy_label: nwg::Label,
+    plan_arrrwy: nwg::TextInput,
+    plan_pax_label: nwg::Label,
+    plan_pax: nwg::TextInput,
+    plan_payload_label: nwg::Label,
+    plan_payload: nwg::TextInput,
+    plan_freight_label: nwg::Label,
+    plan_freight: nwg::TextInput,
+    plan_zfw_label: nwg::Label,
+    plan_zfw: nwg::TextInput,
+    plan_reg_label: nwg::Label,
+    plan_reg: nwg::TextInput,
+    plan_avoid_label: nwg::Label,
+    plan_avoid: nwg::TextInput,
+    plan_contfuel_label: nwg::Label,
+    plan_contfuel: nwg::TextInput,
+    plan_resfuel_label: nwg::Label,
+    plan_resfuel: nwg::TextInput,
+    plan_taxifuel_label: nwg::Label,
+    plan_taxifuel: nwg::TextInput,
+    plan_blockfuel_label: nwg::Label,
+    plan_blockfuel: nwg::TextInput,
+    plan_arrfuel_label: nwg::Label,
+    plan_arrfuel: nwg::TextInput,
+    plan_melfuel_label: nwg::Label,
+    plan_melfuel: nwg::TextInput,
+    plan_atcfuel_label: nwg::Label,
+    plan_atcfuel: nwg::TextInput,
+    plan_extrafuel_label: nwg::Label,
+    plan_extrafuel: nwg::TextInput,
     plan_navlog: nwg::CheckBox,
     plan_etops: nwg::CheckBox,
     plan_steps: nwg::CheckBox,
     plan_rwyanalysis: nwg::CheckBox,
+    plan_notams: nwg::CheckBox,
+    plan_firnotams: nwg::CheckBox,
     plan_hazards: nwg::CheckBox,
-    plan_offline: nwg::CheckBox,
     plan_rvsm: nwg::CheckBox,
+    plan_offline: nwg::CheckBox,
     plan_go: nwg::Button,
     plan_status: nwg::Label,
     plan_result: nwg::Label,
@@ -600,106 +642,121 @@ impl App {
         // on screen until the window is widened for it. Drawn in the window rather than in
         // a page because that is where the rest of this program is.
         const PX: i32 = PANEL_X;
-        // The form on the left in three columns, the map beside it on the right. A plan is read
-        // as a form and watched as a picture; one under the other left the picture too small to
-        // be worth watching.
-        const C: [i32; 3] = [PANEL_X, PANEL_X + 138, PANEL_X + 276];
-        const FW: i32 = 128;
-        const MAP_X: i32 = PANEL_X + 424;
-        nwg::Label::builder().parent(w).text("Flight planning").font(Some(&ui.font_header)).position((PX, 14)).size((400, 24)).build(&mut ui.plan_header)?;
+        // Four columns of form on the left, the map beside it. Everything a dispatcher expects
+        // is on the page; the ones this planner settles for you are shown greyed rather than
+        // left out, so what the plan assumed is visible instead of only in the code.
+        const C: [i32; 4] = [PANEL_X, PANEL_X + 134, PANEL_X + 268, PANEL_X + 402];
+        const FW: i32 = 124;
+        const MAP_X: i32 = PANEL_X + 552;
+        nwg::Label::builder().parent(w).text("Flight planning").font(Some(&ui.font_header)).position((PX, 12)).size((400, 22)).build(&mut ui.plan_header)?;
 
-        let (mut ly, mut fy) = (46, 64);
-        nwg::Label::builder().parent(w).text("Airline").font(Some(&ui.font_small)).position((C[0], ly)).size((FW, 18)).build(&mut ui.plan_airline_label)?;
-        nwg::Label::builder().parent(w).text("Flight number").font(Some(&ui.font_small)).position((C[1], ly)).size((FW, 18)).build(&mut ui.plan_fltnum_label)?;
-        nwg::Label::builder().parent(w).text("ATC callsign").font(Some(&ui.font_small)).position((C[2], ly)).size((FW, 18)).build(&mut ui.plan_flight_label)?;
-        nwg::TextInput::builder().parent(w).limit(3).placeholder_text(Some("ZZZ")).position((C[0], fy)).size((FW, 25)).build(&mut ui.plan_airline)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("0000")).position((C[1], fy)).size((FW, 25)).build(&mut ui.plan_fltnum)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((C[2], fy)).size((FW, 25)).build(&mut ui.plan_flight)?;
+        nwg::Label::builder().parent(w).text("Airline").font(Some(&ui.font_small)).position((C[0], 40)).size((FW, 16)).build(&mut ui.plan_airline_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("ZZZ")).position((C[0], 58)).size((FW, 23)).build(&mut ui.plan_airline)?;
+        nwg::Label::builder().parent(w).text("Flight number").font(Some(&ui.font_small)).position((C[1], 40)).size((FW, 16)).build(&mut ui.plan_fltnum_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("0000")).position((C[1], 58)).size((FW, 23)).build(&mut ui.plan_fltnum)?;
+        nwg::Label::builder().parent(w).text("ATC callsign").font(Some(&ui.font_small)).position((C[2], 40)).size((FW, 16)).build(&mut ui.plan_flight_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((C[2], 58)).size((FW, 23)).build(&mut ui.plan_flight)?;
+        nwg::Label::builder().parent(w).text("Type of flight").font(Some(&ui.font_small)).position((C[3], 40)).size((FW, 16)).build(&mut ui.plan_fltrule_label)?;
+        nwg::TextInput::builder().parent(w).text("Scheduled").readonly(true).position((C[3], 58)).size((FW, 23)).build(&mut ui.plan_fltrule)?;
+        nwg::Label::builder().parent(w).text("Depart").font(Some(&ui.font_small)).position((C[0], 88)).size((FW, 16)).build(&mut ui.plan_from_label)?;
+        nwg::TextInput::builder().parent(w).text("WSSS").position((C[0], 106)).size((FW, 23)).build(&mut ui.plan_from)?;
+        nwg::Label::builder().parent(w).text("Arrive").font(Some(&ui.font_small)).position((C[1], 88)).size((FW, 16)).build(&mut ui.plan_to_label)?;
+        nwg::TextInput::builder().parent(w).text("YBBN").position((C[1], 106)).size((FW, 23)).build(&mut ui.plan_to)?;
+        nwg::Label::builder().parent(w).text("Alternate").font(Some(&ui.font_small)).position((C[2], 88)).size((FW, 16)).build(&mut ui.plan_altn_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((C[2], 106)).size((FW, 23)).build(&mut ui.plan_altn)?;
+        nwg::Label::builder().parent(w).text("Alternates").font(Some(&ui.font_small)).position((C[3], 88)).size((FW, 16)).build(&mut ui.plan_altcount_label)?;
+        nwg::TextInput::builder().parent(w).text("1").readonly(true).position((C[3], 106)).size((FW, 23)).build(&mut ui.plan_altcount)?;
+        nwg::Label::builder().parent(w).text("Aircraft").font(Some(&ui.font_small)).position((C[0], 136)).size((FW, 16)).build(&mut ui.plan_type_label)?;
+        nwg::TextInput::builder().parent(w).text("B77W").position((C[0], 154)).size((FW, 23)).build(&mut ui.plan_type)?;
+        nwg::Label::builder().parent(w).text("Airframe").font(Some(&ui.font_small)).position((C[1], 136)).size((FW, 16)).build(&mut ui.plan_airframe_label)?;
+        nwg::TextInput::builder().parent(w).text("Default").readonly(true).position((C[1], 154)).size((FW, 23)).build(&mut ui.plan_airframe)?;
+        nwg::Label::builder().parent(w).text("Off blocks UTC").font(Some(&ui.font_small)).position((C[2], 136)).size((FW, 16)).build(&mut ui.plan_eobt_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("HHMM")).position((C[2], 154)).size((FW, 23)).build(&mut ui.plan_eobt)?;
+        nwg::Label::builder().parent(w).text("Sched block time").font(Some(&ui.font_small)).position((C[3], 136)).size((FW, 16)).build(&mut ui.plan_blocktime_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("H:MM")).readonly(true).position((C[3], 154)).size((FW, 23)).build(&mut ui.plan_blocktime)?;
+        nwg::Label::builder().parent(w).text("Climb profile").font(Some(&ui.font_small)).position((C[0], 184)).size((FW, 16)).build(&mut ui.plan_climb_label)?;
+        nwg::TextInput::builder().parent(w).text("AUTO").readonly(true).position((C[0], 202)).size((FW, 23)).build(&mut ui.plan_climb)?;
+        nwg::Label::builder().parent(w).text("Cruise").font(Some(&ui.font_small)).position((C[1], 184)).size((FW, 16)).build(&mut ui.plan_cruise_label)?;
+        nwg::TextInput::builder().parent(w).text("CI").readonly(true).position((C[1], 202)).size((FW, 23)).build(&mut ui.plan_cruise)?;
+        nwg::Label::builder().parent(w).text("Cost index").font(Some(&ui.font_small)).position((C[2], 184)).size((FW, 16)).build(&mut ui.plan_ci_label)?;
+        nwg::TextInput::builder().parent(w).text("60").position((C[2], 202)).size((FW, 23)).build(&mut ui.plan_ci)?;
+        nwg::Label::builder().parent(w).text("Descent profile").font(Some(&ui.font_small)).position((C[3], 184)).size((FW, 16)).build(&mut ui.plan_descent_label)?;
+        nwg::TextInput::builder().parent(w).text("AUTO").readonly(true).position((C[3], 202)).size((FW, 23)).build(&mut ui.plan_descent)?;
+        nwg::Label::builder().parent(w).text("OFP layout").font(Some(&ui.font_small)).position((C[0], 232)).size((FW, 16)).build(&mut ui.plan_layout_label)?;
+        nwg::TextInput::builder().parent(w).text("LIDO").readonly(true).position((C[0], 250)).size((FW, 23)).build(&mut ui.plan_layout)?;
+        nwg::Label::builder().parent(w).text("AIRAC cycle").font(Some(&ui.font_small)).position((C[1], 232)).size((FW, 16)).build(&mut ui.plan_airac_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("installed")).readonly(true).position((C[1], 250)).size((FW, 23)).build(&mut ui.plan_airac)?;
+        nwg::Label::builder().parent(w).text("Units").font(Some(&ui.font_small)).position((C[2], 232)).size((FW, 16)).build(&mut ui.plan_units_label)?;
+        nwg::TextInput::builder().parent(w).text("KG").readonly(true).position((C[2], 250)).size((FW, 23)).build(&mut ui.plan_units)?;
+        nwg::Label::builder().parent(w).text("Flight maps").font(Some(&ui.font_small)).position((C[3], 232)).size((FW, 16)).build(&mut ui.plan_maps_label)?;
+        nwg::TextInput::builder().parent(w).text("Detailed").readonly(true).position((C[3], 250)).size((FW, 23)).build(&mut ui.plan_maps)?;
+        nwg::Label::builder().parent(w).text("Flight rules").font(Some(&ui.font_small)).position((C[0], 280)).size((FW, 16)).build(&mut ui.plan_rules_label)?;
+        nwg::TextInput::builder().parent(w).text("IFR").readonly(true).position((C[0], 298)).size((FW, 23)).build(&mut ui.plan_rules)?;
+        nwg::Label::builder().parent(w).text("Taxi out (min)").font(Some(&ui.font_small)).position((C[1], 280)).size((FW, 16)).build(&mut ui.plan_taxiout_label)?;
+        nwg::TextInput::builder().parent(w).text("20").readonly(true).position((C[1], 298)).size((FW, 23)).build(&mut ui.plan_taxiout)?;
+        nwg::Label::builder().parent(w).text("Taxi in (min)").font(Some(&ui.font_small)).position((C[2], 280)).size((FW, 16)).build(&mut ui.plan_taxiin_label)?;
+        nwg::TextInput::builder().parent(w).text("8").readonly(true).position((C[2], 298)).size((FW, 23)).build(&mut ui.plan_taxiin)?;
+        nwg::Label::builder().parent(w).text("Altitude").font(Some(&ui.font_small)).position((C[3], 280)).size((FW, 16)).build(&mut ui.plan_level_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((C[3], 298)).size((FW, 23)).build(&mut ui.plan_level)?;
+        nwg::Label::builder().parent(w).text("Departure runway").font(Some(&ui.font_small)).position((C[0], 328)).size((FW, 16)).build(&mut ui.plan_deprwy_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).readonly(true).position((C[0], 346)).size((FW, 23)).build(&mut ui.plan_deprwy)?;
+        nwg::Label::builder().parent(w).text("Arrival runway").font(Some(&ui.font_small)).position((C[1], 328)).size((FW, 16)).build(&mut ui.plan_arrrwy_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).readonly(true).position((C[1], 346)).size((FW, 23)).build(&mut ui.plan_arrrwy)?;
+        nwg::Label::builder().parent(w).text("Passengers").font(Some(&ui.font_small)).position((C[2], 328)).size((FW, 16)).build(&mut ui.plan_pax_label)?;
+        nwg::TextInput::builder().parent(w).text("300").position((C[2], 346)).size((FW, 23)).build(&mut ui.plan_pax)?;
+        nwg::Label::builder().parent(w).text("Payload kg").font(Some(&ui.font_small)).position((C[3], 328)).size((FW, 16)).build(&mut ui.plan_payload_label)?;
+        nwg::TextInput::builder().parent(w).text("40000").position((C[3], 346)).size((FW, 23)).build(&mut ui.plan_payload)?;
+        nwg::Label::builder().parent(w).text("Freight kg").font(Some(&ui.font_small)).position((C[0], 376)).size((FW, 16)).build(&mut ui.plan_freight_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("NONE")).readonly(true).position((C[0], 394)).size((FW, 23)).build(&mut ui.plan_freight)?;
+        nwg::Label::builder().parent(w).text("Zero fuel weight").font(Some(&ui.font_small)).position((C[1], 376)).size((FW, 16)).build(&mut ui.plan_zfw_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).readonly(true).position((C[1], 394)).size((FW, 23)).build(&mut ui.plan_zfw)?;
+        nwg::Label::builder().parent(w).text("Registration").font(Some(&ui.font_small)).position((C[2], 376)).size((FW, 16)).build(&mut ui.plan_reg_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((C[2], 394)).size((FW, 23)).build(&mut ui.plan_reg)?;
+        nwg::Label::builder().parent(w).text("Avoid FIRs").font(Some(&ui.font_small)).position((C[3], 376)).size((FW, 16)).build(&mut ui.plan_avoid_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("none")).position((C[3], 394)).size((FW, 23)).build(&mut ui.plan_avoid)?;
+        nwg::Label::builder().parent(w).text("Contingency fuel").font(Some(&ui.font_small)).position((C[0], 424)).size((FW, 16)).build(&mut ui.plan_contfuel_label)?;
+        nwg::TextInput::builder().parent(w).text("Auto").readonly(true).position((C[0], 442)).size((FW, 23)).build(&mut ui.plan_contfuel)?;
+        nwg::Label::builder().parent(w).text("Reserve fuel").font(Some(&ui.font_small)).position((C[1], 424)).size((FW, 16)).build(&mut ui.plan_resfuel_label)?;
+        nwg::TextInput::builder().parent(w).text("Auto").readonly(true).position((C[1], 442)).size((FW, 23)).build(&mut ui.plan_resfuel)?;
+        nwg::Label::builder().parent(w).text("Taxi fuel").font(Some(&ui.font_small)).position((C[2], 424)).size((FW, 16)).build(&mut ui.plan_taxifuel_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).readonly(true).position((C[2], 442)).size((FW, 23)).build(&mut ui.plan_taxifuel)?;
+        nwg::Label::builder().parent(w).text("Block fuel").font(Some(&ui.font_small)).position((C[3], 424)).size((FW, 16)).build(&mut ui.plan_blockfuel_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).readonly(true).position((C[3], 442)).size((FW, 23)).build(&mut ui.plan_blockfuel)?;
+        nwg::Label::builder().parent(w).text("Arrival fuel").font(Some(&ui.font_small)).position((C[0], 472)).size((FW, 16)).build(&mut ui.plan_arrfuel_label)?;
+        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).readonly(true).position((C[0], 490)).size((FW, 23)).build(&mut ui.plan_arrfuel)?;
+        nwg::Label::builder().parent(w).text("MEL fuel").font(Some(&ui.font_small)).position((C[1], 472)).size((FW, 16)).build(&mut ui.plan_melfuel_label)?;
+        nwg::TextInput::builder().parent(w).text("0").readonly(true).position((C[1], 490)).size((FW, 23)).build(&mut ui.plan_melfuel)?;
+        nwg::Label::builder().parent(w).text("ATC fuel").font(Some(&ui.font_small)).position((C[2], 472)).size((FW, 16)).build(&mut ui.plan_atcfuel_label)?;
+        nwg::TextInput::builder().parent(w).text("0").readonly(true).position((C[2], 490)).size((FW, 23)).build(&mut ui.plan_atcfuel)?;
+        nwg::Label::builder().parent(w).text("Extra / tankering").font(Some(&ui.font_small)).position((C[3], 472)).size((FW, 16)).build(&mut ui.plan_extrafuel_label)?;
+        nwg::TextInput::builder().parent(w).text("0").readonly(true).position((C[3], 490)).size((FW, 23)).build(&mut ui.plan_extrafuel)?;
 
-        ly += 50;
-        fy += 50;
-        nwg::Label::builder().parent(w).text("Depart").font(Some(&ui.font_small)).position((C[0], ly)).size((FW, 18)).build(&mut ui.plan_from_label)?;
-        nwg::Label::builder().parent(w).text("Arrive").font(Some(&ui.font_small)).position((C[1], ly)).size((FW, 18)).build(&mut ui.plan_to_label)?;
-        nwg::Label::builder().parent(w).text("Alternate").font(Some(&ui.font_small)).position((C[2], ly)).size((FW, 18)).build(&mut ui.plan_altn_label)?;
-        nwg::TextInput::builder().parent(w).limit(4).text("WSSS").position((C[0], fy)).size((FW, 25)).build(&mut ui.plan_from)?;
-        nwg::TextInput::builder().parent(w).limit(4).text("YBBN").position((C[1], fy)).size((FW, 25)).build(&mut ui.plan_to)?;
-        nwg::TextInput::builder().parent(w).limit(4).placeholder_text(Some("AUTO")).position((C[2], fy)).size((FW, 25)).build(&mut ui.plan_altn)?;
-
-        ly += 50;
-        fy += 50;
-        nwg::Label::builder().parent(w).text("Aircraft").font(Some(&ui.font_small)).position((C[0], ly)).size((FW, 18)).build(&mut ui.plan_type_label)?;
-        nwg::Label::builder().parent(w).text("Registration").font(Some(&ui.font_small)).position((C[1], ly)).size((FW, 18)).build(&mut ui.plan_reg_label)?;
-        nwg::Label::builder().parent(w).text("Off blocks UTC").font(Some(&ui.font_small)).position((C[2], ly)).size((FW, 18)).build(&mut ui.plan_eobt_label)?;
-        nwg::TextInput::builder().parent(w).limit(4).text("B77W").position((C[0], fy)).size((FW, 25)).build(&mut ui.plan_type)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((C[1], fy)).size((FW, 25)).build(&mut ui.plan_reg)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("HHMM")).position((C[2], fy)).size((FW, 25)).build(&mut ui.plan_eobt)?;
-
-        ly += 50;
-        fy += 50;
-        nwg::Label::builder().parent(w).text("Altitude").font(Some(&ui.font_small)).position((C[0], ly)).size((FW, 18)).build(&mut ui.plan_level_label)?;
-        nwg::Label::builder().parent(w).text("Cost index").font(Some(&ui.font_small)).position((C[1], ly)).size((FW, 18)).build(&mut ui.plan_ci_label)?;
-        nwg::Label::builder().parent(w).text("Avoid FIRs").font(Some(&ui.font_small)).position((C[2], ly)).size((FW, 18)).build(&mut ui.plan_avoid_label)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("AUTO")).position((C[0], fy)).size((FW, 25)).build(&mut ui.plan_level)?;
-        nwg::TextInput::builder().parent(w).text("60").position((C[1], fy)).size((FW, 25)).build(&mut ui.plan_ci)?;
-        nwg::TextInput::builder().parent(w).placeholder_text(Some("none")).position((C[2], fy)).size((FW, 25)).build(&mut ui.plan_avoid)?;
-
-        ly += 50;
-        fy += 50;
-        nwg::Label::builder().parent(w).text("Passengers").font(Some(&ui.font_small)).position((C[0], ly)).size((FW, 18)).build(&mut ui.plan_pax_label)?;
-        nwg::Label::builder().parent(w).text("Payload kg").font(Some(&ui.font_small)).position((C[1], ly)).size((FW, 18)).build(&mut ui.plan_payload_label)?;
-        nwg::Label::builder().parent(w).text("Alternates").font(Some(&ui.font_small)).position((C[2], ly)).size((FW, 18)).build(&mut ui.plan_altcount_label)?;
-        nwg::TextInput::builder().parent(w).text("300").position((C[0], fy)).size((FW, 25)).build(&mut ui.plan_pax)?;
-        nwg::TextInput::builder().parent(w).text("40000").position((C[1], fy)).size((FW, 25)).build(&mut ui.plan_payload)?;
-        nwg::TextInput::builder().parent(w).text("1").readonly(true).position((C[2], fy)).size((FW, 25)).build(&mut ui.plan_altcount)?;
-
-        // Settled for you at present, and shown greyed rather than left out, so what the plan
-        // assumed is on the page instead of only in the code.
-        ly += 50;
-        fy += 50;
-        nwg::Label::builder().parent(w).text("OFP layout").font(Some(&ui.font_small)).position((C[0], ly)).size((FW, 18)).build(&mut ui.plan_layout_label)?;
-        nwg::Label::builder().parent(w).text("Units").font(Some(&ui.font_small)).position((C[1], ly)).size((FW, 18)).build(&mut ui.plan_units_label)?;
-        nwg::Label::builder().parent(w).text("Flight rules").font(Some(&ui.font_small)).position((C[2], ly)).size((FW, 18)).build(&mut ui.plan_rules_label)?;
-        nwg::TextInput::builder().parent(w).text("LIDO").readonly(true).position((C[0], fy)).size((FW, 25)).build(&mut ui.plan_layout)?;
-        nwg::TextInput::builder().parent(w).text("KG").readonly(true).position((C[1], fy)).size((FW, 25)).build(&mut ui.plan_units)?;
-        nwg::TextInput::builder().parent(w).text("IFR").readonly(true).position((C[2], fy)).size((FW, 25)).build(&mut ui.plan_rules)?;
-
-        ly += 50;
-        fy += 50;
-        nwg::Label::builder().parent(w).text("Taxi out (min)").font(Some(&ui.font_small)).position((C[0], ly)).size((FW, 18)).build(&mut ui.plan_taxiout_label)?;
-        nwg::Label::builder().parent(w).text("Taxi in (min)").font(Some(&ui.font_small)).position((C[1], ly)).size((FW, 18)).build(&mut ui.plan_taxiin_label)?;
-        nwg::TextInput::builder().parent(w).text("20").readonly(true).position((C[0], fy)).size((FW, 25)).build(&mut ui.plan_taxiout)?;
-        nwg::TextInput::builder().parent(w).text("8").readonly(true).position((C[1], fy)).size((FW, 25)).build(&mut ui.plan_taxiin)?;
-        for c in [&ui.plan_layout, &ui.plan_units, &ui.plan_rules, &ui.plan_altcount] {
+        nwg::CheckBox::builder().parent(w).text("Detailed navlog").check_state(nwg::CheckBoxState::Checked).position((C[0], 522)).size((FW + 8, 21)).build(&mut ui.plan_navlog)?;
+        nwg::CheckBox::builder().parent(w).text("ETOPS planning").check_state(nwg::CheckBoxState::Checked).position((C[1], 522)).size((FW + 8, 21)).build(&mut ui.plan_etops)?;
+        nwg::CheckBox::builder().parent(w).text("Plan stepclimbs").check_state(nwg::CheckBoxState::Checked).position((C[2], 522)).size((FW + 8, 21)).build(&mut ui.plan_steps)?;
+        nwg::CheckBox::builder().parent(w).text("Runway analysis").position((C[3], 522)).size((FW + 8, 21)).build(&mut ui.plan_rwyanalysis)?;
+        nwg::CheckBox::builder().parent(w).text("Include NOTAMs").check_state(nwg::CheckBoxState::Checked).position((C[0], 546)).size((FW + 8, 21)).build(&mut ui.plan_notams)?;
+        nwg::CheckBox::builder().parent(w).text("FIR NOTAMs").check_state(nwg::CheckBoxState::Checked).position((C[1], 546)).size((FW + 8, 21)).build(&mut ui.plan_firnotams)?;
+        nwg::CheckBox::builder().parent(w).text("Hazards").check_state(nwg::CheckBoxState::Checked).position((C[2], 546)).size((FW + 8, 21)).build(&mut ui.plan_hazards)?;
+        nwg::CheckBox::builder().parent(w).text("RVSM").check_state(nwg::CheckBoxState::Checked).position((C[3], 546)).size((FW + 8, 21)).build(&mut ui.plan_rvsm)?;
+        nwg::CheckBox::builder().parent(w).text("Offline (still air)").check_state(nwg::CheckBoxState::Checked).position((C[0], 570)).size((FW + 8, 21)).build(&mut ui.plan_offline)?;
+        for c in [&ui.plan_navlog, &ui.plan_etops, &ui.plan_steps, &ui.plan_rwyanalysis, &ui.plan_notams, &ui.plan_firnotams, &ui.plan_hazards] {
             c.set_enabled(false);
         }
 
-        let mut sy = fy + 38;
-        nwg::CheckBox::builder().parent(w).text("Detailed navlog").check_state(nwg::CheckBoxState::Checked).position((C[0], sy)).size((FW + 6, 22)).build(&mut ui.plan_navlog)?;
-        nwg::CheckBox::builder().parent(w).text("ETOPS").check_state(nwg::CheckBoxState::Checked).position((C[1], sy)).size((FW + 6, 22)).build(&mut ui.plan_etops)?;
-        nwg::CheckBox::builder().parent(w).text("Step climbs").check_state(nwg::CheckBoxState::Checked).position((C[2], sy)).size((FW + 6, 22)).build(&mut ui.plan_steps)?;
-        sy += 26;
-        nwg::CheckBox::builder().parent(w).text("Runway analysis").position((C[0], sy)).size((FW + 6, 22)).build(&mut ui.plan_rwyanalysis)?;
-        nwg::CheckBox::builder().parent(w).text("Hazards").check_state(nwg::CheckBoxState::Checked).position((C[1], sy)).size((FW + 6, 22)).build(&mut ui.plan_hazards)?;
-        nwg::CheckBox::builder().parent(w).text("RVSM").check_state(nwg::CheckBoxState::Checked).position((C[2], sy)).size((FW + 6, 22)).build(&mut ui.plan_rvsm)?;
-        sy += 26;
-        nwg::CheckBox::builder().parent(w).text("Offline (still air)").check_state(nwg::CheckBoxState::Checked).position((C[0], sy)).size((FW + 30, 22)).build(&mut ui.plan_offline)?;
-        for c in [&ui.plan_navlog, &ui.plan_etops, &ui.plan_steps, &ui.plan_rwyanalysis, &ui.plan_hazards] {
-            c.set_enabled(false);
-        }
+        let by = 600;
+        nwg::Button::builder().parent(w).text("Generate").position((C[0], by)).size((FW, 30)).build(&mut ui.plan_go)?;
+        nwg::Label::builder().parent(w).text("idle").font(Some(&ui.font_small)).position((C[1], by + 8)).size((390, 18)).build(&mut ui.plan_status)?;
 
-        sy += 34;
-        nwg::Button::builder().parent(w).text("Generate").position((C[0], sy)).size((FW, 32)).build(&mut ui.plan_go)?;
-        nwg::Label::builder().parent(w).text("idle").font(Some(&ui.font_small)).position((C[1], sy + 8)).size((280, 18)).build(&mut ui.plan_status)?;
-
-        // The map, beside the form, with what came of the plan under it.
-        nwg::ImageFrame::builder().parent(w).position((MAP_X, 46)).size((MAP_W, MAP_H)).build(&mut ui.plan_map)?;
-        nwg::Label::builder().parent(w).text("").font(Some(&ui.font_small)).position((MAP_X, 46 + MAP_H + 10)).size((MAP_W, 18)).build(&mut ui.plan_result)?;
+        // The map, beside the form, with the route it found under it.
+        nwg::ImageFrame::builder().parent(w).position((MAP_X, 40)).size((MAP_W, MAP_H)).build(&mut ui.plan_map)?;
+        nwg::Label::builder().parent(w).text("").font(Some(&ui.font_small)).position((MAP_X, 40 + MAP_H + 8)).size((MAP_W, 18)).build(&mut ui.plan_result)?;
         nwg::TextBox::builder()
             .parent(w)
             .readonly(true)
             .flags(nwg::TextBoxFlags::VISIBLE | nwg::TextBoxFlags::VSCROLL)
             .font(Some(&ui.font_small))
-            .position((MAP_X, 46 + MAP_H + 32))
+            .position((MAP_X, 40 + MAP_H + 30))
             .size((MAP_W, 160))
             .build(&mut ui.plan_route)?;
 
