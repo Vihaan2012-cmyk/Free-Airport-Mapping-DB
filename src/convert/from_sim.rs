@@ -217,7 +217,7 @@ pub fn read_with(cycle: &str, which: Simulator, enrich: bool) -> Result<NavSet> 
         anyhow::bail!("no FS2020 navigation data found on this machine");
     }
     let t0 = std::time::Instant::now();
-    let say = |i: usize, name: &str, detail: String, since: std::time::Instant| crate::term::stage(i, 8, name, &detail, since.elapsed().as_millis());
+    let say = |i: usize, name: &str, detail: String, since: std::time::Instant| crate::term::stage(i, 9, name, &detail, since.elapsed().as_millis());
     let mut blobs: Vec<Vec<u8>> = Vec::new();
     if use_archive {
         for path in &archives {
@@ -235,21 +235,22 @@ pub fn read_with(cycle: &str, which: Simulator, enrich: bool) -> Result<NavSet> 
 
     let t = std::time::Instant::now();
     use rayon::prelude::*;
-    let (airports, navaids, fixes) = blobs
+    let (airports, navaids, fixes, loose_ils) = blobs
         .par_iter()
         .map(|data| {
-            let (mut a, mut n, mut f) = (Vec::new(), Vec::new(), Vec::new());
+            let (mut a, mut n, mut f, mut i) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
             read_airports(data, &mut a);
-            read_navaids(data, &mut n);
+            read_beacons(data, &mut n, &mut i);
             read_fixes(data, &mut f);
-            (a, n, f)
+            (a, n, f, i)
         })
         .reduce(
-            || (Vec::new(), Vec::new(), Vec::new()),
+            || (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
             |mut acc, part| {
                 acc.0.extend(part.0);
                 acc.1.extend(part.1);
                 acc.2.extend(part.2);
+                acc.3.extend(part.3);
                 acc
             },
         );
@@ -310,7 +311,11 @@ pub fn read_with(cycle: &str, which: Simulator, enrich: bool) -> Result<NavSet> 
         Vec::new()
     };
 
-    Ok(NavSet { cycle: cycle.to_string(), airports, runways, navaids, ils: Vec::new(), waypoints, airways, procedures, mora: Vec::new() })
+    let t = std::time::Instant::now();
+    let ils = attach_localisers(loose_ils, &runways, &airports);
+    say(9, "localisers", format!("{} attached to a runway", ils.len()), t);
+
+    Ok(NavSet { cycle: cycle.to_string(), airports, runways, navaids, ils, waypoints, airways, procedures, mora: Vec::new() })
 }
 
 /// OurAirports, through the cache this crate already keeps it in.
@@ -397,6 +402,68 @@ fn runways_from(index: &crate::sources::index::AirportIndex, airports: &mut [Air
                 });
             }
         }
+    }
+    out
+}
+
+/// Give each localiser the runway it serves.
+///
+/// The record says where the transmitter stands and which way it points but not what it belongs
+/// to, so the runway is the one whose landing threshold is nearest and whose bearing agrees with
+/// the localiser's course. Both tests matter: a large aerodrome has thresholds a few hundred
+/// metres apart, and only the course tells one end of a runway from the other.
+fn attach_localisers(loose: Vec<LooseIls>, runways: &[RunwayRec], airports: &[AirportRec]) -> Vec<IlsRec> {
+    use crate::dispatch::distance_nm;
+    let elevation: HashMap<&str, f64> = airports.iter().map(|a| (a.icao.as_str(), a.elevation_ft)).collect();
+    // Every localiser/runway pairing that is even possible, nearest first. Assigning each
+    // localiser its own nearest runway independently gives two of them the same runway where
+    // a pair of parallels have thresholds a few hundred metres apart and the same bearing —
+    // Kennedy's 04L and 04R, where the localiser for one was handed to the other. Taking the
+    // closest pairings first and letting neither a localiser nor a runway be claimed twice
+    // resolves it, because the two are only ambiguous relative to each other.
+    let mut pairs: Vec<(f64, usize, usize)> = Vec::new();
+    for (li, l) in loose.iter().enumerate() {
+        for (ri, r) in runways.iter().enumerate() {
+            let apart = ((r.heading_true_deg - l.course_mag_deg + 540.0) % 360.0 - 180.0).abs();
+            if apart >= 20.0 {
+                continue;
+            }
+            let nm = crate::dispatch::distance_nm((l.lat, l.lon), (r.lat, r.lon));
+            if nm < 4.0 {
+                pairs.push((nm, li, ri));
+            }
+        }
+    }
+    pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut taken_ils = vec![false; loose.len()];
+    let mut taken_runway = vec![false; runways.len()];
+    let mut out = Vec::new();
+    for (_, li, ri) in pairs {
+        if taken_ils[li] || taken_runway[ri] {
+            continue;
+        }
+        taken_ils[li] = true;
+        taken_runway[ri] = true;
+        let l = &loose[li];
+        let runway = &runways[ri];
+        out.push(IlsRec {
+            ident: l.ident.clone(),
+            airport_icao: runway.airport_icao.clone(),
+            runway_ident: runway.ident.clone(),
+            frequency_mhz: l.frequency_mhz,
+            course_mag_deg: l.course_mag_deg,
+            glidepath_deg: l.glidepath_deg,
+            // The record does not say which category a localiser is certified to, so the
+            // commonest is written rather than a claim of more: an approach flown to CAT I
+            // minima on a CAT III installation is safe, the other way round is not.
+            category: if l.glidepath_deg.is_some() { IlsCategory::Cat1 } else { IlsCategory::Loc },
+            lat: l.lat,
+            lon: l.lon,
+            elevation_ft: elevation.get(runway.airport_icao.as_str()).copied().unwrap_or(0.0),
+            has_dme: false,
+            crossing_height_ft: None,
+            ..Default::default()
+        });
     }
     out
 }
@@ -492,7 +559,33 @@ fn child_text(d: &[u8], from: usize, to: usize, id: u16) -> Option<String> {
     None
 }
 
+/// The type a beacon record declares at `+0x06`. A localiser is a 4; a VOR is a 1, a 2 or a 3.
+/// The section holds both — and comm frequencies besides, which is why reading every record in
+/// it as a VOR gave nine thousand of them with frequencies running up to 135.9 MHz, five
+/// thousand of which sat in the localiser band.
+///
+/// Established by taking every record whose identifier and frequency match a row of the
+/// installed aircraft database and asking which byte tells the two apart: `+0x06` separates
+/// 1,743 localisers from 1,402 VORs without a single exception.
+const BEACON_TYPE_LOCALISER: u8 = 4;
+
 fn read_navaids(d: &[u8], out: &mut Vec<NavaidRec>) {
+    read_beacons(d, out, &mut Vec::new())
+}
+
+/// A localiser, as the beacon section carries one. It names no airport and no runway, so which
+/// runway it serves is worked out afterwards from where it stands and which way it points —
+/// which is what a localiser *is*.
+pub(crate) struct LooseIls {
+    pub ident: String,
+    pub frequency_mhz: f64,
+    pub course_mag_deg: f64,
+    pub glidepath_deg: Option<f64>,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+fn read_beacons(d: &[u8], out: &mut Vec<NavaidRec>, ils: &mut Vec<LooseIls>) {
     for (section, vor) in [(0x13u32, true), (0x17, false)] {
         for rec in bgl::section_records(d, section) {
             if rec.end - rec.start < 0x24 {
@@ -514,6 +607,19 @@ fn read_navaids(d: &[u8], out: &mut Vec<NavaidRec>) {
             }
             let raw = bgl::u32le(d, rec.start + freq_at) as f64;
             let frequency = if vor { raw / 1.0e6 } else { raw / 1000.0 };
+            // A localiser is not a beacon a route is flown to; it belongs to a runway.
+            if vor && d[rec.start + 6] == BEACON_TYPE_LOCALISER {
+                let len = rec.end - rec.start;
+                ils.push(LooseIls {
+                    ident,
+                    frequency_mhz: frequency,
+                    course_mag_deg: bgl::f32le(d, rec.start + 0x38) as f64,
+                    glidepath_deg: (len > 0x60).then(|| bgl::f32le(d, rec.start + 0x5c) as f64).filter(|g| (1.0..=8.0).contains(g)),
+                    lat,
+                    lon,
+                });
+                continue;
+            }
             let region = unpack(bgl::u32le(d, rec.start + 0x1c));
             out.push(NavaidRec {
                 ident,
