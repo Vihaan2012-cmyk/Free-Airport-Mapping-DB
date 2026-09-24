@@ -61,10 +61,17 @@ fn level_label(alt_ft: f64, transition_ft: f64) -> String {
 
 /// The whole plan, as one string, ready to print or lay out on a PDF page a line at a
 /// time.
+/// The whole plan, laid out the way an operational flight plan is laid out.
+///
+/// The order and the naming follow SimBrief's, because a plan is read by people who already
+/// know where to look on one: the banner and the flight, fuel and weights side by side, the
+/// ATC flight plan as it would be filed, the navigation log, then the weather at each end.
+/// Putting the same figures somewhere else costs a reader time for nothing.
 pub fn render(d: &Dispatch, opts: &DispatchOptions) -> String {
     let mut s = String::new();
     header(&mut s, d, opts);
     fuel_and_weights(&mut s, d);
+    atc_flight_plan(&mut s, d, opts);
     route_lines(&mut s, d);
     nav_log(&mut s, d);
     step_climbs(&mut s, d);
@@ -78,45 +85,83 @@ pub fn render(d: &Dispatch, opts: &DispatchOptions) -> String {
     s
 }
 
+const RULE: &str = "--------------------------------------------------------------------------------";
+
 fn header(s: &mut String, d: &Dispatch, opts: &DispatchOptions) {
     let flight = opts.flight_number.clone().unwrap_or_else(|| "----".to_string());
-    let reg = opts.registration.clone().unwrap_or_default();
-    let _ = writeln!(s, "OPERATIONAL FLIGHT PLAN");
-    let _ = writeln!(s, "========================================================================");
-    let _ = writeln!(s, "FLIGHT {flight}   {} -> {}   {}", d.route.origin.icao, d.route.destination.icao, d.generated.format("%Y-%m-%d %H:%MZ"));
-    let _ = writeln!(s, "AIRCRAFT {} ({})  REG {reg}   ENGINES {} x {}", d.spec.icao_type, d.spec.name, d.spec.engines, d.spec.engine);
-    let _ = writeln!(s, "AIRAC {}", d.airac.clone().unwrap_or_else(|| "unknown".to_string()));
+    let reg = opts.registration.clone().unwrap_or_else(|| "------".to_string());
+    let alt = d.alternate.as_ref().map(|a| a.destination.icao.clone()).unwrap_or_else(|| "----".to_string());
+    let _ = writeln!(s, "{RULE}");
+    let _ = writeln!(s, "  OPERATIONAL FLIGHT PLAN                                            OFP 1");
+    let _ = writeln!(s, "{RULE}");
+    let _ = writeln!(
+        s,
+        "  {:<9}{}/{:<5}{}/{:<5}ALTN {:<6}{}",
+        flight,
+        d.route.origin.icao,
+        d.route.dep_runway.clone().unwrap_or_default(),
+        d.route.destination.icao,
+        d.route.arr_runway.clone().unwrap_or_default(),
+        alt,
+        d.generated.format("%d%b%y").to_string().to_uppercase()
+    );
+    let _ = writeln!(s, "  {:<9}{:<30}REG {reg}", d.spec.icao_type, d.spec.name);
+    let _ = writeln!(s, "  AIRAC {:<7}{} X {}", d.airac.clone().unwrap_or_else(|| "----".to_string()), d.spec.engines, d.spec.engine);
     // The level actually climbed to, from the navigation log's own top of climb, rather
     // than the route's filed `cruise_ft`: the route search picks a level around the
     // aircraft's usual cruise with no notion of how short the trip is, and it is
     // `perf::plan`'s distance cap, not the route search, that has the last word on a short
     // sector — the two can disagree, and what was actually flown is the one worth printing.
     let flown_cruise_ft = d.perf.profile.iter().find(|p| p.kind == ProfileKind::TopOfClimb).map(|p| p.alt_ft).unwrap_or(d.route.cruise_ft);
-    let _ = writeln!(s, "OFF-BLOCK {}Z   COST INDEX {:.0}   CRUISE FL{:03.0}", hm(d.route.off_block), opts.cost_index, flown_cruise_ft / 100.0);
+    let _ = writeln!(s, "  OFF-BLOCK {}Z   COST INDEX {:.0}   CRUISE FL{:03.0}", hm(d.route.off_block), opts.cost_index, flown_cruise_ft / 100.0);
     let _ = writeln!(s);
 }
 
+/// Fuel on the left, weights on the right, as an operational plan sets them out: the two are
+/// read together, because what a limit bites on is a weight and what relieves it is fuel.
 fn fuel_and_weights(s: &mut String, d: &Dispatch) {
     let f = &d.perf.fuel;
-    let _ = writeln!(s, "FUEL (KG)");
-    let _ = writeln!(s, "  TAXI {:.0}  TRIP {:.0}  CONTINGENCY {:.0}  ALTN {:.0}", f.taxi_kg, f.trip_kg, f.contingency_kg, f.alternate_kg);
-    let _ = writeln!(s, "  FINAL RESERVE {:.0}  EXTRA {:.0}  TANKER {:.0}", f.final_reserve_kg, f.extra_kg, f.tanker_kg);
-    let _ = writeln!(s, "  TAKEOFF FUEL {:.0}   BLOCK FUEL {:.0}   LANDING FUEL {:.0}", f.takeoff_kg, f.block_kg, f.landing_kg);
-    let _ = writeln!(s);
     let w = &d.perf.weights;
-    let _ = writeln!(s, "WEIGHTS (KG)");
-    let _ = writeln!(s, "  OEW {:.0}  PAYLOAD {:.0}", w.oew_kg, w.payload_kg);
-    let _ = writeln!(s, "  ZFW {:.0} / {:.0} MAX{}", w.zfw_kg, w.max_zfw_kg, if w.zfw_kg > w.max_zfw_kg { "  *** OVER LIMIT ***" } else { "" });
-    let _ = writeln!(s, "  TOW {:.0} / {:.0} MAX{}", w.tow_kg, w.max_tow_kg, if w.tow_kg > w.max_tow_kg { "  *** OVER LIMIT ***" } else { "" });
-    let _ = writeln!(s, "  LW  {:.0} / {:.0} MAX{}", w.lw_kg, w.max_lw_kg, if w.lw_kg > w.max_lw_kg { "  *** OVER LIMIT ***" } else { "" });
+    // A weight above its limit is said in words, not marked with a character a reader might
+    // take for a footnote. An aeroplane over its maximum take-off weight is the one thing on
+    // this page that stops the flight.
+    let over = |v: f64, max: f64| if v > max { " OVER LIMIT" } else { "" };
+    let total_min = d.perf.profile.last().map(|p| p.time_min).unwrap_or(0.0);
+    let _ = writeln!(s, "{RULE}");
+    let _ = writeln!(s, "  FUEL           KGS    TIME      WEIGHTS            KGS     LIMIT");
+    let _ = writeln!(s, "{RULE}");
+    let _ = writeln!(s, "  TRIP        {:>7}  {:>6}      ZFW           {:>7}  {:>7}{}", f.trip_kg.round(), fmt_hm(total_min), w.zfw_kg.round(), w.max_zfw_kg.round(), over(w.zfw_kg, w.max_zfw_kg));
+    let _ = writeln!(s, "  CONT        {:>7}              TOW           {:>7}  {:>7}{}", f.contingency_kg.round(), w.tow_kg.round(), w.max_tow_kg.round(), over(w.tow_kg, w.max_tow_kg));
+    let _ = writeln!(s, "  ALTN        {:>7}              LDW           {:>7}  {:>7}{}", f.alternate_kg.round(), w.lw_kg.round(), w.max_lw_kg.round(), over(w.lw_kg, w.max_lw_kg));
+    let _ = writeln!(s, "  FINRES      {:>7}              OEW           {:>7}", f.final_reserve_kg.round(), w.oew_kg.round());
+    let _ = writeln!(s, "  EXTRA       {:>7}              PAYLOAD       {:>7}", f.extra_kg.round(), w.payload_kg.round());
+    let _ = writeln!(s, "  TANKER      {:>7}", f.tanker_kg.round());
+    let _ = writeln!(s, "  -----------------------");
+    let _ = writeln!(s, "  TAKEOFF     {:>7}", f.takeoff_kg.round());
+    let _ = writeln!(s, "  TAXI        {:>7}", f.taxi_kg.round());
+    let _ = writeln!(s, "  BLOCK       {:>7}              LANDING FUEL  {:>7}", f.block_kg.round(), f.landing_kg.round());
     if let Some(by) = &w.limited_by {
         let _ = writeln!(s, "  PAYLOAD LIMITED BY {by}");
     }
     let _ = writeln!(s);
 }
 
+/// The route as it is actually filed, in the ICAO flight plan's own form. A plan that cannot be
+/// filed is not a plan, and this is the part a pilot copies out.
+fn atc_flight_plan(s: &mut String, d: &Dispatch, opts: &DispatchOptions) {
+    let _ = writeln!(s, "{RULE}");
+    let _ = writeln!(s, "  ATC FLIGHT PLAN");
+    let _ = writeln!(s, "{RULE}");
+    for line in crate::ofp::export::icao_message(d, opts.flight_number.as_deref(), opts.registration.as_deref()).lines() {
+        let _ = writeln!(s, "  {line}");
+    }
+    let _ = writeln!(s);
+}
+
 fn route_lines(s: &mut String, d: &Dispatch) {
-    let _ = writeln!(s, "ROUTE");
+    let _ = writeln!(s, "{RULE}");
+    let _ = writeln!(s, "  ROUTE");
+    let _ = writeln!(s, "{RULE}");
     let _ = writeln!(s, "  ATC   {}", atc_route(d));
     let _ = writeln!(s, "  ITEM15 {}", d.route.route_string());
     if let Some(alt) = &d.alternate {
@@ -154,8 +199,10 @@ fn airport_and_runway(icao: &str, runway: Option<&str>) -> String {
 }
 
 fn nav_log(s: &mut String, d: &Dispatch) {
-    let _ = writeln!(s, "NAVIGATION LOG");
-    let _ = writeln!(s, "  FIX      VIA      TRK  LVL   WIND      OAT ISADEV  TAS  GS   LEGNM CUMNM  TIME CUMTIME FUELUSED FUELREM MORA");
+    let _ = writeln!(s, "{RULE}");
+    let _ = writeln!(s, "  NAVLOG");
+    let _ = writeln!(s, "{RULE}");
+    let _ = writeln!(s, "  WPT      AWY       MC  LEVEL   WIND   OAT DEV  TAS   GS  DIST   ACC  ZONE   ACC   FUEL  MORA");
     if d.perf.profile.is_empty() {
         let _ = writeln!(s, "  (no navigation log: the performance model did not run)");
     }
@@ -368,12 +415,14 @@ mod tests {
         let opts = fixtures::sample_opts();
         let text = render(&d, &opts);
         assert!(text.contains("OPERATIONAL FLIGHT PLAN"));
-        assert!(text.contains("FUEL (KG)"));
-        assert!(text.contains("WEIGHTS (KG)"));
-        assert!(text.contains("ROUTE"));
+        assert!(text.contains("FUEL "), "the fuel block");
+        assert!(text.contains("NAVLOG"), "the navigation log");
+        assert!(text.contains("ATC FLIGHT PLAN"), "the filed flight plan");
+        assert!(text.contains("WEIGHTS"), "the weights block");
+        assert!(text.contains("ROUTE"), "the route");
         assert!(text.contains(&d.route.origin.icao));
         assert!(text.contains(&d.route.destination.icao));
-        assert!(text.contains("NAVIGATION LOG"));
+        assert!(text.contains("NAVLOG"), "the navigation log");
         // `route::airspace::fir_crossings` is still a stub that answers nothing, so the
         // section is correctly left out here; `fir_crossings_are_printed_with_their_time`
         // below checks its formatting directly, without depending on the stub.
