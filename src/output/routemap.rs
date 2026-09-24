@@ -36,6 +36,9 @@ pub struct Map {
     pub corridor: Vec<Bounds>,
     /// The network's own fixes, drawn as the backdrop.
     pub network: Vec<LatLon>,
+    /// The shortest way through the network by distance alone: not a route, but the floor no
+    /// route can beat, so the gap between it and the route is what the search is losing.
+    pub floor: Vec<LatLon>,
     pub caption: String,
 }
 
@@ -184,6 +187,12 @@ fn draw(c: &mut dyn Canvas, map: &Map) {
     polyline(c, &frame, &great_circle(map.origin, map.destination, 240));
     c.set_dash(&[], 0.0);
 
+    // The floor: the shortest way through this network, whatever the rules and the wind say.
+    // Where the route runs well clear of it, the miles between the two are the search's.
+    c.set_stroke_rgb(0.20, 0.55, 0.30);
+    c.set_line_width(1.6);
+    polyline(c, &frame, &map.floor);
+
     // The route.
     let line: Vec<LatLon> = map.route.iter().map(|(_, p)| *p).collect();
     c.set_stroke_rgb(0.80, 0.12, 0.16);
@@ -220,7 +229,7 @@ fn draw(c: &mut dyn Canvas, map: &Map) {
         9.0,
         MARGIN,
         HEIGHT - 24.0,
-        "grey wash: network fixes   dotted grey: great circle   dashed green: search ellipse   dashed blue: wind strips   red: route",
+        "grey wash: network fixes   dotted grey: great circle   dashed green: search ellipse   dashed blue: wind strips   solid green: shortest possible   red: route",
         0.42,
     );
 }
