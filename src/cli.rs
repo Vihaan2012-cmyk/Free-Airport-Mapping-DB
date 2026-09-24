@@ -264,6 +264,34 @@ enum Cmd {
     Layers,
     /// Print the legend for the numeric attribute codes (the contents of codes.json).
     Codes,
+    /// Write an aircraft's own navigation database from a `NavSet`, so it flies on current
+    /// navigation data instead of whatever AIRAC cycle it shipped with. Never overwrites a
+    /// user's database without a backup kept beside it first.
+    Convert(ConvertArgs),
+}
+
+#[derive(Args, Clone)]
+pub struct ConvertArgs {
+    /// fenix or dfd. The DFD writer (iniBuilds A350, Synaptic A220, PMDG 737/777) is not
+    /// carried past a stub in this build; only fenix currently writes a real file.
+    #[arg(long = "to")]
+    to: String,
+    /// A `NavSet` dumped as JSON — the interim way to hand this command data until the
+    /// pipeline that reads free sources into a `NavSet` lands; see `convert::model`.
+    #[arg(long = "from-json", value_name = "FILE")]
+    from_json: PathBuf,
+    /// Where to write the new database. Required unless --in-place is given: this command
+    /// never guesses a path to overwrite.
+    #[arg(long)]
+    out: Option<PathBuf>,
+    /// Back up and overwrite the aircraft's own installed database (Fenix's
+    /// `imported.db3`, auto-detected under %PROGRAMDATA%) rather than writing a new file.
+    #[arg(long = "in-place")]
+    in_place: bool,
+    /// Report what would be written without touching disk at all — not even a temporary
+    /// file.
+    #[arg(long = "dry-run")]
+    dry_run: bool,
 }
 
 /// Where the airport index comes from.
@@ -1278,7 +1306,68 @@ pub fn run() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&crate::model::codes::legend())?);
             Ok(())
         }
+        Cmd::Convert(a) => convert_cmd(a),
     }
+}
+
+/// Write an aircraft's navigation database from a `NavSet`. See `convert::mod` for the
+/// backup rule and `convert::fenix`/`convert::dfd` for what each target actually writes.
+fn convert_cmd(a: ConvertArgs) -> Result<()> {
+    use crate::convert::{self, Target};
+    let target: Target = a.to.parse()?;
+    if a.out.is_some() && a.in_place {
+        return Err(anyhow!("give --out or --in-place, not both"));
+    }
+    let text = std::fs::read_to_string(&a.from_json).with_context(|| format!("read {}", a.from_json.display()))?;
+    let nav: convert::NavSet = serde_json::from_str(&text).with_context(|| format!("parse {} as a NavSet", a.from_json.display()))?;
+
+    let report = if a.dry_run {
+        match target {
+            Target::Fenix => convert::fenix::plan(&nav),
+            Target::Dfd => convert::dfd::plan(&nav),
+        }
+    } else {
+        let out = if a.in_place {
+            match target {
+                Target::Fenix => convert::fenix_default_path().ok_or_else(|| anyhow!("no installed Fenix navdata found under %PROGRAMDATA%; pass --out"))?,
+                Target::Dfd => return Err(anyhow!("--in-place has nowhere fixed to write for --to dfd (three aircraft, three paths); pass --out")),
+            }
+        } else {
+            a.out.clone().ok_or_else(|| anyhow!("give --out <path>, or --in-place to overwrite the installed database (backed up first)"))?
+        };
+        if out.exists() {
+            let backup = convert::backup(&out)?;
+            term::file(None, &backup.display().to_string(), "backup of the database about to be overwritten");
+        }
+        // Written to a scratch path first and only moved into place once it succeeds, so a
+        // failed write never leaves the aircraft's own database half-replaced.
+        let scratch = out.with_extension(format!("{}.tmp", out.extension().and_then(|e| e.to_str()).unwrap_or("db")));
+        let _ = std::fs::remove_file(&scratch);
+        let result = match target {
+            Target::Fenix => convert::fenix::write(&nav, &scratch),
+            Target::Dfd => convert::dfd::write(&nav, &scratch),
+        };
+        let report = match result {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = std::fs::remove_file(&scratch);
+                return Err(e);
+            }
+        };
+        std::fs::rename(&scratch, &out).or_else(|_| {
+            std::fs::copy(&scratch, &out).map(|_| ()).and_then(|_| std::fs::remove_file(&scratch))
+        }).with_context(|| format!("move {} into place at {}", scratch.display(), out.display()))?;
+        term::file(None, &out.display().to_string(), &format!("{} navigation database ({})", a.to, nav.cycle));
+        report
+    };
+
+    for line in &report {
+        match &line.omitted_because {
+            Some(why) => term::warn(&format!("{}: left empty — {why}", line.table)),
+            None => println!("{:<24} {}", line.table, line.rows),
+        }
+    }
+    Ok(())
 }
 
 /// An approach chart: airport, terrain, obstacles, the procedure and an estimated minimum.
