@@ -135,6 +135,16 @@ pub fn stage(i: usize, n: usize, name: &str, detail: &str, millis: u128) {
     let _ = term().write_line(&text);
 }
 
+/// One step of a long, uniform job: a MORA cell computed, a tile fetched. Distinct from
+/// [`stage`], which names the parts of one plan, and from [`layer`], which is shaped round
+/// a fixed list of forty-five named layers — this is for a job whose length is only known
+/// once the run starts, and whose steps are all alike.
+pub fn tick(i: usize, n: usize, name: &str, detail: &str, millis: u64) {
+    let counter = style(format!("{i:>6}/{n}")).dim().to_string();
+    let text = format!("  {:<8} {} {:<18} {} {}", style("stage").magenta().bold().underlined(), counter, name, dim("—"), format!("{detail} ({millis} ms)"));
+    let _ = term().write_line(&text);
+}
+
 /// A produced file or folder with its size.
 pub fn file(scope: Option<&str>, path: &str, detail: &str) {
     let scope_txt = scope.map(|s| format!("{} {} ", style(format!("[{s}]")).dim(), SEP)).unwrap_or_default();

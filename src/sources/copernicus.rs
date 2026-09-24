@@ -418,7 +418,33 @@ pub fn patch(http: &Http, cache: &Cache, lat: f64, lon: f64, radius_km: f64, ste
     let step_lon = step_lat / lat.to_radians().cos().max(0.05);
     let width = (((east - west) / step_lon).round() as usize).max(2);
     let height = (((north - south) / step_lat).round() as usize).max(2);
+    Ok(sample(http, cache, west, north, step_lat, step_lon, width, height))
+}
 
+/// Terrain heights across one exact one-degree-by-one-degree tile, addressed by its
+/// south-west corner — the shape a grid MORA quadrangle needs.
+///
+/// `patch` above draws a square *in kilometres* around a point, which is right for a
+/// chart (an airport wants a patch a few kilometres wide regardless of latitude) but
+/// wrong here: converting a fixed km radius to degrees of longitude divides by
+/// `cos(latitude)`, so near the poles it would balloon into tens of degrees of longitude
+/// to chase a one-degree cell. Working in exact degrees instead means each MORA cell
+/// costs exactly the tile it sits on, at every latitude.
+pub fn cell(http: &Http, cache: &Cache, lat_deg: i32, lon_deg: i32, step_m: f64) -> Result<Patch> {
+    let (south, north) = (lat_deg as f64, lat_deg as f64 + 1.0);
+    let (west, east) = (lon_deg as f64, lon_deg as f64 + 1.0);
+    let mid_lat = south + 0.5;
+    let step_lat = step_m / 111_320.0;
+    let step_lon = step_lat / mid_lat.to_radians().cos().max(0.05);
+    let width = (((east - west) / step_lon).round() as usize).max(2);
+    let height = (((north - south) / step_lat).round() as usize).max(2);
+    Ok(sample(http, cache, west, north, step_lat, step_lon, width, height))
+}
+
+/// The shared fetch loop behind `patch` and `cell`: walk a grid from its north-west
+/// corner, opening (and caching) whichever one-degree source tile and decimated level
+/// each sample falls in.
+fn sample(http: &Http, cache: &Cache, west: f64, north: f64, step_lat: f64, step_lon: f64, width: usize, height: usize) -> Patch {
     let mut heights = vec![f32::NAN; width * height];
     // The file, and which of its copies answers this spacing: both settled once per
     // one-degree square rather than once per sample.
@@ -477,7 +503,7 @@ pub fn patch(http: &Http, cache: &Cache, lat: f64, lon: f64, radius_km: f64, ste
             }
         }
     }
-    Ok(Patch { west, north, step_lon, step_lat, width, height, heights })
+    Patch { west, north, step_lon, step_lat, width, height, heights }
 }
 
 #[cfg(test)]
