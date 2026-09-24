@@ -190,7 +190,10 @@ fn wake_category(mtow_kg: f64) -> char {
 /// The ICAO flight plan message: item 7 through item 19, as it would be filed. `PBN`,
 /// `DOF` and `REG` go in item 18 where they are known; item 19's emergency equipment is
 /// left at the generic default, since none of it is a `dispatch::AircraftSpec` field.
-pub fn icao_message(d: &Dispatch, flight_number: Option<&str>, registration: Option<&str>) -> String {
+/// `rules` and `kind` are item 8: whether the flight is under instrument or visual rules, and
+/// what sort of flight it is -- scheduled, charter, general aviation. Both are a controller's
+/// first read of what is coming, and both were fixed at `IG` before they could be asked for.
+pub fn icao_message(d: &Dispatch, flight_number: Option<&str>, registration: Option<&str>, rules: char, kind: char) -> String {
     let callsign = flight_number.unwrap_or(&d.spec.icao_type).to_string();
     let wake = wake_category(d.spec.mtow_kg);
     // The level and the speed a plan is filed at are the *cruise* ones, and they are taken
@@ -214,7 +217,9 @@ pub fn icao_message(d: &Dispatch, flight_number: Option<&str>, registration: Opt
     let eet = d.perf.profile.last().map(|p| p.time_min).unwrap_or(0.0);
     let alt = d.alternate.as_ref().map(|a| a.destination.icao.as_str()).unwrap_or("----");
     let mut s = String::new();
-    let _ = write!(s, "(FPL-{callsign}-IG");
+    let rules = rules.to_ascii_uppercase();
+    let kind = kind.to_ascii_uppercase();
+    let _ = write!(s, "(FPL-{callsign}-{rules}{kind}");
     let _ = write!(s, "\n-1/{}/{wake}-SDE2E3FGHIRWXY/LB1", d.spec.icao_type);
     let _ = write!(s, "\n-{} {}", d.route.origin.icao, d.route.off_block.format("%H%M"));
     let _ = write!(s, "\n-{speed}{level} {}", d.route.route_string());
@@ -236,8 +241,8 @@ fn tas_estimate(d: &Dispatch) -> f64 {
     d.spec.cruise_mach.max(0.5) * 38.967_854 * t_kelvin.sqrt()
 }
 
-pub fn write_icao_message(d: &Dispatch, flight_number: Option<&str>, registration: Option<&str>, out: &Path) -> Result<u64> {
-    write_file(out, &icao_message(d, flight_number, registration))
+pub fn write_icao_message(d: &Dispatch, flight_number: Option<&str>, registration: Option<&str>, rules: char, kind: char, out: &Path) -> Result<u64> {
+    write_file(out, &icao_message(d, flight_number, registration, rules, kind))
 }
 
 // ---------------------------------------------------------------------------------
@@ -299,8 +304,8 @@ mod tests {
     #[test]
     fn the_icao_message_opens_and_closes_correctly_and_carries_the_callsign() {
         let d = fixtures::sample();
-        let msg = icao_message(&d, Some("TAP123"), Some("CS-TVA"));
-        assert!(msg.starts_with("(FPL-TAP123-IG"));
+        let msg = icao_message(&d, Some("TAP123"), Some("CS-TVA"), 'I', 'S');
+        assert!(msg.starts_with("(FPL-TAP123-IS"));
         assert!(msg.trim_end().ends_with(')'));
         assert!(msg.contains(&d.route.origin.icao));
         assert!(msg.contains(&d.route.destination.icao));

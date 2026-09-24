@@ -259,17 +259,14 @@ fn critical_mora(d: &Dispatch) -> Option<(f64, String)> {
 }
 
 /// The four times a flight is measured by: off blocks, airborne, on the ground, on blocks.
-/// Twenty minutes of taxi out and eight in are the figures the fuel was planned on, so they
-/// are the figures the times are built from — the page cannot say one thing about taxi in its
-/// fuel table and another in its times.
-const TAXI_OUT_MIN: i64 = 20;
-const TAXI_IN_MIN: i64 = 8;
-
-fn milestones(d: &Dispatch) -> (DateTime<Utc>, DateTime<Utc>, DateTime<Utc>, DateTime<Utc>) {
+///
+/// The taxi figures are the ones the fuel was planned on, because the page cannot say one thing
+/// about taxi in its fuel table and another in its times.
+fn milestones(d: &Dispatch, opts: &DispatchOptions) -> (DateTime<Utc>, DateTime<Utc>, DateTime<Utc>, DateTime<Utc>) {
     let out = d.route.off_block;
-    let off = out + chrono::Duration::minutes(TAXI_OUT_MIN);
+    let off = out + chrono::Duration::minutes(opts.taxi_out_min.max(0.0).round() as i64);
     let on = off + chrono::Duration::minutes(total_minutes(d).round() as i64);
-    let inn = on + chrono::Duration::minutes(TAXI_IN_MIN);
+    let inn = on + chrono::Duration::minutes(opts.taxi_in_min.max(0.0).round() as i64);
     (out, off, on, inn)
 }
 
@@ -282,14 +279,14 @@ pub fn render(d: &Dispatch, opts: &DispatchOptions) -> String {
     let mut s = String::new();
     header(&mut s, d, opts);
     dispatch_remarks(&mut s, d);
-    planned_fuel(&mut s, d);
+    planned_fuel(&mut s, d, opts.taxi_out_min.max(0.0));
     fmc_info(&mut s, d);
     tankering(&mut s, d);
     self_briefing(&mut s);
     alternate_route(&mut s, d);
     routing(&mut s, d, opts);
     departure_clearance(&mut s);
-    times(&mut s, d);
+    times(&mut s, d, opts);
     weights(&mut s, d, opts);
     flight_log(&mut s, d);
     step_climbs(&mut s, d);
@@ -315,7 +312,7 @@ fn header(s: &mut String, d: &Dispatch, opts: &DispatchOptions) {
     let w = &d.perf.weights;
     let (wind_deg, wind_kt) = average_wind(d);
     let air_min = total_minutes(d);
-    let (out, off, on, inn) = milestones(d);
+    let (out, off, on, inn) = milestones(d, opts);
 
     let _ = writeln!(s);
     let _ = writeln!(s, "[ OFP ]");
@@ -450,7 +447,7 @@ fn dispatch_remarks(s: &mut String, d: &Dispatch) {
 /// The fuel table: every quantity that goes into the block figure, what it is carried for, and
 /// how long it lasts. The rules across it are the table's own 33 columns, not the page's,
 /// because it is a table and not a section.
-fn planned_fuel(s: &mut String, d: &Dispatch) {
+fn planned_fuel(s: &mut String, d: &Dispatch, taxi_out: f64) {
     const SUB: &str = "---------------------------------";
     let f = &d.perf.fuel;
     let alternate = d.perf.alternate.as_ref();
@@ -504,7 +501,7 @@ fn planned_fuel(s: &mut String, d: &Dispatch) {
     row(s, "EXTRA", "", kgs(extra_kg), endurance(d, extra_kg).or(Some(0.0)));
     let _ = writeln!(s, "{SUB}");
     row(s, "T/OFF FUEL", "", kgs(f.takeoff_kg), Some(minimum_min));
-    row(s, "TAXI", &d.route.origin.icao, kgs(f.taxi_kg), Some(TAXI_OUT_MIN as f64));
+    row(s, "TAXI", &d.route.origin.icao, kgs(f.taxi_kg), Some(taxi_out));
     let _ = writeln!(s, "{SUB}");
     row(s, "BLOCK FUEL", &d.route.origin.icao, kgs(f.block_kg), None);
     row(s, "PIC EXTRA", "", Some(".....".to_string()), None);
@@ -641,9 +638,9 @@ fn departure_clearance(s: &mut String) {
 
 /// Out, off, on and in, against what was scheduled and what actually happened. The actual
 /// column is dotted because it is the crew's to fill in.
-fn times(s: &mut String, d: &Dispatch) {
-    let (out, off, on, inn) = milestones(d);
-    let block_min = total_minutes(d) + (TAXI_OUT_MIN + TAXI_IN_MIN) as f64;
+fn times(s: &mut String, d: &Dispatch, opts: &DispatchOptions) {
+    let (out, off, on, inn) = milestones(d, opts);
+    let block_min = total_minutes(d) + opts.taxi_out_min.max(0.0) + opts.taxi_in_min.max(0.0);
     centred(s, "TIMES");
     let _ = writeln!(s);
     let mut r = Row::new();
@@ -999,7 +996,7 @@ fn fir_section(s: &mut String, d: &Dispatch, crossings: &[crate::route::airspace
 fn atc_flight_plan(s: &mut String, d: &Dispatch, opts: &DispatchOptions) {
     centred(s, "ICAO FLIGHT PLAN");
     let _ = writeln!(s);
-    for line in crate::ofp::export::icao_message(d, opts.flight_number.as_deref(), opts.registration.as_deref()).lines() {
+    for line in crate::ofp::export::icao_message(d, opts.flight_number.as_deref(), opts.registration.as_deref(), opts.flight_rules, opts.flight_type).lines() {
         let _ = writeln!(s, "{line}");
     }
     let _ = writeln!(s, "{RULE}");

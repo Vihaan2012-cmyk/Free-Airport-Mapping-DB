@@ -101,13 +101,14 @@
 
   <section class="card"><header><h2>Aircraft Info</h2><span class="chev">&#9662;</span></header><div class="body">
     <div class="grid c2">
-      <div><label>Aircraft type</label><input id="aircraft" maxlength="4" value="B77W" spellcheck="false"></div>
+      <div><label>Aircraft type</label><select id="aircraft"><option value="B77W">B77W</option></select></div>
       <div><label>Variant or airframe</label><select id="airframe"><option value="">Default (type weights)</option></select></div>
     </div>
     <div class="grid c4" style="margin-top:9px">
       <div><label>Climb profile</label><select id="climb" disabled><option>AUTO</option></select></div>
-      <div><label>Cruise</label><select id="cruisemode" disabled><option>CI</option></select></div>
-      <div><label>Cost index</label><input id="ci" value="60" inputmode="numeric"></div>
+      <div><label>Cruise</label><select id="cruisemode">
+        <option value="CI">Cost index</option><option value="M">Fixed Mach</option></select></div>
+      <div><label id="speedlabel" for="ci">Cost index</label><input id="ci" value="60" inputmode="numeric"></div>
       <div><label>Descent profile</label><select id="descent" disabled><option>AUTO</option></select></div>
     </div>
     <div class="grid c2" style="margin-top:9px">
@@ -123,19 +124,25 @@
       <div><label>Units</label><select id="units" disabled><option>Kilograms</option></select></div>
     </div>
     <div class="grid c3" style="margin-top:9px">
-      <div><label>Flight rules</label><select id="rules" disabled><option>IFR</option></select></div>
-      <div><label>Type of flight</label><select id="ftype" disabled><option>Scheduled</option></select></div>
-      <div><label>Alternates count</label><select id="altcount" disabled><option>1</option></select></div>
+      <div><label>Flight rules</label><select id="rules">
+        <option value="I">IFR</option><option value="V">VFR</option>
+        <option value="Y">IFR then VFR</option><option value="Z">VFR then IFR</option></select></div>
+      <div><label>Type of flight</label><select id="ftype">
+        <option value="S">Scheduled</option><option value="N">Non-scheduled</option>
+        <option value="G">General aviation</option><option value="M">Military</option>
+        <option value="X">Other</option></select></div>
+      <div><label>Alternates considered</label><select id="alternates">
+        <option>1</option><option>2</option><option selected>3</option><option>5</option></select></div>
     </div>
     <div class="grid c2" style="margin-top:9px">
-      <div><label>Taxi out (min)</label><input id="taxiout" value="20" disabled></div>
-      <div><label>Taxi in (min)</label><input id="taxiin" value="8" disabled></div>
+      <div><label>Taxi out (min)</label><input id="taxiout" value="20" inputmode="numeric"></div>
+      <div><label>Taxi in (min)</label><input id="taxiin" value="8" inputmode="numeric"></div>
     </div>
     <div class="grid c2" style="margin-top:6px">
       <div>
         <div class="sw"><span>Detailed navlog</span><input type="checkbox" checked disabled></div>
         <div class="sw"><span>ETOPS planning</span><input type="checkbox" checked disabled></div>
-        <div class="sw"><span>Plan stepclimbs</span><input type="checkbox" checked disabled></div>
+        <div class="sw"><span>Plan stepclimbs</span><input type="checkbox" id="stepclimbs" checked></div>
         <div class="sw"><span>Runway analysis</span><input type="checkbox" disabled></div>
       </div>
       <div>
@@ -149,41 +156,41 @@
 
   <section class="card"><header><h2>Optional Entries</h2><span class="hint">Automatically calculated, but can be customized</span><span class="chev">&#9662;</span></header><div class="body">
     <div class="grid c5">
-      <div><label>Block time</label><input id="blocktime" placeholder="H:MM" disabled></div>
-      <div><label>Dep runway</label><input id="deprwy" placeholder="AUTO" spellcheck="false" disabled></div>
-      <div><label>Arr runway</label><input id="arrrwy" placeholder="AUTO" spellcheck="false" disabled></div>
+      <div><label>Block time</label><input id="blocktime" placeholder="AUTO" disabled></div>
+      <div><label>Dep runway</label><input id="deprwy" placeholder="AUTO" spellcheck="false"></div>
+      <div><label>Arr runway</label><input id="arrrwy" placeholder="AUTO" spellcheck="false"></div>
       <div><label>Altitude</label><input id="level" placeholder="AUTO" spellcheck="false"></div>
       <div><label>Passengers</label><input id="pax" value="300" inputmode="numeric"></div>
     </div>
     <div class="grid c4" style="margin-top:9px">
-      <div><label>Freight kg</label><input id="freight" placeholder="NONE" disabled></div>
+      <div><label>Freight kg</label><input id="freight" placeholder="AUTO" inputmode="numeric"></div>
       <div><label>Payload kg</label><input id="payload" value="40000" inputmode="numeric"></div>
-      <div><label>Zero fuel weight</label><input id="zfw" placeholder="AUTO" disabled></div>
+      <div><label>Zero fuel weight</label><input id="zfw" placeholder="AUTO" inputmode="numeric"></div>
       <div><label>Avoid FIRs</label><input id="avoid" placeholder="none" spellcheck="false"></div>
     </div>
-    <div class="grid c5" style="margin-top:9px">
-      <div><label>OEW kg</label><input id="oew" placeholder="type" disabled></div>
-      <div><label>MZFW kg</label><input id="mzfw" placeholder="type" disabled></div>
-      <div><label>MTOW kg</label><input id="mtow" placeholder="type" disabled></div>
-      <div><label>MLW kg</label><input id="mlw" placeholder="type" disabled></div>
-      <div><label>Max fuel kg</label><input id="maxfuel" placeholder="type" disabled></div>
+    <div class="sw" style="margin-top:10px;border-top:1px solid var(--line);padding-top:9px">
+      <span>Weights &mdash; <b id="weightmode">automatic</b>, from the airframe or the type</span>
+      <input type="checkbox" id="manualweights">
+    </div>
+    <div class="grid c5" style="margin-top:6px">
+      <div><label>OEW kg</label><input id="oew" placeholder="AUTO" disabled inputmode="numeric"></div>
+      <div><label>MZFW kg</label><input id="mzfw" placeholder="AUTO" disabled inputmode="numeric"></div>
+      <div><label>MTOW kg</label><input id="mtow" placeholder="AUTO" disabled inputmode="numeric"></div>
+      <div><label>MLW kg</label><input id="mlw" placeholder="AUTO" disabled inputmode="numeric"></div>
+      <div><label>Max fuel kg</label><input id="maxfuel" placeholder="AUTO" disabled inputmode="numeric"></div>
     </div>
   </div></section>
 
-  <section class="card shut"><header><h2>Fuel Planning</h2><span class="hint">Custom fuel policies and extra fuel</span><span class="chev">&#9662;</span></header><div class="body">
-    <div class="grid c5">
-      <div><label>Contingency</label><select disabled><option>Auto</option></select></div>
-      <div><label>Reserve</label><select disabled><option>Auto</option></select></div>
-      <div><label>Taxi fuel</label><input placeholder="AUTO" disabled></div>
-      <div><label>Block fuel</label><input placeholder="AUTO" disabled></div>
-      <div><label>Arrival fuel</label><input placeholder="AUTO" disabled></div>
+  <section class="card"><header><h2>Fuel Planning</h2><span class="hint">Custom fuel policies and extra fuel</span><span class="chev">&#9662;</span></header><div class="body">
+    <div class="grid c4">
+      <div><label>Contingency %</label><input id="contpct" value="5" inputmode="numeric"></div>
+      <div><label>Contingency floor (min)</label><input id="contmin" value="5" inputmode="numeric"></div>
+      <div><label>Final reserve (min)</label><input id="reserve" value="30" inputmode="numeric"></div>
+      <div><label>Extra fuel kg</label><input id="extrafuel" value="0" inputmode="numeric"></div>
     </div>
-    <div class="grid c5" style="margin-top:9px">
-      <div><label>MEL fuel</label><input value="0" disabled></div>
-      <div><label>ATC fuel</label><input value="0" disabled></div>
-      <div><label>WXX fuel</label><input value="0" disabled></div>
-      <div><label>Extra</label><input value="0" disabled></div>
-      <div><label>Tankering</label><input value="0" disabled></div>
+    <div class="grid c2" style="margin-top:6px">
+      <div class="sw"><span>Tanker fuel where it is cheaper</span><input type="checkbox" id="tankering"></div>
+      <div class="sw"><span>Taxi fuel &amp; block fuel</span><span style="color:var(--faint);font-size:11px">from the policy</span></div>
     </div>
   </div></section>
 
@@ -320,6 +327,34 @@ async function poll(){
 
 let frames = [];
 
+// Every type the performance model can fly. Offering one it cannot is a choice that leads only
+// to an error, so the list is what `perf` knows rather than what the airframe table mentions.
+async function loadTypes(){
+  let list = [];
+  try { list = (await (await fetch('plan/types')).json()).types || []; } catch(e){ return; }
+  list.sort((a,b) => a.icao.localeCompare(b.icao));
+  const sel = $('aircraft'), want = sel.value || 'B77W';
+  sel.innerHTML = '';
+  for (const t of list) {
+    const o = document.createElement('option');
+    o.value = t.icao;
+    o.textContent = t.airframes ? `${t.icao} — ${t.name} (${t.airframes})` : `${t.icao} — ${t.name}`;
+    sel.appendChild(o);
+  }
+  sel.value = list.some(t => t.icao === want) ? want : (list[0] ? list[0].icao : '');
+  await loadAirframes();
+}
+
+// Weights are worked out until somebody says otherwise. Switching to manual keeps whatever was
+// filled in, so the fields start from the airframe's own figures rather than from nothing --
+// overriding one weight should not mean retyping the other four.
+function weightMode(){
+  const manual = $('manualweights').checked;
+  $('weightmode').textContent = manual ? 'manual' : 'automatic';
+  for (const id of ['oew','mzfw','mtow','mlw','maxfuel']) $(id).disabled = !manual;
+}
+
+
 // The airframes of a type, for the dropdown. A type with none keeps its own weights, which is
 // what "Default" means and why it is always the first choice.
 async function loadAirframes(){
@@ -342,7 +377,8 @@ async function loadAirframes(){
 // What an airframe fills in. Empty for "Default", so the fields show the type is being used
 // rather than showing the last airframe's numbers as though they still applied.
 function fillFromFrame(f){
-  const set = (id, v) => { $(id).value = v == null ? '' : v.toLocaleString(); };
+  const manual = $('manualweights').checked;
+  const set = (id, v) => { if (!manual) $(id).value = v == null ? '' : v.toLocaleString(); };
   set('oew', f && f.oew); set('mzfw', f && f.mzfw); set('mtow', f && f.mtow);
   set('mlw', f && f.mlw); set('maxfuel', f && f.max_fuel);
   $('engines').value = f ? (f.engines || '') : '';
@@ -361,11 +397,24 @@ function zfw(){
   $('zfw').value = f && f.oew ? Math.round(f.oew + payload).toLocaleString() : '';
 }
 
+// A fixed Mach and a cost index are the same field wearing a different hat, because they are
+// two ways of saying the same thing: how fast to go.
+function speedMode(){
+  const mach = $('cruisemode').value === 'M';
+  $('speedlabel').textContent = mach ? 'Cruise Mach' : 'Cost index';
+  $('ci').placeholder = mach ? '.84' : '60';
+  if (mach && parseFloat($('ci').value) > 2) $('ci').value = '.84';
+  if (!mach && parseFloat($('ci').value) < 2) $('ci').value = '60';
+}
+$('cruisemode').addEventListener('change', speedMode);
+speedMode();
+
 $('aircraft').addEventListener('change', loadAirframes);
-$('aircraft').addEventListener('blur', loadAirframes);
+$('manualweights').addEventListener('change', weightMode);
+weightMode();
 $('airframe').addEventListener('change', () => fillFromFrame(frames.find(x => x.registration === $('airframe').value) || null));
 $('payload').addEventListener('input', zfw);
-loadAirframes();
+loadTypes();
 
 $('go').onclick = async () => {
   reached=[]; best=null; ends=null; cursor=0;
@@ -375,9 +424,21 @@ $('go').onclick = async () => {
   const call = ($('flight').value.trim() || ($('airline').value.trim()+$('fltnum').value.trim())).toUpperCase();
   const q = new URLSearchParams({
     from:$('from').value, to:$('to').value, aircraft:$('aircraft').value,
-    alternate:$('alternate').value, level:$('level').value, ci:$('ci').value,
+    alternate:$('alternate').value, level:$('level').value,
     pax:$('pax').value, payload:$('payload').value, flight:call, reg:$('reg').value,
     eobt:$('eobt').value, avoid:$('avoid').value, airframe:$('airframe').value,
+    deprwy:$('deprwy').value, arrrwy:$('arrrwy').value,
+    taxiout:$('taxiout').value, taxiin:$('taxiin').value,
+    contpct:$('contpct').value, contmin:$('contmin').value, reserve:$('reserve').value,
+    extrafuel:$('extrafuel').value, tankering:$('tankering').checked?'1':'0',
+    alternates:$('alternates').value, stepclimbs:$('stepclimbs').checked?'1':'0',
+    rules:$('rules').value, ftype:$('ftype').value,
+    mach:$('cruisemode').value==='M'?$('ci').value:'',
+    ci:$('cruisemode').value==='M'?'60':$('ci').value,
+    freight:$('freight').value, zfw:$('zfw').value,
+    oew:$('manualweights').checked?$('oew').value:'', mzfw:$('manualweights').checked?$('mzfw').value:'',
+    mtow:$('manualweights').checked?$('mtow').value:'', mlw:$('manualweights').checked?$('mlw').value:'',
+    maxfuel:$('manualweights').checked?$('maxfuel').value:'',
     rvsm:$('rvsm').checked?'1':'0', offline:$('offline').checked?'1':'0',
   });
   try{ await fetch('plan/start?'+q); }

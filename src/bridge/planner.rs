@@ -121,6 +121,20 @@ fn start(params: &Map<String, Value>) -> Arc<Run> {
     let alternate = params.get("alternate").and_then(Value::as_str).filter(|v| !v.trim().is_empty()).map(|v| v.trim().to_uppercase());
     let offline = params.get("offline").and_then(Value::as_str).is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
     let airframe = params.get("airframe").and_then(Value::as_str).filter(|v| !v.trim().is_empty()).map(|v| v.trim().to_uppercase());
+    let word = |k: &str| params.get(k).and_then(Value::as_str).map(|v| v.trim().to_uppercase()).filter(|v| !v.is_empty());
+    let flag = |k: &str, fallback: bool| params.get(k).and_then(Value::as_str).map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(fallback);
+    let letter = |k: &str, fallback: char| word(k).and_then(|v| v.chars().next()).unwrap_or(fallback);
+    let (taxi_out, taxi_in) = (number("taxiout", 20.0), number("taxiin", 8.0));
+    let (cont_pct, cont_min, reserve) = (number("contpct", 5.0), number("contmin", 5.0), number("reserve", 30.0));
+    let (extra, alternates) = (number("extrafuel", 0.0), number("alternates", 3.0));
+    let (tankering, steps) = (flag("tankering", false), flag("stepclimbs", true));
+    let (rules, ftype) = (letter("rules", 'I'), letter("ftype", 'S'));
+    let (deprwy, arrrwy) = (word("deprwy"), word("arrrwy"));
+    // A weight given by hand, or nothing at all, which means work it out.
+    let given = |k: &str| params.get(k).and_then(Value::as_str).map(|v| v.replace(',', "")).and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| *v > 0.0);
+    let (oew, mzfw, mtow, mlw, maxfuel, zfw) = (given("oew"), given("mzfw"), given("mtow"), given("mlw"), given("maxfuel"), given("zfw"));
+    let freight = number("freight", 0.0);
+    let cruise_mach = params.get("mach").and_then(Value::as_str).and_then(|v| v.trim().trim_start_matches('.').parse::<f64>().ok()).map(|m| if m > 1.5 { m / 100.0 } else { m }).filter(|m| (0.3..1.0).contains(m));
 
     let thread_run = run.clone();
     std::thread::spawn(move || {
@@ -131,6 +145,27 @@ fn start(params: &Map<String, Value>) -> Arc<Run> {
         opts.offline = offline;
         opts.alternate = alternate;
         opts.airframe = airframe;
+        opts.dep_runway = deprwy;
+        opts.arr_runway = arrrwy;
+        opts.taxi_out_min = taxi_out;
+        opts.taxi_in_min = taxi_in;
+        opts.contingency_pct = cont_pct;
+        opts.contingency_min_minutes = cont_min;
+        opts.reserve_minutes = reserve;
+        opts.extra_fuel_kg = extra;
+        opts.tankering = tankering;
+        opts.alternates = alternates.max(1.0) as usize;
+        opts.step_climbs = steps;
+        opts.cruise_mach = cruise_mach;
+        opts.flight_rules = rules;
+        opts.flight_type = ftype;
+        opts.oew_kg = oew;
+        opts.mzfw_kg = mzfw;
+        opts.mtow_kg = mtow;
+        opts.mlw_kg = mlw;
+        opts.max_fuel_kg = maxfuel;
+        opts.zfw_kg = zfw;
+        opts.freight_kg = freight;
         opts.level = level.and_then(|l| {
             let t = l.trim().trim_start_matches("FL").to_string();
             t.parse::<f64>().ok().map(|v| if v < 1000.0 { v * 100.0 } else { v })
@@ -213,6 +248,16 @@ pub fn handle(req: tiny_http::Request, path: &str, params: &Map<String, Value>, 
         // The world's coastlines, the same twenty kilobytes the drawn maps use, so the page is
         // a map and not a scatter of dots.
         "/land.bin" => respond_bytes(req, 200, "application/octet-stream", include_bytes!("../../data/world_land.bin").to_vec()),
+        // Every type the performance model can actually fly, for the page's own dropdown. Not
+        // every type the airframe table mentions: an airframe of a type this planner cannot
+        // model is a choice that leads only to an error, and offering it is a discourtesy.
+        "/types" => {
+            let list: Vec<Value> = crate::perf::aircraft::known_types()
+                .into_iter()
+                .filter_map(|t| crate::perf::aircraft::lookup(t).map(|d| json!({ "icao": t, "name": d.name, "airframes": crate::perf::airframes::of_type(t).len() })))
+                .collect();
+            respond_json(req, 200, json!({ "types": list }).to_string());
+        }
         // Every airframe of a type, for the page's own dropdown and for the weights it fills
         // in once one is picked.
         "/airframes" => {
