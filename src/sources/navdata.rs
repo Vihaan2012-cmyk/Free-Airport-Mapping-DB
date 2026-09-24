@@ -323,10 +323,19 @@ impl Database {
             return None;
         }
         // The cycle, where the database says: four digits, year then cycle of the year.
+        //
+        // Two spellings again, as with the table names. The layout PMDG ships calls the column
+        // `current_airac`; the one Navigraph bundles with the A350 and the A220 calls it
+        // `cycle`. Reading only the first meant a database on a later cycle answered with no
+        // cycle at all, and `find` then ranked it below an older one that had answered -- which
+        // is how a genuine 2503 sat unread beside the 2404 every route was being planned on.
         let airac = tables.get("header").and_then(|table| {
-            connection
-                .query_row(&format!("select current_airac from \"{table}\" limit 1"), [], |row| row.get::<_, String>(0))
-                .ok()
+            ["current_airac", "cycle"].iter().find_map(|column| {
+                connection
+                    .query_row(&format!("select {column} from \"{table}\" limit 1"), [], |row| row.get::<_, String>(0))
+                    .ok()
+                    .filter(|v| !v.trim().is_empty())
+            })
         });
         let name = path
             .components()
