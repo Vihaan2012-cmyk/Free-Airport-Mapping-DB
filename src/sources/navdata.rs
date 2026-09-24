@@ -1128,6 +1128,21 @@ pub fn regions(idents: &[String]) -> Vec<Region> {
     database().map(|db| db.regions(idents)).unwrap_or_default()
 }
 
+/// Every region identifier the installed navigation data has, upper case.
+///
+/// What a caller naming regions by the first letters of an identifier -- a whole continent's
+/// free route airspace, say -- needs in order to turn that into the set of regions actually
+/// present, rather than asking for names and finding out one at a time that they are not there.
+pub fn region_idents() -> std::collections::HashSet<String> {
+    let Some(db) = database() else { return Default::default() };
+    let Some(connection) = read_only(&db.path) else { return Default::default() };
+    let Some(table) = db.table("fir_uir") else { return Default::default() };
+    let sql = format!("select distinct fir_uir_identifier from \"{table}\"");
+    let Ok(mut statement) = connection.prepare(&sql) else { return Default::default() };
+    let Ok(rows) = statement.query_map([], |row| row.get::<_, String>(0)) else { return Default::default() };
+    rows.flatten().map(|s| s.trim().to_uppercase()).filter(|s| !s.is_empty()).collect()
+}
+
 /// Every restricted area with a corner inside a box (south, north, west, east).
 pub fn restricted_areas(south: f64, north: f64, west: f64, east: f64) -> Vec<Restricted> {
     database().map(|db| db.restricted_areas(south, north, west, east)).unwrap_or_default()
