@@ -62,7 +62,7 @@ const OMITTED: &[(&str, &str)] = &[
 const SCHEMA: &[&str] = &[
     "CREATE TABLE [tbl_header] ([version] TEXT, [arincversion] TEXT, [record_set] TEXT, [current_airac] TEXT, [revision] TEXT, [effective_fromto] TEXT, [previous_airac] TEXT, [previous_fromto] TEXT, [parsed_at] TEXT)",
     "CREATE TABLE [tbl_airports] ([area_code] TEXT, [icao_code] TEXT, [airport_identifier] TEXT, [airport_identifier_3letter] TEXT, [airport_name] TEXT, [airport_ref_latitude] DOUBLE, [airport_ref_longitude] DOUBLE, [ifr_capability] TEXT, [longest_runway_surface_code] TEXT, [elevation] INTEGER, [transition_altitude] INTEGER, [transition_level] INTEGER, [speed_limit] INTEGER, [speed_limit_altitude] INTEGER, [iata_ata_designator] TEXT, [id] TEXT)",
-    "CREATE TABLE [tbl_runways] ([area_code] TEXT, [icao_code] TEXT, [airport_identifier] TEXT, [runway_identifier] TEXT, [runway_latitude] DOUBLE, [runway_longitude] DOUBLE, [runway_gradient] DOUBLE, [runway_magnetic_bearing] DOUBLE, [runway_true_bearing] DOUBLE, [landing_threshold_elevation] INTEGER, [displaced_threshold_distance] INTEGER, [threshold_crossing_height] INTEGER, [runway_length] INTEGER, [runway_width] INTEGER, [llz_identifier] TEXT, [llz_mls_gls_category] TEXT, [surface_code] TEXT, [id] TEXT)",
+    "CREATE TABLE [tbl_runways] ([area_code] TEXT, [icao_code] TEXT, [airport_identifier] TEXT, [runway_identifier] TEXT, [runway_latitude] DOUBLE, [runway_longitude] DOUBLE, [runway_gradient] DOUBLE, [runway_magnetic_bearing] DOUBLE, [runway_true_bearing] DOUBLE, [landing_threshold_elevation] INTEGER, [displaced_threshold_distance] INTEGER, [threshold_crossing_height] INTEGER, [runway_length] INTEGER, [runway_width] INTEGER, [llz_identifier] TEXT, [llz_mls_gls_category] TEXT, [surface_code] INTEGER, [id] TEXT)",
     "CREATE TABLE [tbl_vhfnavaids] ([area_code] TEXT, [airport_identifier] TEXT, [icao_code] TEXT, [vor_identifier] TEXT, [vor_name] TEXT, [vor_frequency] DOUBLE, [navaid_class] TEXT, [vor_latitude] DOUBLE, [vor_longitude] DOUBLE, [dme_ident] TEXT, [dme_latitude] DOUBLE, [dme_longitude] DOUBLE, [dme_elevation] INTEGER, [ilsdme_bias] DOUBLE, [range] INTEGER, [station_declination] DOUBLE, [magnetic_variation] DOUBLE, [id] TEXT)",
     "CREATE TABLE [tbl_enroute_ndbnavaids] ([area_code] TEXT, [icao_code] TEXT, [ndb_identifier] TEXT, [ndb_name] TEXT, [ndb_frequency] DOUBLE, [navaid_class] TEXT, [ndb_latitude] DOUBLE, [ndb_longitude] DOUBLE, [range] INTEGER, [id] TEXT)",
     "CREATE TABLE [tbl_terminal_ndbnavaids] ([area_code] TEXT, [airport_identifier] TEXT, [icao_code] TEXT, [ndb_identifier] TEXT, [ndb_name] TEXT, [ndb_frequency] DOUBLE, [navaid_class] TEXT, [ndb_latitude] DOUBLE, [ndb_longitude] DOUBLE, [range] INTEGER, [id] TEXT)",
@@ -126,17 +126,31 @@ fn proc_table(k: ProcKind) -> &'static str {
     }
 }
 
-/// ARINC 424's own one-letter surface code.
-fn surface_code(s: Surface) -> &'static str {
+/// A runway's surface, as the number this layout stores rather than a word.
+///
+/// The numbers are not documented. They were derived by joining the installed database's own
+/// `tbl_runways` to OurAirports' free-text surface field, runway by runway, and taking what
+/// each number overwhelmingly means: 100 is asphalt (6,614 of them against 302 and 252 for two
+/// other spellings of the same thing), 103 is concrete, 4 and 17 and 19 are grass and turf, 5
+/// is gravel. Water, snow and ice do not appear often enough in the installed file to say what
+/// number they carry, so they are written as unknown rather than guessed at.
+fn surface_code(s: Surface) -> i64 {
     match s {
-        Surface::Asphalt => "ASPH",
-        Surface::Concrete => "CONC",
-        Surface::Gravel => "GRVL",
-        Surface::Grass => "GRAS",
-        Surface::Water => "WATE",
-        Surface::Ice => "ICE",
-        Surface::Snow => "SNOW",
-        Surface::Unknown => "UNKN",
+        Surface::Asphalt => 100,
+        Surface::Concrete => 103,
+        Surface::Grass => 4,
+        Surface::Gravel => 5,
+        Surface::Water | Surface::Snow | Surface::Ice | Surface::Unknown => 0,
+    }
+}
+
+/// The one letter `tbl_airports` carries for its longest runway: hard, soft, water or unknown.
+fn surface_letter(s: Surface) -> &'static str {
+    match s {
+        Surface::Asphalt | Surface::Concrete => "H",
+        Surface::Grass | Surface::Gravel | Surface::Snow | Surface::Ice => "S",
+        Surface::Water => "W",
+        Surface::Unknown => "U",
     }
 }
 
@@ -364,7 +378,7 @@ fn write_airports(conn: &Connection, nav: &NavSet) -> Result<usize> {
         }
     }
     for a in &nav.airports {
-        let surface = longest.get(a.icao.as_str()).map(|(_, s)| surface_code(*s)).unwrap_or("UNKN");
+        let surface = longest.get(a.icao.as_str()).map(|(_, s)| surface_letter(*s)).unwrap_or("U");
         stmt.execute(params![
             a.area_code,
             a.icao_code,
@@ -389,7 +403,7 @@ fn write_runways(conn: &Connection, nav: &NavSet) -> Result<usize> {
         "INSERT INTO tbl_runways (area_code, icao_code, airport_identifier, runway_identifier, runway_latitude, runway_longitude, runway_gradient, \
          runway_magnetic_bearing, runway_true_bearing, landing_threshold_elevation, displaced_threshold_distance, threshold_crossing_height, \
          runway_length, runway_width, llz_identifier, llz_mls_gls_category, surface_code, id) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
     )?;
     // The localiser serving each end, so a runway row names it the way the format does.
     let mut llz: HashMap<(&str, &str), (&str, IlsCategory, Option<f64>)> = HashMap::new();
@@ -410,6 +424,7 @@ fn write_runways(conn: &Connection, nav: &NavSet) -> Result<usize> {
             r.heading_true_deg,
             r.heading_true_deg,
             r.elevation_ft.round() as i64,
+            r.displaced_threshold_ft.map(|v| v.round() as i64).unwrap_or(0),
             found.and_then(|(_, _, tch)| tch.map(|v| v.round() as i64)),
             r.length_ft.round() as i64,
             r.width_ft.round() as i64,

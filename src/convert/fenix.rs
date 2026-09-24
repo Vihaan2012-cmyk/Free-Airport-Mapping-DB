@@ -809,6 +809,7 @@ mod tests {
                 lat: 40.01,
                 lon: -100.0,
                 elevation_ft: 1200.0,
+                displaced_threshold_ft: None,
             }],
             navaids: vec![NavaidRec {
                 ident: "TST".to_string(),
