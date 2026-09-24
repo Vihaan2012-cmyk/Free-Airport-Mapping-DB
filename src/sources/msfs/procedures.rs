@@ -808,6 +808,32 @@ pub fn find_many(icaos: &[String]) -> Result<std::collections::HashMap<String, A
     Ok(out)
 }
 
+/// Every ICAO with an airport record in the simulator's own navigation data, whether or
+/// not it has a published procedure. For a caller building a whole `NavSet` rather than
+/// looking an airport up by name: `find_many` needs a list of what to look for, and this
+/// is where that list comes from.
+///
+/// Only the header of each airport record is read here (the four bytes at `+0x28`), not
+/// its procedures, so this is a fraction of the cost of reading every airport in full.
+pub fn all_icaos() -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for dir in super::nav_dirs() {
+        for file in walk_nax(&dir) {
+            let Ok(data) = std::fs::read(&file) else { continue };
+            for rec in bgl::section_records(&data, bgl::SECTION_AIRPORT) {
+                if rec.id != bgl::REC_AIRPORT || rec.end - rec.start < 0x44 {
+                    continue;
+                }
+                let icao = bgl::ident(bgl::u32le(&data, rec.start + 0x28));
+                if !icao.is_empty() && !out.contains(&icao) {
+                    out.push(icao);
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn find(icao: &str) -> Result<Option<AirportProcedures>> {
     let want = icao.to_uppercase();
     for dir in super::nav_dirs() {
