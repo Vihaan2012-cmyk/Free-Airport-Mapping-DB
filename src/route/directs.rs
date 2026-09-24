@@ -126,6 +126,64 @@ pub fn build(compact: &Compact, ellipse: Option<&Ellipse>, destination: LatLon, 
     Directs { offsets, neighbours }
 }
 
+/// Every fix's nearest few neighbours within `max_nm`, in both directions and with no
+/// destination to measure "further along" against.
+///
+/// [`build`] answers what legs *one flight* would want, which needs to know where it is going.
+/// This answers which legs exist at all, which does not -- and that is what a bound on the way
+/// ahead has to be measured over. Worked out on published airways alone, the bound says Delhi
+/// to San Francisco is at least twelve thousand miles when a route using free-route legs flies
+/// it in under seven thousand, and a search steered by that figure is misled rather than guided.
+///
+/// It keeps a few more neighbours than a flight's own list does, because a flight's list is
+/// drawn from the same candidates and then filtered by where it is going: the leg it picks need
+/// not be among the very nearest.
+pub fn neighbourhood(compact: &Compact, max_nm: f64, keep: usize) -> Directs {
+    let n = compact.node_count();
+    let mut grid: Grid<u32> = Grid::new(CELL_DEG);
+    for node in 0..n as u32 {
+        grid.insert(compact.pos(node), node);
+    }
+
+    let mut rows: Vec<Vec<u32>> = vec![Vec::new(); n];
+    for node in 0..n as u32 {
+        let pos = compact.pos(node);
+        let mut nearby: Vec<(u32, f64)> = grid
+            .near(pos, max_nm)
+            .into_iter()
+            .filter_map(|(i, d)| {
+                let (&candidate, _) = grid.get(i);
+                (candidate != node).then_some((candidate, d))
+            })
+            .collect();
+        nearby.sort_by(|a, b| a.1.total_cmp(&b.1));
+        nearby.truncate(keep);
+        rows[node as usize] = nearby.into_iter().map(|(i, _)| i).collect();
+    }
+
+    // Symmetric: a direct leg is flyable either way, and the reverse tables are walked over the
+    // same neighbourhood as the forward ones. Only the legs found above are mirrored, not the
+    // mirrors themselves, so this adds one round of edges and not a cascade.
+    let found = rows.clone();
+    for (node, row) in found.iter().enumerate() {
+        for &other in row {
+            if !rows[other as usize].contains(&(node as u32)) {
+                rows[other as usize].push(node as u32);
+            }
+        }
+    }
+
+    let mut offsets = vec![0u32; n + 1];
+    for i in 0..n {
+        offsets[i + 1] = offsets[i] + rows[i].len() as u32;
+    }
+    let mut neighbours = Vec::with_capacity(offsets[n] as usize);
+    for row in &rows {
+        neighbours.extend_from_slice(row);
+    }
+    Directs { offsets, neighbours }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
