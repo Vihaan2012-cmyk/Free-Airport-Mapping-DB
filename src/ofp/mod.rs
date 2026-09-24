@@ -62,6 +62,9 @@ pub struct DispatchOptions {
     /// For item 15 and the printed plan; not asked of any provider.
     pub flight_number: Option<String>,
     pub registration: Option<String>,
+    /// A particular aeroplane rather than a type: its registration, as `perf::airframes` holds
+    /// them. Given one, the plan is worked out at that airframe's own weights.
+    pub airframe: Option<String>,
 }
 
 impl Default for DispatchOptions {
@@ -82,6 +85,7 @@ impl Default for DispatchOptions {
             conditions_file: None,
             flight_number: None,
             registration: None,
+            airframe: None,
         }
     }
 }
@@ -370,6 +374,16 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
     let origin = p.airport(&opts.origin).ok_or_else(|| anyhow!("{} is not an airport this planner knows", opts.origin.to_uppercase()))?;
     let destination = p.airport(&opts.destination).ok_or_else(|| anyhow!("{} is not an airport this planner knows", opts.destination.to_uppercase()))?;
     let spec = p.aircraft_spec(&opts.aircraft).with_context(|| format!("{} is not an aircraft this planner knows", opts.aircraft.to_uppercase()))?;
+    // A particular aeroplane, where one was asked for: its own empty weight and its own four
+    // limits over the type's, which is what decides how much this flight can actually carry.
+    // The modelled performance -- the ceiling, the speeds, the burn -- stays the type's.
+    let spec = match opts.airframe.as_deref().and_then(crate::perf::airframes::by_registration) {
+        Some(frame) => {
+            warnings.push(format!("weights are {}'s own ({})", frame.registration, frame.label()));
+            frame.onto(&spec)
+        }
+        None => spec,
+    };
 
     // Nobody flies an empty aeroplane: a payload of zero, left as `DispatchOptions`'s
     // default, is not a real flight to plan, so a passenger count and payload are filled in
