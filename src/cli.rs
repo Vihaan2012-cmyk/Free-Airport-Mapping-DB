@@ -1749,7 +1749,7 @@ fn dispatch_cmd(a: DispatchArgs) -> Result<()> {
             }
             "icao" => {
                 let p = a.out_dir.join(format!("{stem}.fpl.txt"));
-                (p.clone(), export::write_icao_message(&dispatch, opts.flight_number.as_deref(), opts.registration.as_deref(), &p)?)
+                (p.clone(), export::write_icao_message(&dispatch, opts.flight_number.as_deref(), opts.registration.as_deref(), opts.flight_rules, opts.flight_type, &p)?)
             }
             other => return Err(anyhow!("--export takes pln, fms, rte and/or icao, not {other}")),
         };

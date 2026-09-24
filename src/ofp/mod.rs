@@ -65,6 +65,55 @@ pub struct DispatchOptions {
     /// A particular aeroplane rather than a type: its registration, as `perf::airframes` holds
     /// them. Given one, the plan is worked out at that airframe's own weights.
     pub airframe: Option<String>,
+
+    /// The runways in use, where they are known before the plan is made. Left out, the wind
+    /// at each end chooses.
+    pub dep_runway: Option<String>,
+    pub arr_runway: Option<String>,
+
+    /// Minutes on the ground at each end. They decide the taxi fuel and the block time, and
+    /// they differ enough between a small field and a big one to be worth asking about.
+    pub taxi_out_min: f64,
+    pub taxi_in_min: f64,
+
+    /// Contingency fuel as a share of the trip, and the floor in minutes of holding beneath
+    /// which the share alone is not enough.
+    pub contingency_pct: f64,
+    pub contingency_min_minutes: f64,
+    /// Final reserve, minutes of holding.
+    pub reserve_minutes: f64,
+    /// Fuel carried over and above what the rules ask for, and fuel carried because it is
+    /// cheaper here than where the flight is going.
+    pub extra_fuel_kg: f64,
+    pub tankering: bool,
+
+    /// How many alternates to consider before choosing one.
+    pub alternates: usize,
+
+    /// Step climbs, and how big a step is.
+    pub step_climbs: bool,
+    /// A fixed cruise Mach instead of flying to the cost index.
+    pub cruise_mach: Option<f64>,
+
+    /// What goes in item 8 of the flight plan: the rules the flight is under and the sort of
+    /// flight it is.
+    pub flight_rules: char,
+    pub flight_type: char,
+
+    /// Weights given by hand instead of taken from the type or the airframe. Each is `None`
+    /// for "work it out", which is what every one of them is until somebody says otherwise:
+    /// a dispatcher overriding an empty weight has a reason, and a planner inventing one does
+    /// not.
+    pub oew_kg: Option<f64>,
+    pub mzfw_kg: Option<f64>,
+    pub mtow_kg: Option<f64>,
+    pub mlw_kg: Option<f64>,
+    pub max_fuel_kg: Option<f64>,
+    /// Zero fuel weight given by hand. It fixes the payload rather than adding to it: what a
+    /// flight weighs without fuel is empty weight and payload, so naming one names the other.
+    pub zfw_kg: Option<f64>,
+    /// Freight, which is payload that is not passengers and their bags.
+    pub freight_kg: f64,
 }
 
 impl Default for DispatchOptions {
@@ -86,6 +135,27 @@ impl Default for DispatchOptions {
             flight_number: None,
             registration: None,
             airframe: None,
+            dep_runway: None,
+            arr_runway: None,
+            taxi_out_min: 20.0,
+            taxi_in_min: 8.0,
+            contingency_pct: 5.0,
+            contingency_min_minutes: 5.0,
+            reserve_minutes: 30.0,
+            extra_fuel_kg: 0.0,
+            tankering: false,
+            alternates: 3,
+            step_climbs: true,
+            cruise_mach: None,
+            flight_rules: 'I',
+            flight_type: 'S',
+            oew_kg: None,
+            mzfw_kg: None,
+            mtow_kg: None,
+            mlw_kg: None,
+            max_fuel_kg: None,
+            zfw_kg: None,
+            freight_kg: 0.0,
         }
     }
 }
@@ -384,6 +454,23 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
         }
         None => spec,
     };
+    // Weights given by hand win over both the airframe and the type: somebody who types an
+    // empty weight is telling the planner something it had no way to know.
+    let spec = {
+        let mut spec = spec;
+        for (slot, given) in [
+            (&mut spec.oew_kg, opts.oew_kg),
+            (&mut spec.mzfw_kg, opts.mzfw_kg),
+            (&mut spec.mtow_kg, opts.mtow_kg),
+            (&mut spec.mlw_kg, opts.mlw_kg),
+            (&mut spec.max_fuel_kg, opts.max_fuel_kg),
+        ] {
+            if let Some(v) = given.filter(|v| *v > 0.0) {
+                *slot = v;
+            }
+        }
+        spec
+    };
 
     // Nobody flies an empty aeroplane: a payload of zero, left as `DispatchOptions`'s
     // default, is not a real flight to plan, so a passenger count and payload are filled in
@@ -392,7 +479,15 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
     // bag weight; either can still be given as exactly nothing by asking for the other one
     // alone with a very light aircraft, which is a real choice this does not second-guess.
     let passengers = if opts.passengers > 0 { opts.passengers } else { crate::perf::aircraft::typical_pax(&spec.icao_type) };
-    let payload_kg = if opts.payload_kg > 0.0 { opts.payload_kg } else { passengers as f64 * PAX_AND_BAGS_KG };
+    // What the flight carries, in the order somebody would mean it: a zero fuel weight given by
+    // hand fixes the payload, because zero fuel weight is empty weight plus payload and naming
+    // one names the other; failing that, the payload asked for, plus any freight; failing that,
+    // the passengers at a standard weight each.
+    let payload_kg = match opts.zfw_kg.filter(|z| *z > 0.0) {
+        Some(zfw) => (zfw - spec.oew_kg).max(0.0),
+        None if opts.payload_kg > 0.0 => opts.payload_kg + opts.freight_kg.max(0.0),
+        None => passengers as f64 * PAX_AND_BAGS_KG + opts.freight_kg.max(0.0),
+    };
 
     let direct_nm = dispatch::distance_nm(origin.pos, destination.pos);
     say("airports", format!("{} to {}, {direct_nm:.0} nm direct", origin.icao, destination.icao));
@@ -558,8 +653,8 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
         hazards: &hazards,
         edge_rules: &edge_rules,
         route_rules: &route_rules,
-        dep_runway: None,
-        arr_runway: None,
+        dep_runway: opts.dep_runway.clone(),
+        arr_runway: opts.arr_runway.clone(),
         origin_wind: origin_metar.as_ref().and_then(|m| m.wind_from_deg.map(|d| (d, m.wind_kt))),
         destination_wind: destination_metar.as_ref().and_then(|m| m.wind_from_deg.map(|d| (d, m.wind_kt))),
         rvsm: opts.rvsm,
@@ -599,7 +694,7 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
             }
         }
     } else if !opts.offline {
-        match p.choose_alternates(&destination, eta, 3) {
+        match p.choose_alternates(&destination, eta, opts.alternates.clamp(1, 10)) {
             Ok(v) => v,
             Err(e) => {
                 warnings.push(format!("no alternate chosen automatically: {e:#}"));
@@ -662,14 +757,31 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
             etp_airports.push(a.destination.clone());
         }
     }
-    let fuel_policy = FuelPolicy::default();
+    // The fuel policy the flight is planned to, from what was asked for rather than from one
+    // fixed set of figures: an operator's contingency and reserve are its own.
+    let fuel_policy = FuelPolicy {
+        taxi_kg: FuelPolicy::default().taxi_kg,
+        contingency_pct: opts.contingency_pct.max(0.0),
+        contingency_min_minutes: opts.contingency_min_minutes.max(0.0),
+        final_reserve_min: opts.reserve_minutes.max(0.0),
+        extra_kg: opts.extra_fuel_kg.max(0.0),
+        tanker: opts.tankering,
+        ..FuelPolicy::default()
+    };
     let perf_req = PerfRequest {
         spec: &spec,
         route: &route,
         alternate: alt_route.as_ref(),
         air: wind.as_ref(),
         payload_kg,
-        cruise: CruisePolicy { cost_index: Some(opts.cost_index), ..Default::default() },
+        cruise: CruisePolicy {
+            // A cruise Mach given by hand replaces the cost index; given neither, the cost
+            // index chooses the speed, which is what an airline actually does.
+            cost_index: opts.cruise_mach.is_none().then_some(opts.cost_index),
+            mach: opts.cruise_mach,
+            step_climbs: opts.step_climbs,
+            ..Default::default()
+        },
         fuel: fuel_policy.clone(),
         etp_airports: &etp_airports,
         scheme,

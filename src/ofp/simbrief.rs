@@ -246,7 +246,7 @@ pub fn ofp_json(d: &Dispatch, opts: &DispatchOptions) -> Value {
         "atc": {
             "callsign": cs,
             "route": d.route.route_string(),
-            "flightplan_text": crate::ofp::export::icao_message(d, opts.flight_number.as_deref(), opts.registration.as_deref()),
+            "flightplan_text": crate::ofp::export::icao_message(d, opts.flight_number.as_deref(), opts.registration.as_deref(), opts.flight_rules, opts.flight_type),
         },
         "weather": {
             "orig_metar": metar_of(&d.origin_metar),
