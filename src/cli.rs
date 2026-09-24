@@ -222,6 +222,31 @@ enum Cmd {
         #[arg(long)]
         json: Option<PathBuf>,
     },
+    /// Grid minimum off-route altitudes: our own computation from Copernicus terrain and
+    /// OpenStreetMap/FAA obstructions, not copied from any licensed database.
+    Mora {
+        /// Bounds WEST,SOUTH,EAST,NORTH in degrees. Default: worldwide.
+        #[arg(long, value_name = "W,S,E,N")]
+        bbox: Option<String>,
+        /// Distance between elevation samples inside a cell, in metres.
+        #[arg(long, default_value_t = crate::convert::mora::DEFAULT_STEP_M)]
+        step_m: f64,
+        /// Write the result as JSON (an array of lat, lon, altitude_ft) to this file.
+        #[arg(long)]
+        json: Option<PathBuf>,
+        /// Parallel workers (0 = one per core).
+        #[arg(long, default_value_t = 0)]
+        jobs: usize,
+        /// On-disk cache directory (default: %LOCALAPPDATA%/amdbgen/mora).
+        #[arg(long)]
+        cache: Option<PathBuf>,
+        /// Never use the network; only cells already cached can be answered.
+        #[arg(long)]
+        offline: bool,
+        /// Ignore cached cells and recompute them.
+        #[arg(long)]
+        refresh: bool,
+    },
     /// List the 45 DO-272 layers with geometry kind and map-profile membership.
     Layers,
     /// Print the legend for the numeric attribute codes (the contents of codes.json).
@@ -1063,6 +1088,7 @@ pub fn run() -> Result<()> {
         Cmd::Clean { icaos, dir, all } => clean_cmd(icaos, dir, all),
         Cmd::Procedures { icao, json } => procedures_cmd(&icao, json),
         Cmd::Terrain { icao, radius_km, step_m } => terrain_cmd(&icao, radius_km, step_m),
+        Cmd::Mora { bbox, step_m, json, jobs, cache, offline, refresh } => mora_cmd(bbox, step_m, json, jobs, cache, offline, refresh),
         Cmd::ApproachCharts { icaos, list, out_dir, jobs, kind, every_runway, no_msa } => {
             let opts = crate::output::charts_bulk::Options { out_dir, jobs, kind: kind.as_deref().map(approach_kind).transpose()?, every_runway, no_msa };
             let airports = crate::output::charts_bulk::airports(&icaos, list.as_deref())?;
@@ -1288,6 +1314,32 @@ fn terrain_cmd(icao: &str, radius_km: f64, step_m: f64) -> Result<()> {
         patch.heights.len() - known
     ));
     Ok(())
+}
+
+/// Grid MORA: computed, cached, reported, and optionally dumped as JSON.
+#[allow(clippy::too_many_arguments)]
+fn mora_cmd(bbox: Option<String>, step_m: f64, json: Option<PathBuf>, jobs: usize, cache: Option<PathBuf>, offline: bool, refresh: bool) -> Result<()> {
+    let bounds = bbox.as_deref().map(parse_wsen).transpose()?;
+    let opts = crate::convert::mora::Options { step_m, cache_dir: cache.or_else(|| crate::convert::mora::Options::default().cache_dir), offline, refresh, jobs };
+    let recs = crate::convert::mora::grid_mora_with(bounds, &opts)?;
+    let (lo, hi) = recs.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), r| (lo.min(r.altitude_ft), hi.max(r.altitude_ft)));
+    term::success(&format!("{} quadrangle{}, {lo:.0} ft to {hi:.0} ft", recs.len(), if recs.len() == 1 { "" } else { "s" }));
+    if let Some(path) = json {
+        let arr: Vec<serde_json::Value> = recs.iter().map(|r| serde_json::json!({"lat": r.lat, "lon": r.lon, "altitude_ft": r.altitude_ft})).collect();
+        std::fs::write(&path, serde_json::to_string_pretty(&arr)?).with_context(|| format!("write {}", path.display()))?;
+        term::file(None, &shown_path(&path), &format!("{} cells", recs.len()));
+    }
+    Ok(())
+}
+
+/// "W,S,E,N" as `--bbox` is written elsewhere in this file.
+fn parse_wsen(s: &str) -> Result<crate::convert::mora::Bounds> {
+    let v: Vec<f64> = s.split(',').map(|x| x.trim().parse::<f64>()).collect::<std::result::Result<_, _>>().map_err(|_| anyhow!("--bbox expects W,S,E,N, got {s}"))?;
+    let [west, south, east, north] = v[..] else { return Err(anyhow!("--bbox expects WEST,SOUTH,EAST,NORTH, got {s}")) };
+    if west >= east || south >= north {
+        return Err(anyhow!("--bbox expects west<east and south<north, got {s}"));
+    }
+    Ok(crate::convert::mora::Bounds { south, west, north, east })
 }
 
 /// Departures, arrivals and approaches from the simulator's own navigation data.

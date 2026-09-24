@@ -6,6 +6,7 @@ pub mod approach;
 pub mod audit;
 pub mod cache;
 pub mod cli;
+pub mod convert;
 pub mod geom;
 pub mod ir;
 pub mod minima;
