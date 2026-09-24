@@ -150,6 +150,82 @@ impl Ellipse {
     }
 }
 
+/// A corridor round a path: the run of rectangles covering everywhere within `margin_nm` of it.
+///
+/// The ellipse's own [`Ellipse::corridor`] is the case where the path is the great circle, and
+/// it is the right corridor only when the flight follows the great circle. Often it does not.
+/// Delhi to San Francisco is flown east over the Pacific, by way of Myanmar, China and Japan,
+/// while the great circle between the two crosses the Arctic at eighty north: a corridor round
+/// that line contains no part of the route at all. Asking for weather over it would answer for
+/// a part of the world the aeroplane never sees.
+///
+/// So where a route is already known — even a provisional one, planned on still air — the
+/// corridor is built round the route instead, and then it contains the flight by construction.
+pub fn corridor_along(path: &[LatLon], margin_nm: f64, strips: usize) -> Vec<Bounds> {
+    if path.len() < 2 {
+        return path.first().map(|&p| vec![Bounds::around(p, p, margin_nm)]).unwrap_or_default();
+    }
+    // Where each point sits along the path, so a strip can be cut by distance flown rather than
+    // by count of points: fixes cluster near the ends of a route and thin out over an ocean, and
+    // strips of equal point-count would be of wildly unequal length.
+    let mut cumulative = Vec::with_capacity(path.len());
+    let mut total = 0.0;
+    cumulative.push(0.0);
+    for pair in path.windows(2) {
+        total += distance_nm(pair[0], pair[1]);
+        cumulative.push(total);
+    }
+    if total <= 0.0 {
+        return vec![Bounds::around(path[0], path[0], margin_nm)];
+    }
+
+    let strips = strips.max(1);
+    let n = strips as f64;
+    (0..strips)
+        .map(|k| {
+            let (lo, hi) = (total * k as f64 / n, total * (k + 1) as f64 / n);
+            let mut corners = Vec::with_capacity((SAMPLES_PER_STRIP + 1) * 2 + path.len());
+            for step in 0..=SAMPLES_PER_STRIP {
+                let at = lo + (hi - lo) * step as f64 / SAMPLES_PER_STRIP as f64;
+                let here = point_at(path, &cumulative, at);
+                let ahead = point_at(path, &cumulative, (at + 1.0).min(total));
+                let across = if distance_nm(here, ahead) > 1e-9 { bearing_deg(here, ahead) + 90.0 } else { 90.0 };
+                corners.push(travel(here, across, margin_nm));
+                corners.push(travel(here, across + 180.0, margin_nm));
+            }
+            // The path's own points inside this strip, widened as well: a route turns at its
+            // fixes, and a turn between two samples would otherwise have its corner cut off.
+            for (&point, &at) in path.iter().zip(&cumulative) {
+                if at >= lo && at <= hi {
+                    corners.push(travel(point, 0.0, margin_nm));
+                    corners.push(travel(point, 90.0, margin_nm));
+                    corners.push(travel(point, 180.0, margin_nm));
+                    corners.push(travel(point, 270.0, margin_nm));
+                }
+            }
+            box_round(&corners)
+        })
+        .collect()
+}
+
+/// The place a given distance along a path.
+fn point_at(path: &[LatLon], cumulative: &[f64], at_nm: f64) -> LatLon {
+    match cumulative.iter().position(|&c| c >= at_nm) {
+        None | Some(0) => path[if at_nm <= 0.0 { 0 } else { path.len() - 1 }],
+        Some(i) => {
+            let span = (cumulative[i] - cumulative[i - 1]).max(1e-9);
+            along(path[i - 1], path[i], (at_nm - cumulative[i - 1]) / span)
+        }
+    }
+}
+
+/// How many strips a corridor of a given length is cut into: the same reasoning, and the same
+/// measured answer, as [`Ellipse::strips_for`].
+pub fn strips_for_path(path: &[LatLon]) -> usize {
+    let flown: f64 = path.windows(2).map(|p| distance_nm(p[0], p[1])).sum();
+    Ellipse::strips_for(flown)
+}
+
 /// How many places along a strip the corridor's edges are measured at. A strip is a straight
 /// rectangle standing in for a curved band, so its edges are sampled rather than taken from its
 /// two ends alone, which would cut the corner off every turn the great circle makes.
@@ -257,6 +333,24 @@ mod tiling_tests {
             let one = box_round(&corridor.iter().flat_map(|b| [(b.south, b.west), (b.north, b.east)]).collect::<Vec<_>>());
             let whole = (one.north - one.south) * span_deg(one);
             assert!(strips < whole, "strips {strips:.0} deg^2 against one box {whole:.0} deg^2");
+        }
+    }
+
+    /// Printed, not asserted: whether the corridor round the great circle covers the way a
+    /// flight from Delhi to San Francisco is actually flown, which is east over the Pacific and
+    /// not over the pole the great circle crosses.
+    #[test]
+    #[ignore]
+    fn measure_whether_the_corridor_covers_the_flown_route() {
+        let (o, d) = ((28.5, 77.1), (37.6, -122.4));
+        let corridor = Ellipse::new(o, d, 1.0, 1.0).corridor(300.0);
+        println!("corridor of {} strip(s):", corridor.len());
+        for b in &corridor {
+            println!("  lat {:6.1}..{:6.1}  lon {:7.1}..{:7.1}", b.south, b.north, b.west, b.east);
+        }
+        // Places the Pacific routing actually passes over.
+        for (name, p) in [("great-circle midpoint", along(o, d, 0.5)), ("Myanmar", (21.0, 96.0)), ("Shanghai", (31.0, 122.0)), ("Tokyo", (35.6, 139.8)), ("mid-Pacific", (50.0, 180.0)), ("Aleutians", (52.0, -170.0))] {
+            println!("  {name:22} {p:?}  in corridor: {}", corridor.iter().any(|b| b.contains(p)));
         }
     }
 
