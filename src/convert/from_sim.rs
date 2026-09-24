@@ -54,12 +54,19 @@
 //!
 //! # What is not here, and why
 //!
-//! **Runway geometry.** The navigation package carries none: an airport record's children are
-//! its name, its region and its procedures, and nothing else. Position, length, width,
-//! bearing and surface live in the simulator's *scenery* package, which is a different and
-//! far larger dataset. A database written from this therefore has procedures that name their
-//! runways but no runway records to match, which is stated plainly rather than papered over —
-//! see [`NavSet::runways`] coming out empty and what the `convert` command prints.
+//! **Runway geometry**, and an airport's name, do not come from the simulator at all.
+//!
+//! The navigation package carries no runways: an airport record's children are its name, its
+//! region, its frequencies and its procedures, and nothing else. Geometry lives in the
+//! simulator's *scenery* package, a different and far larger dataset. And the name it does
+//! carry is a key into the simulator's own localisation table ("TT:AIRPORTEK.KJFK.name"),
+//! which is not in the navigation data either.
+//!
+//! Both come instead from OurAirports, which this crate already reads for its airport index:
+//! every runway end with its threshold position, length, width, surface and displaced
+//! threshold, and every airport's real name. That source is public domain, which makes it the
+//! one part of a converted database that could be redistributed rather than only built on the
+//! machine that owns the simulator.
 //!
 //! **Published holds and minimum safe altitude sectors.** Not in the simulator's data at all.
 //! The holds that form part of a procedure are, as the `HA`/`HF`/`HM` legs they are, and those
@@ -187,6 +194,12 @@ pub enum Simulator {
 }
 
 pub fn read_from(cycle: &str, which: Simulator) -> Result<NavSet> {
+    read_with(cycle, which, true)
+}
+
+/// As [`read_from`], with the airport index — the runways and the real names — left out where
+/// `enrich` is false, for a caller with no network and no cached copy of it.
+pub fn read_with(cycle: &str, which: Simulator, enrich: bool) -> Result<NavSet> {
     // Every file's bytes, then all of them read at once. Three and a half thousand files
     // each parsed independently is exactly what a thread pool is for, and reading them one
     // after another was the difference between a quarter of a minute and a quarter of an hour.
@@ -204,7 +217,7 @@ pub fn read_from(cycle: &str, which: Simulator) -> Result<NavSet> {
         anyhow::bail!("no FS2020 navigation data found on this machine");
     }
     let t0 = std::time::Instant::now();
-    let say = |i: usize, name: &str, detail: String, since: std::time::Instant| crate::term::stage(i, 7, name, &detail, since.elapsed().as_millis());
+    let say = |i: usize, name: &str, detail: String, since: std::time::Instant| crate::term::stage(i, 8, name, &detail, since.elapsed().as_millis());
     let mut blobs: Vec<Vec<u8>> = Vec::new();
     if use_archive {
         for path in &archives {
@@ -279,7 +292,113 @@ pub fn read_from(cycle: &str, which: Simulator) -> Result<NavSet> {
     let with_alt = airways.iter().flat_map(|a| &a.legs).filter(|l| l.min_ft.is_some()).count();
     say(7, "airways", format!("{} with {airway_legs} legs, {with_alt} with a minimum altitude", airways.len()), t);
 
-    Ok(NavSet { cycle: cycle.to_string(), airports, runways: Vec::new(), navaids, ils: Vec::new(), waypoints, airways, procedures, mora: Vec::new() })
+    let mut airports = airports;
+    let runways = if enrich {
+        let t = std::time::Instant::now();
+        match airport_index() {
+            Ok(index) => {
+                let runways = runways_from(&index, &mut airports);
+                say(8, "runways and names", format!("{} runway ends from the airport index", runways.len()), t);
+                runways
+            }
+            Err(e) => {
+                log::warn!("the airport index is not available ({e:#}), so this database has no runways and its airports are named by their identifier");
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    Ok(NavSet { cycle: cycle.to_string(), airports, runways, navaids, ils: Vec::new(), waypoints, airways, procedures, mora: Vec::new() })
+}
+
+/// OurAirports, through the cache this crate already keeps it in.
+fn airport_index() -> Result<crate::sources::index::AirportIndex> {
+    let http = crate::sources::http::Http::new(120, 250);
+    let cache = crate::cache::Cache::for_index(false);
+    let mut index = crate::sources::index::AirportIndex::default();
+    index.load_ourairports_online(&http, &cache)?;
+    Ok(index)
+}
+
+/// OurAirports' surface wording, which is free text and inconsistent, reduced to the handful
+/// of kinds a navigation database names. Anything unrecognised stays unknown rather than being
+/// forced into the nearest guess.
+fn surface_of(text: Option<&str>) -> Surface {
+    let t = text.unwrap_or_default().to_ascii_uppercase();
+    if t.contains("ASP") || t.contains("BIT") || t.contains("TAR") {
+        Surface::Asphalt
+    } else if t.contains("CON") || t.contains("PEM") || t.contains("CEM") {
+        Surface::Concrete
+    } else if t.contains("GRVL") || t.contains("GRAVEL") || t.contains("CORAL") {
+        Surface::Gravel
+    } else if t.contains("GRASS") || t.contains("TURF") || t.contains("GRS") {
+        Surface::Grass
+    } else if t.contains("WATER") {
+        Surface::Water
+    } else if t.contains("SNOW") {
+        Surface::Snow
+    } else if t.contains("ICE") {
+        Surface::Ice
+    } else {
+        Surface::Unknown
+    }
+}
+
+/// The runway ends of every airport this read found, and their airports' real names, from the
+/// airport index. One record per end, as a navigation database holds them.
+fn runways_from(index: &crate::sources::index::AirportIndex, airports: &mut [AirportRec]) -> Vec<RunwayRec> {
+    let mut out = Vec::new();
+    for a in airports.iter_mut() {
+        if let Some(entry) = index.get(&a.icao) {
+            if let Some(name) = &entry.name {
+                a.name = name.clone();
+            }
+            if a.transition_altitude_ft.is_none() {
+                a.transition_altitude_ft = entry.transition_alt_ft;
+            }
+        }
+        let Some(rows) = index.runways.get(&a.icao) else { continue };
+        for r in rows {
+            if r.closed {
+                continue;
+            }
+            let surface = surface_of(r.surface.as_deref());
+            // Each end is its own record, and its bearing is the line to the other end — the
+            // one figure the index does not give and the only one that has to be worked out.
+            for (ident, lat, lon, displaced, other) in [
+                (&r.le_ident, r.le_lat, r.le_lon, r.le_displaced_ft, (r.he_lat, r.he_lon)),
+                (&r.he_ident, r.he_lat, r.he_lon, r.he_displaced_ft, (r.le_lat, r.le_lon)),
+            ] {
+                let (Some(lat), Some(lon)) = (lat, lon) else { continue };
+                let ident = ident.trim().trim_start_matches("RW").to_string();
+                if ident.is_empty() {
+                    continue;
+                }
+                let bearing = match other {
+                    (Some(olat), Some(olon)) => crate::dispatch::bearing_deg((lat, lon), (olat, olon)),
+                    _ => 0.0,
+                };
+                out.push(RunwayRec {
+                    airport_icao: a.icao.clone(),
+                    ident,
+                    heading_true_deg: bearing,
+                    length_ft: r.length_ft.unwrap_or(0.0),
+                    width_ft: r.width_ft.unwrap_or(0.0),
+                    surface,
+                    lat,
+                    lon,
+                    // The index gives no threshold elevation, so the airport's stands in: the
+                    // two differ by a few feet at all but the most sloping aerodromes.
+                    elevation_ft: a.elevation_ft,
+                    displaced_threshold_ft: displaced,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+    out
 }
 
 /// ARINC's three-letter area code, from the two-letter region an ident sits in. Only the

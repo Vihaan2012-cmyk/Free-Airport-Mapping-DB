@@ -76,6 +76,10 @@ pub struct RunwayRec {
     pub lat: f64,
     pub lon: f64,
     pub elevation_ft: f64,
+    /// How far the landing threshold is displaced from the paved end, feet. Both target
+    /// schemas have a column for it and the airport index gives it, so it is carried rather
+    /// than written as a zero that would read as "none displaced".
+    pub displaced_threshold_ft: Option<f64>,
 }
 
 /// Reproduces the Fenix `NavaidTypes` codes, which is what this crate writes to; the
