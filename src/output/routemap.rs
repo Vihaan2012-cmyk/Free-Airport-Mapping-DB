@@ -61,18 +61,71 @@ const MARGIN_SHARE: f32 = MARGIN / WIDTH;
 /// other.
 struct Frame {
     centre_lon: f64,
+    /// The degrees of longitude and latitude the page covers, and the middle of the band of
+    /// latitude it covers. Fitted to what is drawn rather than always the whole world: a
+    /// Singapore to Brisbane route on a world map is a dot, and a dot says nothing.
+    span_lon: f64,
+    span_lat: f64,
+    centre_lat: f64,
     width: f32,
     height: f32,
     margin: f32,
 }
 
 impl Frame {
+    /// A frame holding everything given, with room round it, at the page's own shape.
+    ///
+    /// Longitudes are unrolled about the first point before they are compared, so a route
+    /// across the date line reads as a short run rather than as two clusters a full turn apart,
+    /// and the span is then widened to the page's aspect so that a degree across and a degree
+    /// down are drawn at the same scale. Without that a short north-south route would be
+    /// stretched across the width and read as something it is not.
+    fn fit(points: &[LatLon], width: f32, height: f32, margin: f32) -> Frame {
+        let plain = Frame { centre_lon: 0.0, span_lon: 360.0, span_lat: 180.0, centre_lat: 0.0, width, height, margin };
+        let Some(&first) = points.first() else { return plain };
+
+        let (mut lo_lat, mut hi_lat) = (first.0, first.0);
+        let (mut lo_lon, mut hi_lon) = (0.0f64, 0.0f64);
+        for p in points {
+            lo_lat = lo_lat.min(p.0);
+            hi_lat = hi_lat.max(p.0);
+            let d = ((p.1 - first.1 + 180.0).rem_euclid(360.0)) - 180.0;
+            lo_lon = lo_lon.min(d);
+            hi_lon = hi_lon.max(d);
+        }
+
+        // A fifth again around what was asked for, and never so tight that a single place
+        // becomes a page of one fix.
+        const ROOM: f64 = 1.2;
+        const LEAST_DEG: f64 = 6.0;
+        let centre_lat = ((lo_lat + hi_lat) / 2.0).clamp(-85.0, 85.0);
+        let centre_lon = first.1 + (lo_lon + hi_lon) / 2.0;
+        let mut span_lat = ((hi_lat - lo_lat) * ROOM).max(LEAST_DEG);
+        let mut span_lon = ((hi_lon - lo_lon) * ROOM).max(LEAST_DEG);
+
+        // Widen whichever way round is needed so the page's shape does not distort the scale.
+        let page = (width / height) as f64;
+        if span_lon / span_lat < page {
+            span_lon = span_lat * page;
+        } else {
+            span_lat = span_lon / page;
+        }
+        Frame { centre_lon, span_lon: span_lon.min(360.0), span_lat: span_lat.min(180.0), centre_lat, width, height, margin }
+    }
+
     fn at(&self, p: LatLon) -> (f32, f32) {
         let lon = ((p.1 - self.centre_lon + 180.0).rem_euclid(360.0)) - 180.0;
-        let x = self.margin + ((lon + 180.0) / 360.0) as f32 * (self.width - 2.0 * self.margin);
+        let x = self.margin + ((lon / self.span_lon + 0.5) as f32) * (self.width - 2.0 * self.margin);
         // The canvas counts y upwards, as a PDF does, so north is the larger figure.
-        let y = self.margin + ((p.0 + 90.0) / 180.0) as f32 * (self.height - 2.0 * self.margin);
+        let y = self.margin + (((p.0 - self.centre_lat) / self.span_lat + 0.5) as f32) * (self.height - 2.0 * self.margin);
         (x, y)
+    }
+
+    /// Whether a place falls on the page at all, so the network's hundred thousand fixes are
+    /// not all asked to be drawn when a dozen degrees of it are in view.
+    fn holds(&self, p: LatLon) -> bool {
+        let lon = ((p.1 - self.centre_lon + 180.0).rem_euclid(360.0)) - 180.0;
+        lon.abs() <= self.span_lon / 2.0 && (p.0 - self.centre_lat).abs() <= self.span_lat / 2.0
     }
 
     /// Whether a leg crosses the page's own seam, where drawing a straight line between two
@@ -80,6 +133,12 @@ impl Frame {
     fn wraps(&self, a: LatLon, b: LatLon) -> bool {
         let f = |p: LatLon| ((p.1 - self.centre_lon + 180.0).rem_euclid(360.0)) - 180.0;
         (f(a) - f(b)).abs() > 180.0
+    }
+
+    /// The degrees of latitude and longitude a graticule should be drawn at: close enough
+    /// together to read a position off, far enough apart not to become a mesh.
+    fn grid_step(&self) -> f64 {
+        [1.0, 2.0, 5.0, 10.0, 15.0, 30.0].into_iter().find(|s| self.span_lon / s <= 14.0).unwrap_or(30.0)
     }
 }
 
@@ -149,37 +208,54 @@ pub fn png_bytes(map: &Map, width: f32, height: f32, scale: f32) -> Result<Vec<u
 }
 
 fn draw(c: &mut dyn Canvas, map: &Map, width: f32, height: f32) {
-    // Centred on the middle of the route, so a sector across the date line is drawn whole.
-    let middle = along(map.origin, map.destination, 0.5);
-    let frame = Frame { centre_lon: middle.1, width, height, margin: width * MARGIN_SHARE };
+    // Fitted to the route and everywhere the search went, not to the world: Singapore to
+    // Brisbane drawn on a whole globe is a dot with an ocean of nothing round it.
+    let mut held: Vec<LatLon> = Vec::with_capacity(map.route.len() + map.explored.len() + 2);
+    held.push(map.origin);
+    held.push(map.destination);
+    held.extend(map.route.iter().map(|(_, p)| *p));
+    held.extend(map.explored.iter().copied());
+    held.extend(map.floor.iter().copied());
+    if held.iter().all(|p| p.0 == 0.0 && p.1 == 0.0) {
+        held.clear();
+    }
+    let frame = Frame::fit(&held, width, height, width * MARGIN_SHARE);
 
     // The network, as a wash of single pixels. It is the backdrop and the subject at once: the
     // shape it makes is the shape of the inhabited world, and it is also the whole of what the
     // search has to route through, so a bare patch on this picture is a bare patch in the plan.
     c.set_fill_rgb(0.78, 0.80, 0.84);
-    for &p in &map.network {
+    for &p in map.network.iter().filter(|&&p| frame.holds(p)) {
         let (x, y) = frame.at(p);
-        c.rect(x, y, 1.0, 1.0);
+        c.rect(x, y, 1.2, 1.2);
     }
     c.fill_nonzero();
 
     // The graticule, thirty degrees apart, labelled down the left and along the bottom.
     c.set_stroke_rgb(0.87, 0.88, 0.90);
     c.set_line_width(0.6);
-    for lat in (-60..=60).step_by(30) {
-        polyline(c, &frame, &(-180..=180).step_by(5).map(|l| (lat as f64, l as f64 + frame.centre_lon)).collect::<Vec<_>>());
+    let step = frame.grid_step();
+    let (west, east) = (frame.centre_lon - frame.span_lon / 2.0, frame.centre_lon + frame.span_lon / 2.0);
+    let (south, north) = ((frame.centre_lat - frame.span_lat / 2.0).max(-89.0), (frame.centre_lat + frame.span_lat / 2.0).min(89.0));
+    let mut lat = (south / step).ceil() * step;
+    while lat <= north {
+        let run: Vec<LatLon> = (0..=24).map(|k| (lat, west + (east - west) * k as f64 / 24.0)).collect();
+        polyline(c, &frame, &run);
+        lat += step;
     }
-    for step in (0..360).step_by(30) {
-        let lon = frame.centre_lon - 180.0 + step as f64;
-        polyline(c, &frame, &(-85..=85).step_by(5).map(|la| (la as f64, lon)).collect::<Vec<_>>());
+    let mut lon = (west / step).ceil() * step;
+    while lon <= east {
+        let run: Vec<LatLon> = (0..=24).map(|k| (south + (north - south) * k as f64 / 24.0, lon)).collect();
+        polyline(c, &frame, &run);
+        lon += step;
     }
 
     // Everywhere the search looked, under everything else, so the route is read against the
     // spread of what it was chosen from.
     c.set_fill_rgb(0.90, 0.72, 0.36);
-    for &p in &map.explored {
+    for &p in map.explored.iter().filter(|&&p| frame.holds(p)) {
         let (x, y) = frame.at(p);
-        c.rect(x - 1.0, y - 1.0, 2.0, 2.0);
+        c.rect(x - 1.25, y - 1.25, 2.5, 2.5);
     }
     c.fill_nonzero();
 
