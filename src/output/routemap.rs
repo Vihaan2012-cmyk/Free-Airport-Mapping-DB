@@ -48,6 +48,9 @@ pub struct Map {
 const WIDTH: f32 = 1440.0;
 const HEIGHT: f32 = 760.0;
 const MARGIN: f32 = 28.0;
+/// How much of the page the margin takes at the size the map was drawn for, so a small panel
+/// keeps the same proportions rather than losing most of itself to a fixed border.
+const MARGIN_SHARE: f32 = MARGIN / WIDTH;
 
 /// Where a place falls on the page.
 ///
@@ -58,14 +61,17 @@ const MARGIN: f32 = 28.0;
 /// other.
 struct Frame {
     centre_lon: f64,
+    width: f32,
+    height: f32,
+    margin: f32,
 }
 
 impl Frame {
     fn at(&self, p: LatLon) -> (f32, f32) {
         let lon = ((p.1 - self.centre_lon + 180.0).rem_euclid(360.0)) - 180.0;
-        let x = MARGIN + ((lon + 180.0) / 360.0) as f32 * (WIDTH - 2.0 * MARGIN);
+        let x = self.margin + ((lon + 180.0) / 360.0) as f32 * (self.width - 2.0 * self.margin);
         // The canvas counts y upwards, as a PDF does, so north is the larger figure.
-        let y = MARGIN + ((p.0 + 90.0) / 180.0) as f32 * (HEIGHT - 2.0 * MARGIN);
+        let y = self.margin + ((p.0 + 90.0) / 180.0) as f32 * (self.height - 2.0 * self.margin);
         (x, y)
     }
 
@@ -130,14 +136,22 @@ pub fn ellipse_outline(origin: LatLon, destination: LatLon, half_width: &dyn Fn(
 
 pub fn write(map: &Map, out: &Path, scale: f32) -> Result<()> {
     let mut r = Raster::new(WIDTH, HEIGHT, scale)?;
-    draw(&mut r, map);
+    draw(&mut r, map, WIDTH, HEIGHT);
     r.write_png(out)
 }
 
-fn draw(c: &mut dyn Canvas, map: &Map) {
+/// The same picture as a PNG in memory, at whatever size the caller has room for: what a panel
+/// inside a window draws itself from, a few times a second, while a search is running.
+pub fn png_bytes(map: &Map, width: f32, height: f32, scale: f32) -> Result<Vec<u8>> {
+    let mut r = Raster::new(width, height, scale)?;
+    draw(&mut r, map, width, height);
+    r.png_bytes()
+}
+
+fn draw(c: &mut dyn Canvas, map: &Map, width: f32, height: f32) {
     // Centred on the middle of the route, so a sector across the date line is drawn whole.
     let middle = along(map.origin, map.destination, 0.5);
-    let frame = Frame { centre_lon: middle.1 };
+    let frame = Frame { centre_lon: middle.1, width, height, margin: width * MARGIN_SHARE };
 
     // The network, as a wash of single pixels. It is the backdrop and the subject at once: the
     // shape it makes is the shape of the inhabited world, and it is also the whole of what the
@@ -235,12 +249,12 @@ fn draw(c: &mut dyn Canvas, map: &Map) {
         c.text(BOLD, 11.0, x + 6.0, y + 4.0, name, 0.1);
     }
 
-    c.text(BOLD, 13.0, MARGIN, HEIGHT - 10.0, &map.caption, 0.1);
+    c.text(BOLD, 13.0, frame.margin, height - 10.0, &map.caption, 0.1);
     c.text(
         REGULAR,
         9.0,
-        MARGIN,
-        HEIGHT - 24.0,
+        frame.margin,
+        height - 24.0,
         "grey: network   amber: where the search looked   dotted: great circle   dashed green: ellipse   dashed blue: wind strips   solid green: shortest possible   red: route",
         0.42,
     );

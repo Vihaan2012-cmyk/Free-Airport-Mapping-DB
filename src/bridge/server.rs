@@ -401,6 +401,7 @@ fn handle(store: Arc<Store>, req: Request) {
         return;
     }
     let path = path.to_string();
+    let Some(req) = super::planner::handle(req, &path, &params, |r, s, b| respond_json(r, s, b), |r, s, t, b| respond_bytes(r, s, t, b)) else { return };
     let Some(req) = handle_simbrief(req, &path, &params) else { return };
     let Some(req) = handle_charts(&store, req, &path) else { return };
     let Some(pos) = path.find("/v1/") else {
