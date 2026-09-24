@@ -218,19 +218,36 @@ fn burn_from_weight(spec: &dispatch::AircraftSpec) -> f64 {
 /// along the great circle, each asked of `airports_near` out to what the one-engine speed
 /// covers in the approval, with a runway long enough for the type. Capped, since a long
 /// oceanic leg can otherwise pull in the same handful of airports from every sample point.
-fn etops_airports(p: &dyn Providers, origin: LatLon, destination: LatLon, one_engine_tas_kt: f64, minutes: u32) -> Vec<Airport> {
+/// The shortest runway a twin will be planned to divert to.
+const ETOPS_MIN_RUNWAY_FT: f64 = 6000.0;
+
+/// Every airport a twin could divert to along the way: what the ETOPS rule measures the route
+/// against.
+///
+/// The list has to cover the whole route. Gathering it used to stop as soon as two dozen
+/// airports had been found, which on any real flight happened at the first sample point — there
+/// are far more than two dozen airports with a six-thousand-foot runway within an hour or three
+/// of Bangalore — so the rule was left holding only airports near the departure. Every point
+/// further along was then further from a diversion airport than the rule allows, every edge the
+/// search looked at was forbidden, and a Boeing 777 could not be planned anywhere at all while
+/// an Airbus A380 on the same route planned in under three seconds, because four engines need
+/// no such rule. There is no cap now: `etops::Grid` buckets what it is given and is built for
+/// tens of thousands, so a few hundred costs nothing, and a cap on this list is a cap on where
+/// the aeroplane is allowed to fly.
+fn etops_airports(near: &dyn Fn(LatLon, f64) -> Vec<Airport>, origin: LatLon, destination: LatLon, one_engine_tas_kt: f64, minutes: u32) -> Vec<Airport> {
     let reach_nm = one_engine_tas_kt * minutes as f64 / 60.0;
-    let samples = 6;
+    // Closely enough spaced that consecutive circles of `reach_nm` overlap, so no stretch of the
+    // route falls between two samples and is searched for diversions by neither.
+    let span_nm = dispatch::distance_nm(origin, destination);
+    let samples = ((span_nm / reach_nm.max(1.0)).ceil() as usize * 2).clamp(6, 64);
     let mut out: Vec<Airport> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for i in 0..=samples {
         let at = dispatch::along(origin, destination, i as f64 / samples as f64);
-        for (a, _) in p.airports_near(at, reach_nm, 6000.0) {
-            if !out.iter().any(|o| o.icao == a.icao) {
+        for a in near(at, reach_nm) {
+            if seen.insert(a.icao.clone()) {
                 out.push(a);
             }
-        }
-        if out.len() >= 24 {
-            break;
         }
     }
     out
@@ -463,7 +480,8 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
     let needs_etops = spec.engines == 2 && spec.etops_minutes.is_some() && trip_nm > 400.0;
     let etops = needs_etops.then(|| {
         let tas = spec.one_engine_tas_kt.unwrap_or_else(|| tas_from_mach(&spec) * 0.6);
-        let airports = etops_airports(p, origin.pos, destination.pos, tas, spec.etops_minutes.unwrap_or(180));
+        let near = |at: LatLon, radius_nm: f64| p.airports_near(at, radius_nm, ETOPS_MIN_RUNWAY_FT).into_iter().map(|(a, _)| a).collect();
+        let airports = etops_airports(&near, origin.pos, destination.pos, tas, spec.etops_minutes.unwrap_or(180));
         warnings.push(format!("ETOPS {} planned round {} candidate diversion airport(s)", spec.etops_minutes.unwrap_or(180), airports.len()));
         route::etops::Etops::new(spec.etops_minutes.unwrap_or(180), tas, airports)
     });
@@ -678,6 +696,60 @@ fn describe_hazard(h: &Hazard) -> String {
         h.name.clone()
     } else {
         format!("{} ({})", h.name, h.source)
+    }
+}
+
+#[cfg(test)]
+mod etops_airport_tests {
+    use super::*;
+
+    /// A world with an airport every five degrees along the equator, so "near" means something
+    /// at every point of a long route rather than only at its ends.
+    fn dense_world(at: LatLon, radius_nm: f64) -> Vec<Airport> {
+        (-36..=36)
+            .map(|k| {
+                let lon = k as f64 * 5.0;
+                Airport { icao: format!("X{:03}", k + 36), name: String::new(), pos: (0.0, lon), elevation_ft: 0.0 }
+            })
+            .filter(|a| dispatch::distance_nm(at, a.pos) <= radius_nm)
+            .collect()
+    }
+
+    /// The diversion list has to cover the whole route, not merely its beginning.
+    ///
+    /// It used to stop as soon as two dozen airports had been found, which on any real flight
+    /// happened at the first sample point: the rule was then left holding only airports near the
+    /// departure, every point further along was further from a diversion than it allows, and no
+    /// twin could be planned at all.
+    #[test]
+    fn the_diversion_list_reaches_the_far_end_of_the_route() {
+        // A hundred and fifty degrees apart along the equator: nine thousand miles, which is a
+        // long-haul sector and not a hop across the date line.
+        let origin = (0.0, -75.0);
+        let destination = (0.0, 75.0);
+        let found = etops_airports(&dense_world, origin, destination, 450.0, 180u32);
+        assert!(found.len() > 24, "far more than the old cap: {}", found.len());
+        let reach_nm = 450.0 * 180.0 / 60.0;
+        // An airport near each end, and one near the middle, all have to be in the list.
+        for probe in [origin, destination, (0.0, 0.0)] {
+            assert!(found.iter().any(|a| dispatch::distance_nm(a.pos, probe) <= reach_nm), "nothing within reach of {probe:?}");
+        }
+    }
+
+    /// The samples are close enough together that no stretch of the route falls between two of
+    /// them and is searched for diversions by neither.
+    #[test]
+    fn no_stretch_of_the_route_goes_unsampled() {
+        let origin = (0.0, -75.0);
+        let destination = (0.0, 75.0);
+        let (tas, minutes) = (450.0, 180u32);
+        let reach_nm = tas * minutes as f64 / 60.0;
+        let found = etops_airports(&dense_world, origin, destination, tas, minutes);
+        // Walk the route and check every point has something within reach in the list.
+        for k in 0..=200 {
+            let at = dispatch::along(origin, destination, k as f64 / 200.0);
+            assert!(found.iter().any(|a| dispatch::distance_nm(a.pos, at) <= reach_nm), "nothing within reach at {at:?}");
+        }
     }
 }
 
