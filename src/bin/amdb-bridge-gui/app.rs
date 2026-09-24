@@ -1477,7 +1477,21 @@ impl App {
                                 (ground / direct.max(1.0) - 1.0) * 100.0,
                                 d.perf.fuel.block_kg.round()
                             ),
-                            d.route.route_string(),
+                            {
+                                // The route as it is read back, not merely item 15: the two
+                                // airports with the runways in use at each end, which is what a
+                                // crew copies and what makes the SID and STAR mean anything.
+                                let end = |icao: &str, rwy: Option<&String>| match rwy {
+                                    Some(r) if !r.is_empty() => format!("{icao}/{r}"),
+                                    _ => icao.to_string(),
+                                };
+                                format!(
+                                    "{} {} {}",
+                                    end(&d.route.origin.icao, d.route.dep_runway.as_ref()),
+                                    d.route.route_string(),
+                                    end(&d.route.destination.icao, d.route.arr_runway.as_ref())
+                                )
+                            },
                         ))
                     }
                     Err(e) => Err(format!("{e:#}")),
