@@ -246,7 +246,11 @@ fn heuristic_to(compact: &Compact, landmarks: Option<&Landmarks>, goal_rows: Opt
 /// `None` when the network, as customised, does not connect any start to any goal within
 /// what the beam lets the search see.
 #[allow(clippy::too_many_arguments)]
-pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], directs: Option<&DirectContext>, climb: &[Vec<f32>], starts: &[(u32, &[f32])], goals: &[(u32, &[f32])], ellipse: Option<&Ellipse>, landmarks: Option<&Landmarks>, rate_per_nm: f32, beam: usize, scratch: &mut Scratch) -> Option<Found> {
+/// A weight at or above which the cost so far is ignored altogether and the search is purely
+/// greedy. Any finite figure would do; this one is far beyond the range worth tuning in.
+pub const WEIGHT_GREEDY: f32 = 1000.0;
+
+pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], directs: Option<&DirectContext>, climb: &[Vec<f32>], starts: &[(u32, &[f32])], goals: &[(u32, &[f32])], ellipse: Option<&Ellipse>, landmarks: Option<&Landmarks>, rate_per_nm: f32, weight: f32, beam: usize, scratch: &mut Scratch) -> Option<Found> {
     let n_levels = levels.len();
     let total = compact.node_count() * n_levels;
     if total == 0 || n_levels == 0 || starts.is_empty() || goals.is_empty() {
@@ -265,9 +269,15 @@ pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], directs: 
     let mut to_v = vec![0.0f32; n_landmarks];
     let mut from_v = vec![0.0f32; n_landmarks];
 
-    // The heap orders on the estimate alone (greedy), and on `g` only to break a tie
-    // between two states that look equally close: this is `Open` from the prototype this
-    // module replaces, carried over unchanged in spirit.
+    // What the heap orders on: the cost so far plus the estimate of what is left, the estimate
+    // weighted by `weight`.
+    //
+    // At a weight of one this is A* and the answer is the cheapest there is. Above one the
+    // search leans forward, settling for a route it can bound rather than the very best, and
+    // gets there sooner. `WEIGHT_GREEDY` leans so far that the cost so far stops counting at
+    // all, which is the greedy best-first this began as -- fast, and free to wander, since
+    // nothing it has already spent argues against spending more.
+    let rank = |g: f32, h: f32| if weight >= WEIGHT_GREEDY { h } else { g + weight * h };
     let mut open: BinaryHeap<Reverse<(OrderedF32, OrderedF32, u32)>> = BinaryHeap::new();
     for &(fix, bias_per_level) in starts {
         for lvl in 0..n_levels as u8 {
@@ -275,7 +285,7 @@ pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], directs: 
             let bias = bias_per_level.get(lvl as usize).copied().unwrap_or(0.0);
             if bias.is_finite() && scratch.relax(s, bias, u32::MAX, NONE_VIA) {
                 let h = heuristic_to(compact, landmarks, goal_rows.as_ref(), &goal_fixes, rate_per_nm, fix, &mut to_v, &mut from_v);
-                open.push(Reverse((OrderedF32(h), OrderedF32(bias), s as u32)));
+                open.push(Reverse((OrderedF32(rank(bias, h)), OrderedF32(bias), s as u32)));
             }
         }
     }
@@ -309,7 +319,7 @@ pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], directs: 
             let ng = g + w;
             if scratch.relax(ns, ng, s as u32, e.airway_id() as i32) {
                 let h = heuristic_to(compact, landmarks, goal_rows.as_ref(), &goal_fixes, rate_per_nm, e.to, &mut to_v, &mut from_v);
-                open.push(Reverse((OrderedF32(h), OrderedF32(ng), ns as u32)));
+                open.push(Reverse((OrderedF32(rank(ng, h)), OrderedF32(ng), ns as u32)));
             }
         }
         if let Some(dc) = directs {
@@ -325,7 +335,7 @@ pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], directs: 
                 let ng = g + w;
                 if scratch.relax(ns, ng, s as u32, DIRECT_VIA) {
                     let h = heuristic_to(compact, landmarks, goal_rows.as_ref(), &goal_fixes, rate_per_nm, to, &mut to_v, &mut from_v);
-                    open.push(Reverse((OrderedF32(h), OrderedF32(ng), ns as u32)));
+                    open.push(Reverse((OrderedF32(rank(ng, h)), OrderedF32(ng), ns as u32)));
                 }
             }
         }
@@ -341,7 +351,7 @@ pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], directs: 
             let ng = g + cw;
             if scratch.relax(ns, ng, s as u32, CLIMB_VIA) {
                 let h = heuristic_to(compact, landmarks, goal_rows.as_ref(), &goal_fixes, rate_per_nm, fix, &mut to_v, &mut from_v);
-                open.push(Reverse((OrderedF32(h), OrderedF32(ng), ns as u32)));
+                open.push(Reverse((OrderedF32(rank(ng, h)), OrderedF32(ng), ns as u32)));
             }
         }
         if open.len() > beam * 2 {
@@ -524,7 +534,7 @@ mod tests {
         let a = g.find("F0", (0.0, 0.0)).unwrap();
         let b = g.find("F5", (0.0, 5.0)).unwrap();
         let mut scratch = Scratch::new();
-        let found = greedy_best_first(&compact, &levels, None, &climb, &[(a, &[0.0])], &[(b, &[0.0])], None, None, 1.0, 64, &mut scratch).expect("a route");
+        let found = greedy_best_first(&compact, &levels, None, &climb, &[(a, &[0.0])], &[(b, &[0.0])], None, None, 1.0, WEIGHT_GREEDY, 64, &mut scratch).expect("a route");
         assert_eq!(found.cost, 5.0);
         assert_eq!(found.steps.first().unwrap().fix, a);
         assert_eq!(found.steps.last().unwrap().fix, b);
@@ -542,7 +552,7 @@ mod tests {
         let a = g.find("A", (0.0, 0.0)).unwrap();
         let c = g.find("C", (5.0, 5.0)).unwrap();
         let mut scratch = Scratch::new();
-        assert!(greedy_best_first(&compact, &levels, None, &climb, &[(a, &[0.0])], &[(c, &[0.0])], None, None, 1.0, 64, &mut scratch).is_none());
+        assert!(greedy_best_first(&compact, &levels, None, &climb, &[(a, &[0.0])], &[(c, &[0.0])], None, None, 1.0, WEIGHT_GREEDY, 64, &mut scratch).is_none());
     }
 
     #[test]
@@ -555,7 +565,7 @@ mod tests {
         let b = g.find("F7", (0.0, 7.0)).unwrap();
         let mut scratch = Scratch::new();
         for _ in 0..5 {
-            let found = greedy_best_first(&compact, &levels, None, &climb, &[(a, &[0.0])], &[(b, &[0.0])], None, None, 1.0, 64, &mut scratch).unwrap();
+            let found = greedy_best_first(&compact, &levels, None, &climb, &[(a, &[0.0])], &[(b, &[0.0])], None, None, 1.0, WEIGHT_GREEDY, 64, &mut scratch).unwrap();
             assert_eq!(found.cost, 7.0);
         }
     }
@@ -573,8 +583,8 @@ mod tests {
         let g0 = g.find("G0", (1.0, 0.0)).unwrap();
         let f3 = g.find("F3", (0.0, 3.0)).unwrap();
         let mut scratch = Scratch::new();
-        let direct = greedy_best_first(&compact, &levels, None, &climb, &[(f0, &[0.0])], &[(f3, &[0.0])], None, None, 1.0, 64, &mut scratch).unwrap();
-        let biased = greedy_best_first(&compact, &levels, None, &climb, &[(g0, &[5.0])], &[(f3, &[0.0])], None, None, 1.0, 64, &mut scratch).unwrap();
+        let direct = greedy_best_first(&compact, &levels, None, &climb, &[(f0, &[0.0])], &[(f3, &[0.0])], None, None, 1.0, WEIGHT_GREEDY, 64, &mut scratch).unwrap();
+        let biased = greedy_best_first(&compact, &levels, None, &climb, &[(g0, &[5.0])], &[(f3, &[0.0])], None, None, 1.0, WEIGHT_GREEDY, 64, &mut scratch).unwrap();
         assert_eq!(direct.cost, 3.0);
         assert_eq!(biased.cost, direct.cost + 1.0 + 5.0, "one extra edge from G0 to F0, plus the bias");
     }
@@ -588,7 +598,7 @@ mod tests {
         let a = g.find("F0", (0.0, 0.0)).unwrap();
         let b = g.find("F5", (0.0, 5.0)).unwrap();
         let mut scratch = Scratch::new();
-        let found = greedy_best_first(&compact, &levels, None, &climb, &[(a, &[0.0])], &[(b, &[0.0])], None, None, 1.0, 2, &mut scratch).expect("a route");
+        let found = greedy_best_first(&compact, &levels, None, &climb, &[(a, &[0.0])], &[(b, &[0.0])], None, None, 1.0, WEIGHT_GREEDY, 2, &mut scratch).expect("a route");
         assert_eq!(found.cost, 5.0);
     }
 
@@ -685,7 +695,7 @@ mod tests {
                     continue;
                 }
                 checked += 1;
-                let greedy = greedy_best_first(&compact, &levels, None, &climb, &[(s, &[0.0])], &[(t, &[0.0])], None, Some(&landmarks), 1.0, 64, &mut scratch);
+                let greedy = greedy_best_first(&compact, &levels, None, &climb, &[(s, &[0.0])], &[(t, &[0.0])], None, Some(&landmarks), 1.0, WEIGHT_GREEDY, 64, &mut scratch);
                 match greedy {
                     Some(found) => {
                         // The landmark bound can only ever underestimate, so a greedy

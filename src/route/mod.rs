@@ -255,6 +255,13 @@ impl EdgeRule for Nudge {
 /// leaves a rule or a retry with nowhere else to send it.
 const ENTRY_CANDIDATES: usize = 8;
 
+/// How far the search leans on its estimate of what is left to fly, against what it has already
+/// spent. One is A* and the cheapest route there is; higher is quicker and settles for less;
+/// `WEIGHT_GREEDY` ignores the spending altogether, which is where this started.
+fn search_weight() -> f32 {
+    std::env::var("AMDBGEN_SEARCH_WEIGHT").ok().and_then(|v| v.parse().ok()).unwrap_or(search::WEIGHT_GREEDY)
+}
+
 /// One rung of [`STAGES`]: how wide a join, how fat an ellipse (`None` for no ellipse at
 /// all), and how long a free-route direct leg may be.
 struct Stage {
@@ -516,7 +523,7 @@ impl<'a> Context<'a> {
                         let one = std::slice::from_ref(&lazy);
                         let lazy_dc: &dyn cost::DirectCost = &lazy;
                         let direct_ctx = self.directs.as_ref().map(|adj| search::DirectContext { adj, cost: std::slice::from_ref(&lazy_dc) });
-                        search::greedy_best_first(&self.compact, one, direct_ctx.as_ref(), &single_climb, &starts, &goals, self.ellipse.as_ref(), Some(&self.landmarks), self.rate_per_nm, beam, &mut scratch)
+                        search::greedy_best_first(&self.compact, one, direct_ctx.as_ref(), &single_climb, &starts, &goals, self.ellipse.as_ref(), Some(&self.landmarks), self.rate_per_nm, search_weight(), beam, &mut scratch)
                             .map(|found| (found, job, lazy.edges_costed() + lazy.directs_costed()))
                     }
                     Job::Joint(beam) => {
@@ -525,7 +532,7 @@ impl<'a> Context<'a> {
                         let goals: Vec<(u32, &[f32])> = exit_bias.iter().map(|(n, b)| (*n, b.as_slice())).collect();
                         let lazy_dcs: Vec<&dyn cost::DirectCost> = lazies.iter().map(|l| l as &dyn cost::DirectCost).collect();
                         let direct_ctx = self.directs.as_ref().map(|adj| search::DirectContext { adj, cost: &lazy_dcs });
-                        search::greedy_best_first(&self.compact, &lazies, direct_ctx.as_ref(), &climb, &starts, &goals, self.ellipse.as_ref(), Some(&self.landmarks), self.rate_per_nm, beam, &mut scratch)
+                        search::greedy_best_first(&self.compact, &lazies, direct_ctx.as_ref(), &climb, &starts, &goals, self.ellipse.as_ref(), Some(&self.landmarks), self.rate_per_nm, search_weight(), beam, &mut scratch)
                             .map(|found| (found, job, lazies.iter().map(|l| l.edges_costed() + l.directs_costed()).sum()))
                     }
                 }

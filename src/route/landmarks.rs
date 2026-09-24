@@ -14,6 +14,13 @@
 //! else a flight plan varies, so they are built once per cycle and kept in the cache.
 
 use super::graph::Compact;
+
+/// How long a free-route leg the bound assumes, and how many each fix keeps. The length is the
+/// longest any rung of the search offers, so the bound never assumes less of the network than
+/// the search may use; the count is a little above what a flight's own list keeps, since that
+/// list is filtered by where the flight is going and its legs need not be the very nearest.
+const FREE_LEG_NM: f64 = 600.0;
+const FREE_LEG_NEIGHBOURS: usize = 8;
 use super::ord32::OrderedF32;
 use std::collections::BinaryHeap;
 
@@ -160,7 +167,7 @@ impl GoalRows {
 
 /// Plain, single-source Dijkstra on great-circle distance, forward if `reverse` is false
 /// and along the reverse graph (so the result is "distance to the source") if it is true.
-fn dijkstra_distance(compact: &Compact, source: u32, reverse: bool) -> Vec<f32> {
+fn dijkstra_distance(compact: &Compact, free: &super::directs::Directs, source: u32, reverse: bool) -> Vec<f32> {
     let n = compact.node_count();
     let mut dist = vec![f32::INFINITY; n];
     let mut heap: BinaryHeap<std::cmp::Reverse<(OrderedF32, u32)>> = BinaryHeap::new();
@@ -171,14 +178,16 @@ fn dijkstra_distance(compact: &Compact, source: u32, reverse: bool) -> Vec<f32> 
             continue;
         }
         let (upos, ucos) = (compact.pos(u), compact.cos_lat[u as usize] as f64);
-        let neighbours: &[super::graph::Edge] = if reverse { compact.r#in(u) } else { compact.out(u) };
-        for e in neighbours {
-            let vpos = compact.pos(e.to);
+        let airways: &[super::graph::Edge] = if reverse { compact.r#in(u) } else { compact.out(u) };
+        // The free-route legs are the same either way round, so one neighbourhood serves the
+        // forward run and the reverse one alike.
+        for v in airways.iter().map(|e| e.to).chain(free.out(u).iter().copied()) {
+            let vpos = compact.pos(v);
             let w = fast_distance_nm(upos, ucos, vpos) as f32;
             let nd = d.0 + w;
-            if nd < dist[e.to as usize] {
-                dist[e.to as usize] = nd;
-                heap.push(std::cmp::Reverse((OrderedF32(nd), e.to)));
+            if nd < dist[v as usize] {
+                dist[v as usize] = nd;
+                heap.push(std::cmp::Reverse((OrderedF32(nd), v)));
             }
         }
     }
@@ -199,7 +208,7 @@ pub fn fast_distance_nm(a: (f64, f64), cos_a: f64, b: (f64, f64)) -> f64 {
 /// Landmarks chosen by farthest-point sampling: the first arbitrary, each next the fix
 /// known to be furthest from every landmark chosen so far, so that a handful of them
 /// spread to the corners of the network rather than clustering in the middle of it.
-fn choose_landmarks(compact: &Compact, count: usize) -> Vec<u32> {
+fn choose_landmarks(compact: &Compact, free: &super::directs::Directs, count: usize) -> Vec<u32> {
     let n = compact.node_count();
     if n == 0 {
         return Vec::new();
@@ -212,7 +221,7 @@ fn choose_landmarks(compact: &Compact, count: usize) -> Vec<u32> {
     let mut next = (0..n as u32).max_by(|&a, &b| compact.lat[a as usize].total_cmp(&compact.lat[b as usize])).unwrap();
     for _ in 0..count {
         chosen.push(next);
-        let d = dijkstra_distance(compact, next, false);
+        let d = dijkstra_distance(compact, free, next, false);
         for i in 0..n {
             if d[i] < min_dist[i] {
                 min_dist[i] = d[i];
@@ -229,13 +238,17 @@ fn choose_landmarks(compact: &Compact, count: usize) -> Vec<u32> {
 /// Build the tables from scratch: the expensive step, `2 × landmarks` runs of Dijkstra
 /// over the whole network.
 fn build(compact: &Compact, count: usize) -> Landmarks {
-    let ids = choose_landmarks(compact, count);
+    // The network the bound is measured over: the published airways, and the free-route legs a
+    // search may fly instead of them. Leaving the legs out made the bound an over-estimate
+    // rather than a bound, and a search cannot be steered by a figure that is too large.
+    let free = super::directs::neighbourhood(compact, FREE_LEG_NM, FREE_LEG_NEIGHBOURS);
+    let ids = choose_landmarks(compact, &free, count);
     let n = compact.node_count();
     let mut from = vec![0f32; ids.len() * n];
     let mut to = vec![0f32; ids.len() * n];
     // One graph, many independent single-source runs: exactly the shape rayon is for.
     use rayon::prelude::*;
-    let rows: Vec<(Vec<f32>, Vec<f32>)> = ids.par_iter().map(|&l| (dijkstra_distance(compact, l, false), dijkstra_distance(compact, l, true))).collect();
+    let rows: Vec<(Vec<f32>, Vec<f32>)> = ids.par_iter().map(|&l| (dijkstra_distance(compact, &free, l, false), dijkstra_distance(compact, &free, l, true))).collect();
     for (i, (f, t)) in rows.into_iter().enumerate() {
         from[i * n..(i + 1) * n].copy_from_slice(&f);
         to[i * n..(i + 1) * n].copy_from_slice(&t);
@@ -257,7 +270,10 @@ pub fn tables(compact: &Compact, count: usize) -> std::sync::Arc<Landmarks> {
     if let Some(found) = cache.lock().unwrap().get(&key) {
         return found.clone();
     }
-    let disk_key = crate::sources::navdata::airac().map(|airac| format!("route/landmarks-{airac}-{}-{count}.bin", key.0));
+    // The free legs are part of what the tables measure, so their shape is part of the key:
+    // tables built without them answer a different question, and serving those would quietly
+    // restore the over-estimate this replaced.
+    let disk_key = crate::sources::navdata::airac().map(|airac| format!("route/landmarks-{airac}-{}-{count}-f{}x{FREE_LEG_NEIGHBOURS}.bin", key.0, FREE_LEG_NM as u32));
     let store = crate::cache::Cache::for_index(false);
     let built = if let Some(key) = &disk_key {
         let bytes = store.get_or_fetch_bytes(key, || Ok(build(compact, count).to_bytes())).ok();
@@ -319,7 +335,8 @@ mod tests {
         let compact = g.compact();
         let lm = tables_for_test(&compact, 6);
         for a in 0..compact.node_count() as u32 {
-            let dijkstra = dijkstra_distance(&compact, a, false);
+            let free = crate::route::directs::neighbourhood(&compact, FREE_LEG_NM, FREE_LEG_NEIGHBOURS);
+            let dijkstra = dijkstra_distance(&compact, &free, a, false);
             for b in 0..compact.node_count() as u32 {
                 let d = dijkstra[b as usize];
                 if d.is_finite() {
@@ -356,5 +373,33 @@ mod tests {
     /// they never depend on `LOCALAPPDATA` or an AIRAC cycle being available.
     fn tables_for_test(compact: &Compact, count: usize) -> Landmarks {
         build(compact, count)
+    }
+}
+
+#[cfg(test)]
+mod bound_report {
+    use super::*;
+    use crate::route::graph::Graph;
+
+    /// Printed, not asserted: what the bound actually says, against the straight line it can
+    /// never be less than and the floor it must never exceed.
+    ///
+    /// A bound larger than the floor is not a bound. It is the one number that says whether the
+    /// tables are steering the search or misleading it, and it is worth reading directly rather
+    /// than inferring from the routes that come out.
+    #[test]
+    #[ignore]
+    fn report_the_bound_against_the_floor() {
+        let g = Graph::shared();
+        let compact = g.compact();
+        let tables = tables(&compact, 24);
+        for (from, to, o, d) in [("VIDP", "KSFO", (28.5665, 77.1031), (37.6188, -122.3754)), ("VOBL", "KJFK", (13.1979, 77.7063), (40.6398, -73.7789))] {
+            let (Some((s, _)), Some((t, _))) = (g.nearest(o, 1, 220.0).first().copied(), g.nearest(d, 1, 220.0).first().copied()) else { continue };
+            let straight = crate::dispatch::distance_nm(compact.pos(s), compact.pos(t));
+            let bound = tables.lower_bound_nm(s, t);
+            let floor = crate::route::reference::shortest_path(g, o, d, 600.0).map(|(_, nm)| nm).unwrap_or(f64::NAN);
+            println!("{from} -> {to}: straight {straight:.0} nm, bound {bound:.0} nm, floor {floor:.0} nm");
+            println!("   the bound is {}", if bound as f64 <= floor + 1.0 { "a bound" } else { "LARGER THAN THE FLOOR, so not a bound" });
+        }
     }
 }
