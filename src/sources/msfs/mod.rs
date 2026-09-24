@@ -6,6 +6,7 @@
 //! to draw for the user and is never written into anything we publish.
 
 pub mod bgl;
+pub mod fsarchive;
 pub mod navaids;
 
 /// The dates the navigation data is in force between, as the simulator records them.
@@ -80,4 +81,76 @@ pub fn nav_dirs() -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// `.fsarchive` files holding a whole simulator's navigation data in one blob - how
+/// FS2024 ships it, in place of the loose `scenery/*.bgl` tree `nav_dirs` finds for older
+/// installs. Found by name rather than a fixed path, since the one seen so far is
+/// `fs24-fs-base-nav`, and a future cycle could ship under a different numbered name the
+/// same way `fs-base-nav` itself is versioned by simulator.
+pub fn nav_archives() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for sim in crate::bridge::desktop::detect_sims() {
+        let Some(library) = sim.community.parent() else { continue };
+        let Ok(packages) = std::fs::read_dir(library.join("StreamedPackages")) else { continue };
+        for pkg in packages.flatten() {
+            let path = pkg.path();
+            let is_nav_package = path.is_dir() && path.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase().contains("fs-base-nav")).unwrap_or(false);
+            if !is_nav_package {
+                continue;
+            }
+            let Ok(content) = std::fs::read_dir(path.join("content")) else { continue };
+            for c in content.flatten() {
+                let cp = c.path();
+                let is_archive = cp.extension().map(|e| e.eq_ignore_ascii_case("fsarchive")).unwrap_or(false);
+                if is_archive && !out.contains(&cp) {
+                    out.push(cp);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Every BGL whose name starts with one of `prefixes` (`"nax"`, `"nvx"`, `"atx"`), from
+/// every simulator install found - loose files under `nav_dirs` and packed ones inside
+/// `nav_archives` alike. A caller that wants, say, every `nvx` file in the world calls
+/// this once instead of knowing which of the two layouts a given install uses.
+///
+/// This is what makes FS2024's navigation data reachable at all: before this, amdbgen
+/// could only walk loose `scenery/*.bgl` files, and FS2024 has none - its whole dataset
+/// is the one packed `minimal.fsarchive`.
+pub fn for_each_bgl(prefixes: &[&str], mut visit: impl FnMut(String, Vec<u8>)) {
+    let lower: Vec<String> = prefixes.iter().map(|p| p.to_ascii_lowercase()).collect();
+    for dir in nav_dirs() {
+        let mut folders = vec![dir];
+        while let Some(folder) = folders.pop() {
+            let Ok(entries) = std::fs::read_dir(&folder) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    folders.push(path);
+                    continue;
+                }
+                let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()) else { continue };
+                if !lower.iter().any(|p| name.starts_with(p.as_str())) {
+                    continue;
+                }
+                if let Ok(data) = std::fs::read(&path) {
+                    visit(path.display().to_string(), data);
+                }
+            }
+        }
+    }
+    for archive_path in nav_archives() {
+        match fsarchive::FsArchive::open(&archive_path) {
+            Ok(archive) => {
+                let prefix_refs: Vec<&str> = prefixes.to_vec();
+                if let Err(e) = archive.for_each_with_prefix(&prefix_refs, |p, data| visit(format!("{}::{p}", archive_path.display()), data)) {
+                    log::warn!("reading {}: {e}", archive_path.display());
+                }
+            }
+            Err(e) => log::warn!("opening {}: {e}", archive_path.display()),
+        }
+    }
 }
