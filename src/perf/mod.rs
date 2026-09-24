@@ -17,6 +17,7 @@
 //! * `weights` — the weight limits and what happens when one bites.
 //! * `etp` — equal-time points and the point of no return.
 
+pub mod airframes;
 pub mod aero;
 pub mod aircraft;
 pub mod atmosphere;

@@ -120,6 +120,7 @@ fn start(params: &Map<String, Value>) -> Arc<Run> {
     let level = params.get("level").and_then(Value::as_str).filter(|v| !v.trim().is_empty()).map(str::to_string);
     let alternate = params.get("alternate").and_then(Value::as_str).filter(|v| !v.trim().is_empty()).map(|v| v.trim().to_uppercase());
     let offline = params.get("offline").and_then(Value::as_str).is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+    let airframe = params.get("airframe").and_then(Value::as_str).filter(|v| !v.trim().is_empty()).map(|v| v.trim().to_uppercase());
 
     let thread_run = run.clone();
     std::thread::spawn(move || {
@@ -129,6 +130,7 @@ fn start(params: &Map<String, Value>) -> Arc<Run> {
         opts.cost_index = ci;
         opts.offline = offline;
         opts.alternate = alternate;
+        opts.airframe = airframe;
         opts.level = level.and_then(|l| {
             let t = l.trim().trim_start_matches("FL").to_string();
             t.parse::<f64>().ok().map(|v| if v < 1000.0 { v * 100.0 } else { v })
@@ -211,6 +213,32 @@ pub fn handle(req: tiny_http::Request, path: &str, params: &Map<String, Value>, 
         // The world's coastlines, the same twenty kilobytes the drawn maps use, so the page is
         // a map and not a scatter of dots.
         "/land.bin" => respond_bytes(req, 200, "application/octet-stream", include_bytes!("../../data/world_land.bin").to_vec()),
+        // Every airframe of a type, for the page's own dropdown and for the weights it fills
+        // in once one is picked.
+        "/airframes" => {
+            let want = params.get("type").and_then(Value::as_str).unwrap_or("");
+            let list: Vec<Value> = crate::perf::airframes::of_type(want)
+                .into_iter()
+                .map(|a| {
+                    json!({
+                        "registration": a.registration,
+                        "label": a.label(),
+                        "name": a.name,
+                        "engines": a.engines,
+                        "pax": a.max_passengers,
+                        "oew": a.oew_kg.round(),
+                        "mzfw": a.mzfw_kg.round(),
+                        "mtow": a.mtow_kg.round(),
+                        "mlw": a.mlw_kg.round(),
+                        "max_fuel": a.max_fuel_kg.round(),
+                        "climb": a.climb,
+                        "cruise": a.cruise,
+                        "descent": a.descent,
+                    })
+                })
+                .collect();
+            respond_json(req, 200, json!({ "airframes": list }).to_string());
+        }
         "/start" => {
             let run = start(params);
             respond_json(req, 200, json!({ "id": run.id }).to_string());

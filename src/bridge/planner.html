@@ -7,13 +7,13 @@
 <style>
   :root {
     --ink:#1f2328; --dim:#6b7480; --faint:#99a1ab; --line:#d8dde3; --card:#fff; --ground:#eef1f5;
-    --accent:#1f6feb; --on:#2ea043; --route:#cc1f28; --look:#e0a83c; --net:#b9c2ce;
-    --land:#eceadf; --sea:#f7f9fb; --coast:#c9cec6; --warn:#b4551f;
+    --accent:#1f6feb; --on:#2ea043; --route:#cc1f28; --look:#e0a83c; --net:#8f9bab;
+    --land:#e8e6dc; --sea:#dbe7f0; --coast:#b9c0b4; --warn:#b4551f;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --ink:#e7eaef; --dim:#99a2ad; --faint:#6e7783; --line:#2c323a; --card:#181b20; --ground:#101317;
-      --net:#3b424c; --land:#22262c; --sea:#141216; --coast:#333941;
+      --net:#3b424c; --land:#232830; --sea:#0e141b; --coast:#39414c;
     }
   }
   * { box-sizing:border-box; }
@@ -102,7 +102,7 @@
   <section class="card"><header><h2>Aircraft Info</h2><span class="chev">&#9662;</span></header><div class="body">
     <div class="grid c2">
       <div><label>Aircraft type</label><input id="aircraft" maxlength="4" value="B77W" spellcheck="false"></div>
-      <div><label>Variant or airframe</label><select id="airframe" disabled><option>Default</option></select></div>
+      <div><label>Variant or airframe</label><select id="airframe"><option value="">Default (type weights)</option></select></div>
     </div>
     <div class="grid c4" style="margin-top:9px">
       <div><label>Climb profile</label><select id="climb" disabled><option>AUTO</option></select></div>
@@ -112,7 +112,7 @@
     </div>
     <div class="grid c2" style="margin-top:9px">
       <div><label>Registration</label><input id="reg" placeholder="AUTO" spellcheck="false"></div>
-      <div><label>Fin number</label><input id="fin" placeholder="AUTO" spellcheck="false" disabled></div>
+      <div><label>Engines</label><input id="engines" placeholder="AUTO" spellcheck="false" disabled></div>
     </div>
   </div></section>
 
@@ -160,6 +160,13 @@
       <div><label>Payload kg</label><input id="payload" value="40000" inputmode="numeric"></div>
       <div><label>Zero fuel weight</label><input id="zfw" placeholder="AUTO" disabled></div>
       <div><label>Avoid FIRs</label><input id="avoid" placeholder="none" spellcheck="false"></div>
+    </div>
+    <div class="grid c5" style="margin-top:9px">
+      <div><label>OEW kg</label><input id="oew" placeholder="type" disabled></div>
+      <div><label>MZFW kg</label><input id="mzfw" placeholder="type" disabled></div>
+      <div><label>MTOW kg</label><input id="mtow" placeholder="type" disabled></div>
+      <div><label>MLW kg</label><input id="mlw" placeholder="type" disabled></div>
+      <div><label>Max fuel kg</label><input id="maxfuel" placeholder="type" disabled></div>
     </div>
   </div></section>
 
@@ -311,6 +318,55 @@ async function poll(){
     $('routeout').value=r.route; stop(); }
 }
 
+let frames = [];
+
+// The airframes of a type, for the dropdown. A type with none keeps its own weights, which is
+// what "Default" means and why it is always the first choice.
+async function loadAirframes(){
+  const t = $('aircraft').value.trim().toUpperCase();
+  const sel = $('airframe');
+  sel.innerHTML = '<option value="">Default (type weights)</option>';
+  frames = [];
+  if (t.length < 2) { fillFromFrame(null); return; }
+  try { frames = (await (await fetch('plan/airframes?type=' + encodeURIComponent(t))).json()).airframes || []; }
+  catch(e){ return; }
+  for (const f of frames) {
+    const o = document.createElement('option');
+    o.value = f.registration; o.textContent = f.label;
+    sel.appendChild(o);
+  }
+  sel.disabled = frames.length === 0;
+  fillFromFrame(null);
+}
+
+// What an airframe fills in. Empty for "Default", so the fields show the type is being used
+// rather than showing the last airframe's numbers as though they still applied.
+function fillFromFrame(f){
+  const set = (id, v) => { $(id).value = v == null ? '' : v.toLocaleString(); };
+  set('oew', f && f.oew); set('mzfw', f && f.mzfw); set('mtow', f && f.mtow);
+  set('mlw', f && f.mlw); set('maxfuel', f && f.max_fuel);
+  $('engines').value = f ? (f.engines || '') : '';
+  if (f && f.pax) $('pax').value = f.pax;
+  if (f) $('reg').value = f.registration;
+  if (f && f.climb) $('climb').innerHTML = '<option>' + f.climb + '</option>';
+  if (f && f.descent) $('descent').innerHTML = '<option>' + f.descent + '</option>';
+  zfw();
+}
+
+// Zero fuel weight is empty weight plus what is being carried, which is a sum the page can do
+// as soon as both are known rather than something to wait for a plan to report.
+function zfw(){
+  const f = frames.find(x => x.registration === $('airframe').value);
+  const payload = parseFloat(($('payload').value || '0').replace(/,/g,'')) || 0;
+  $('zfw').value = f && f.oew ? Math.round(f.oew + payload).toLocaleString() : '';
+}
+
+$('aircraft').addEventListener('change', loadAirframes);
+$('aircraft').addEventListener('blur', loadAirframes);
+$('airframe').addEventListener('change', () => fillFromFrame(frames.find(x => x.registration === $('airframe').value) || null));
+$('payload').addEventListener('input', zfw);
+loadAirframes();
+
 $('go').onclick = async () => {
   reached=[]; best=null; ends=null; cursor=0;
   $('s_status').textContent='searching'; $('s_status').className='';
@@ -321,7 +377,7 @@ $('go').onclick = async () => {
     from:$('from').value, to:$('to').value, aircraft:$('aircraft').value,
     alternate:$('alternate').value, level:$('level').value, ci:$('ci').value,
     pax:$('pax').value, payload:$('payload').value, flight:call, reg:$('reg').value,
-    eobt:$('eobt').value, avoid:$('avoid').value,
+    eobt:$('eobt').value, avoid:$('avoid').value, airframe:$('airframe').value,
     rvsm:$('rvsm').checked?'1':'0', offline:$('offline').checked?'1':'0',
   });
   try{ await fetch('plan/start?'+q); }
