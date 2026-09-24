@@ -193,8 +193,24 @@ fn wake_category(mtow_kg: f64) -> char {
 pub fn icao_message(d: &Dispatch, flight_number: Option<&str>, registration: Option<&str>) -> String {
     let callsign = flight_number.unwrap_or(&d.spec.icao_type).to_string();
     let wake = wake_category(d.spec.mtow_kg);
-    let level = format!("F{:03.0}", d.route.cruise_ft / 100.0);
-    let speed = format!("N{:04.0}", d.perf.profile.first().map(|p| p.tas_kt).filter(|t| *t > 0.0).unwrap_or_else(|| tas_estimate(d)));
+    // The level and the speed a plan is filed at are the *cruise* ones, and they are taken
+    // from the profile that was actually flown rather than from the route's filed level: the
+    // route search picks a level with no notion of how short the trip is, and the distance cap
+    // in the performance model has the last word. Taking the first profile point instead gave
+    // the speed on the runway — a filed N0250 on a jet, which is the take-off roll, not a
+    // cruise — and a level the aeroplane never reaches.
+    let cruise = d.perf.profile.iter().find(|p| p.kind == crate::dispatch::ProfileKind::TopOfClimb);
+    let level = format!("F{:03.0}", cruise.map(|p| p.alt_ft).unwrap_or(d.route.cruise_ft) / 100.0);
+    let cruise_tas = d
+        .perf
+        .profile
+        .iter()
+        .filter(|p| cruise.map(|c| p.dist_nm >= c.dist_nm).unwrap_or(false))
+        .map(|p| p.tas_kt)
+        .filter(|t| *t > 0.0)
+        .next()
+        .unwrap_or_else(|| tas_estimate(d));
+    let speed = format!("N{:04.0}", cruise_tas);
     let eet = d.perf.profile.last().map(|p| p.time_min).unwrap_or(0.0);
     let alt = d.alternate.as_ref().map(|a| a.destination.icao.as_str()).unwrap_or("----");
     let mut s = String::new();
