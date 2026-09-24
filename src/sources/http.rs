@@ -11,6 +11,22 @@ pub struct Http {
     user_agent: String,
 }
 
+/// Whether a failure is the name not resolving, which is as definite an answer as a 404 and
+/// worth no retry at all: the host either exists or it does not, and waiting will not conjure
+/// it. A host that has simply gone away costs four attempts and fourteen seconds of backoff
+/// each time it is asked for otherwise, which on a source that is asked for two URLs is a
+/// minute of a flight plan's time spent learning nothing.
+///
+/// "Temporary failure in name resolution" is deliberately not here: that one really is
+/// temporary, and it is the case retrying exists for.
+fn name_does_not_resolve(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    if m.contains("temporary failure in name resolution") {
+        return false;
+    }
+    ["no such host", "name or service not known", "failed to lookup address", "nodename nor servname"].iter().any(|p| m.contains(p))
+}
+
 impl Http {
     pub fn new(timeout_secs: u64, min_interval_ms: u64) -> Self {
         let cfg = ureq::Agent::config_builder()
@@ -46,7 +62,8 @@ impl Http {
                 Err(e) => {
                     // A 4xx other than "slow down" / timeout is a definite answer: no retry.
                     let msg = format!("{e:#}");
-                    let definite = msg.contains("HTTP 4") && !msg.contains("HTTP 408") && !msg.contains("HTTP 429");
+                    let bad_status = msg.contains("HTTP 4") && !msg.contains("HTTP 408") && !msg.contains("HTTP 429");
+                    let definite = bad_status || name_does_not_resolve(&msg);
                     if definite {
                         log::info!("{what}: {msg}");
                         return Err(e);
@@ -143,5 +160,32 @@ impl Http {
             }
             Ok(text)
         })
+    }
+}
+
+#[cfg(test)]
+mod resolution_tests {
+    use super::name_does_not_resolve;
+
+    /// The phrasings the platforms actually produce when a host does not exist. Each is a
+    /// definite answer, so it is not retried.
+    #[test]
+    fn a_host_that_does_not_exist_is_a_definite_answer() {
+        for msg in [
+            "request: io: No such host is known. (os error 11001)",
+            "request: io: failed to lookup address information: Name or service not known",
+            "io: nodename nor servname provided, or not known",
+        ] {
+            assert!(name_does_not_resolve(msg), "{msg}");
+        }
+    }
+
+    /// A resolver that is momentarily unwell is exactly what retrying is for, and so is
+    /// anything that is not about names at all.
+    #[test]
+    fn a_resolver_that_is_merely_busy_is_retried() {
+        for msg in ["io: Temporary failure in name resolution", "HTTP 429", "HTTP 503", "read body: connection reset"] {
+            assert!(!name_does_not_resolve(msg), "{msg}");
+        }
     }
 }
