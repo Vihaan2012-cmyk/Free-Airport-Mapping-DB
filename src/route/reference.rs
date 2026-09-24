@@ -128,3 +128,30 @@ mod tests {
         assert!(shortest_path(&g, (0.0, 0.0), (0.0, 120.0), 0.0).is_none());
     }
 }
+
+#[cfg(test)]
+mod how_long_a_leg {
+    use super::*;
+
+    /// Printed, not asserted: how good the floor is at each direct-leg length the ladder offers.
+    ///
+    /// The ladder lengthens the direct leg to six hundred miles only on the rung that has also
+    /// given up its ellipse. If the network needs the longer leg to cross an ocean or the
+    /// Arctic, then every rung that still has an ellipse cannot get across at all, and the only
+    /// rung that can is the one with nothing keeping it near the great circle.
+    #[test]
+    #[ignore]
+    fn report_the_floor_at_each_direct_leg_length() {
+        let g = Graph::shared();
+        for (from, to, o, d) in [("VIDP", "KSFO", (28.5665, 77.1031), (37.6188, -122.3754)), ("VOBL", "KJFK", (13.1979, 77.7063), (40.6398, -73.7789)), ("EGLL", "KJFK", (51.4775, -0.4614), (40.6398, -73.7789))] {
+            let direct = distance_nm(o, d);
+            println!("{from} -> {to}: {direct:.0} nm direct");
+            for max in [0.0, 220.0, 400.0, 600.0] {
+                match shortest_path(g, o, d, max) {
+                    Some((_, nm)) => println!("   directs <= {max:5.0} nm: floor {nm:7.0} nm ({:+.0}%)", (nm / direct - 1.0) * 100.0),
+                    None => println!("   directs <= {max:5.0} nm: nothing connects"),
+                }
+            }
+        }
+    }
+}
