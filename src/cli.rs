@@ -1795,7 +1795,25 @@ fn route_map_cmd(a: RouteMapArgs) -> Result<()> {
     opts.offline = a.offline;
 
     term::start(&format!("Drawing {} {} -> {}", opts.aircraft, opts.origin, opts.destination));
+
+    // Watch the search while it runs, so the picture can show where it looked and not only
+    // where it ended up.
+    #[derive(Default)]
+    struct Watch(std::sync::Mutex<Vec<crate::dispatch::LatLon>>);
+    impl crate::route::progress::Sink for Watch {
+        fn event(&self, event: crate::route::progress::Event) {
+            if let crate::route::progress::Event::Reached { at, .. } = event {
+                if let Ok(mut held) = self.0.lock() {
+                    held.push(at);
+                }
+            }
+        }
+    }
+    let watch = std::sync::Arc::new(Watch::default());
+    crate::route::progress::watch(Some(watch.clone()));
     let d = ofp::dispatch(&opts)?;
+    crate::route::progress::watch(None);
+    let explored = watch.0.lock().map(|h| h.clone()).unwrap_or_default();
 
     let (origin, destination) = (d.route.origin.pos, d.route.destination.pos);
     let (factors, slack) = crate::route::stage_ellipses();
@@ -1820,6 +1838,7 @@ fn route_map_cmd(a: RouteMapArgs) -> Result<()> {
         ellipses,
         corridor: Ellipse::new(origin, destination, 1.0, 1.0).corridor(300.0),
         network: graph.fixes().iter().map(|f| f.pos).collect::<Vec<LatLon>>(),
+        explored,
         floor: floor.as_ref().map(|(p, _)| p.iter().map(|(_, pos)| *pos).collect()).unwrap_or_default(),
         caption: format!(
             "{} -> {}  {}  {:.0} nm flown, {:.0} nm direct ({:+.0}%)  {} fixes{}",

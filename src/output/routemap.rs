@@ -36,6 +36,9 @@ pub struct Map {
     pub corridor: Vec<Bounds>,
     /// The network's own fixes, drawn as the backdrop.
     pub network: Vec<LatLon>,
+    /// Where the search actually went, sampled as it went there. This is the part a list of
+    /// fixes cannot show: not the route, but everywhere the route was nearly.
+    pub explored: Vec<LatLon>,
     /// The shortest way through the network by distance alone: not a route, but the floor no
     /// route can beat, so the gap between it and the route is what the search is losing.
     pub floor: Vec<LatLon>,
@@ -157,6 +160,15 @@ fn draw(c: &mut dyn Canvas, map: &Map) {
         polyline(c, &frame, &(-85..=85).step_by(5).map(|la| (la as f64, lon)).collect::<Vec<_>>());
     }
 
+    // Everywhere the search looked, under everything else, so the route is read against the
+    // spread of what it was chosen from.
+    c.set_fill_rgb(0.90, 0.72, 0.36);
+    for &p in &map.explored {
+        let (x, y) = frame.at(p);
+        c.rect(x - 1.0, y - 1.0, 2.0, 2.0);
+    }
+    c.fill_nonzero();
+
     // The strips the winds were asked over.
     c.set_stroke_rgb(0.42, 0.62, 0.86);
     c.set_line_width(1.0);
@@ -229,7 +241,7 @@ fn draw(c: &mut dyn Canvas, map: &Map) {
         9.0,
         MARGIN,
         HEIGHT - 24.0,
-        "grey wash: network fixes   dotted grey: great circle   dashed green: search ellipse   dashed blue: wind strips   solid green: shortest possible   red: route",
+        "grey: network   amber: where the search looked   dotted: great circle   dashed green: ellipse   dashed blue: wind strips   solid green: shortest possible   red: route",
         0.42,
     );
 }

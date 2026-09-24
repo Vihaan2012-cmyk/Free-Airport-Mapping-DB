@@ -290,6 +290,10 @@ pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], directs: 
         }
     }
 
+    // Taken once, not per fix: where nothing is watching this is a single read and the
+    // sampling below never runs.
+    let watcher = super::progress::watcher();
+
     let mut expanded = 0usize;
     while let Some(Reverse((_, _, s))) = open.pop() {
         let s = s as usize;
@@ -298,6 +302,11 @@ pub fn greedy_best_first<C: EdgeCost>(compact: &Compact, levels: &[C], directs: 
         }
         let (fix, lvl) = unpack(s, n_levels);
         let g = scratch.g[s];
+        if let Some(sink) = &watcher {
+            if expanded % super::progress::SAMPLE == 0 {
+                sink.event(super::progress::Event::Reached { at: compact.pos(fix), expanded });
+            }
+        }
         scratch.settle(s);
         if goal_set.contains(&fix) {
             let exit = goal_bias_of(fix, lvl);
