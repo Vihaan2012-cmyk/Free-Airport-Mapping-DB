@@ -14,6 +14,7 @@
 
 pub mod dfd;
 pub mod fenix;
+pub mod from_sim;
 pub mod model;
 pub mod mora;
 

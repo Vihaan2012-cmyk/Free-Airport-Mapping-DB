@@ -272,14 +272,30 @@ enum Cmd {
 
 #[derive(Args, Clone)]
 pub struct ConvertArgs {
-    /// fenix or dfd. The DFD writer (iniBuilds A350, Synaptic A220, PMDG 737/777) is not
-    /// carried past a stub in this build; only fenix currently writes a real file.
+    /// fenix (the Fenix A320), or dfd for the Navigraph layout the iniBuilds A350, the
+    /// Synaptic A220 and PMDG's 737 and 777 all read.
     #[arg(long = "to")]
     to: String,
-    /// A `NavSet` dumped as JSON — the interim way to hand this command data until the
-    /// pipeline that reads free sources into a `NavSet` lands; see `convert::model`.
+    /// Read the simulator's own navigation data (FS2020's loose files, or FS2024's packed
+    /// archive) rather than a JSON file. This is the ordinary way to use the command: the
+    /// point of it is to put the simulator's current data into an aircraft that shipped with
+    /// a stale copy.
+    #[arg(long = "from-sim", conflicts_with = "from_json")]
+    from_sim: bool,
+    /// Which simulator to read: `fs2020`, `fs2024`, or left out for whichever can supply
+    /// the most. FS2024's navigation data is newer, but its airport and procedure records
+    /// are renumbered and re-laid-out in ways this crate has not finished decoding, so
+    /// FS2020 is what a complete conversion currently comes from.
+    #[arg(long = "sim", default_value = "fs2020")]
+    sim: String,
+    /// What AIRAC cycle to stamp the result with. The simulator does not label its own data
+    /// with one anywhere this crate has found, so it is said rather than guessed.
+    #[arg(long, default_value = "0000")]
+    cycle: String,
+    /// A `NavSet` dumped as JSON, instead of reading the simulator: for testing a writer
+    /// against data built by hand. See `convert::model`.
     #[arg(long = "from-json", value_name = "FILE")]
-    from_json: PathBuf,
+    from_json: Option<PathBuf>,
     /// Where to write the new database. Required unless --in-place is given: this command
     /// never guesses a path to overwrite.
     #[arg(long)]
@@ -1318,8 +1334,23 @@ fn convert_cmd(a: ConvertArgs) -> Result<()> {
     if a.out.is_some() && a.in_place {
         return Err(anyhow!("give --out or --in-place, not both"));
     }
-    let text = std::fs::read_to_string(&a.from_json).with_context(|| format!("read {}", a.from_json.display()))?;
-    let nav: convert::NavSet = serde_json::from_str(&text).with_context(|| format!("parse {} as a NavSet", a.from_json.display()))?;
+    let nav: convert::NavSet = match (&a.from_json, a.from_sim) {
+        (Some(path), _) => {
+            let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+            serde_json::from_str(&text).with_context(|| format!("parse {} as a NavSet", path.display()))?
+        }
+        (None, true) => {
+            term::step(None, "reading the simulator's navigation data");
+            let which = match a.sim.to_ascii_lowercase().as_str() {
+                "fs2020" | "2020" => convert::from_sim::Simulator::Fs2020,
+                "fs2024" | "2024" => convert::from_sim::Simulator::Fs2024,
+                "newest" | "auto" => convert::from_sim::Simulator::Newest,
+                other => return Err(anyhow!("--sim takes fs2020, fs2024 or newest, not {other}")),
+            };
+            convert::from_sim::read_from(&a.cycle, which)?
+        }
+        (None, false) => return Err(anyhow!("give --from-sim to read the simulator's own navigation data, or --from-json for a NavSet built by hand")),
+    };
 
     let report = if a.dry_run {
         match target {

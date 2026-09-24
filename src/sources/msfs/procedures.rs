@@ -51,6 +51,47 @@ use std::path::Path;
 const REC_SID: u16 = 0x42;
 const REC_STAR: u16 = 0x48;
 const REC_APPROACH: u16 = 0xFA;
+/// FS2024 renumbered the navigation records. Its airport is `0x113` where FS2020's is `0x56`,
+/// its children begin at `+0x5C` rather than `+0x44`, and it carries its identifier as four
+/// plain characters at `+0x6F` rather than packed at `+0x28`. Its departures and arrivals
+/// keep the ids they had; only the approach moved. All four facts were established by
+/// matching FS2024's records to FS2020's by position — the one field both layouts agree on —
+/// and reading across; three hundred records of three hundred agree.
+/// Whether to ask the aircraft's navigation database for the fixes a procedure names but the
+/// simulator does not position. On by default, because a chart needs every fix placed; turned
+/// off by a caller converting the whole world, which has the positions already and for which
+/// the per-airport queries are the whole cost of the run.
+static DATABASE_ENRICHMENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Turn the database lookups in [`place_remaining_fixes`] on or off, process-wide.
+pub fn set_database_enrichment(on: bool) {
+    DATABASE_ENRICHMENT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+const REC_AIRPORT_2024: u16 = 0x113;
+const REC_APPROACH_2024: u16 = 0x111;
+const CHILDREN_2024: usize = 0x5C;
+const IDENT_TEXT_2024: usize = 0x6F;
+
+/// Whether a record is an airport, under either simulator's numbering.
+pub fn is_airport(id: u16) -> bool {
+    id == bgl::REC_AIRPORT || id == REC_AIRPORT_2024
+}
+
+/// An airport record's identifier and where its children start, whichever layout it is in.
+fn airport_header(d: &[u8], rec: &Record) -> Option<(String, usize)> {
+    if rec.id == REC_AIRPORT_2024 {
+        let at = rec.start + IDENT_TEXT_2024;
+        if at + 4 > rec.end {
+            return None;
+        }
+        let ident: String = d[at..rec.end.min(at + 5)].iter().take_while(|&&b| b.is_ascii_alphanumeric()).map(|&b| b.to_ascii_uppercase() as char).collect();
+        (ident.len() >= 3).then_some((ident, rec.start + CHILDREN_2024))
+    } else {
+        let ident = bgl::ident(bgl::u32le(d, rec.start + 0x28));
+        (!ident.is_empty()).then_some((ident, rec.start + 0x44))
+    }
+}
 /// Transition records, with the offset their children start at.
 const TRANSITIONS: [(u16, usize); 3] = [(0x46, 0x14), (0x4A, 0x10), (0x49, 0x1C)];
 /// Leg lists. The two under an approach are its final legs and its missed approach.
@@ -641,6 +682,15 @@ fn place_fixes_on_radials(procedures: &mut [Procedure], near: (f64, f64)) -> Opt
 /// not in the airport's. The runway fix is not a waypoint at all but the threshold. An
 /// aircraft's navigation database has both.
 fn place_remaining_fixes(icao: &str, near: (f64, f64), procedures: &mut [Procedure]) {
+    // Asking an aircraft's navigation database where a fix is costs a query, and `open_table`
+    // opens the file afresh for each one. Drawing one chart that is nothing; converting the
+    // whole world it is everything — twenty-two thousand airports' worth of queries took two
+    // hundred and eighty seconds of a two-hundred-and-ninety-second run. A caller reading
+    // every airport at once already has the fixes (the simulator's own waypoint records give
+    // a quarter of a million positions) and turns this off.
+    if !DATABASE_ENRICHMENT.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     let mut wanted: Vec<String> = Vec::new();
     for leg in procedures.iter().flat_map(|p| p.transitions.iter()).flat_map(|t| t.legs.iter()) {
         if leg.lat.is_none() && !leg.fix.is_empty() && !leg.fix.starts_with("RW") && !wanted.contains(&leg.fix) {
@@ -694,16 +744,16 @@ fn airport(d: &[u8], rec: &Record, file: &Path, fixes: &Fixes) -> Option<Airport
     if rec.end - rec.start < 0x44 {
         return None;
     }
-    let icao = bgl::ident(bgl::u32le(d, rec.start + 0x28));
-    if icao.is_empty() {
-        return None;
-    }
+    let (icao, children_at) = match airport_header(d, rec) {
+        Some(h) => h,
+        None => return None,
+    };
     let mut procedures = Vec::new();
-    for child in bgl::records(d, rec.start + 0x44, rec.end) {
+    for child in bgl::records(d, children_at, rec.end) {
         let kind = match child.id {
             REC_SID => Kind::Sid,
             REC_STAR => Kind::Star,
-            REC_APPROACH => Kind::Approach,
+            REC_APPROACH | REC_APPROACH_2024 => Kind::Approach,
             _ => continue,
         };
         let trans = if kind == Kind::Approach { transitions(d, &child, 0x24, fixes) } else { terminal_transitions(d, &child, fixes) };
@@ -779,6 +829,32 @@ fn airport(d: &[u8], rec: &Record, file: &Path, fixes: &Fixes) -> Option<Airport
 /// looking one up means reading files until it turns up. Looking up two hundred that way
 /// reads the same files two hundred times over; this reads each once and takes whatever
 /// it was asked for.
+/// Every airport with its procedures out of one file's bytes.
+///
+/// `find_many` reads the files itself, which is right for a caller that wants two airports
+/// and wrong for one building a whole database: that caller has already read every file, and
+/// reading them again — from `nav_dirs` alone, which never sees FS2024's packed archive — both
+/// doubles the work and quietly answers from the older simulator. This takes the bytes it is
+/// given.
+pub fn from_bytes(data: &[u8], label: &str) -> Vec<AirportProcedures> {
+    let mut out = Vec::new();
+    let recs: Vec<Record> = bgl::section_records(data, bgl::SECTION_AIRPORT)
+        .into_iter()
+        .filter(|rec| is_airport(rec.id) && rec.end - rec.start >= 0x44)
+        .collect();
+    if recs.is_empty() {
+        return out;
+    }
+    let fixes = waypoints(data);
+    let path = std::path::PathBuf::from(label);
+    for rec in recs {
+        if let Some(a) = airport(data, &rec, &path, &fixes) {
+            out.push(a);
+        }
+    }
+    out
+}
+
 pub fn find_many(icaos: &[String]) -> Result<std::collections::HashMap<String, AirportProcedures>> {
     let wanted: std::collections::HashSet<String> = icaos.iter().map(|i| i.to_uppercase()).collect();
     let mut out = std::collections::HashMap::new();
@@ -790,8 +866,8 @@ pub fn find_many(icaos: &[String]) -> Result<std::collections::HashMap<String, A
             let Ok(data) = std::fs::read(&file) else { continue };
             let here: Vec<Record> = bgl::section_records(&data, bgl::SECTION_AIRPORT)
                 .into_iter()
-                .filter(|rec| rec.id == bgl::REC_AIRPORT && rec.end - rec.start >= 0x44)
-                .filter(|rec| wanted.contains(&bgl::ident(bgl::u32le(&data, rec.start + 0x28))))
+                .filter(|rec| is_airport(rec.id) && rec.end - rec.start >= 0x44)
+                .filter(|rec| airport_header(&data, rec).map(|(i, _)| wanted.contains(&i)).unwrap_or(false))
                 .collect();
             if here.is_empty() {
                 continue;
@@ -821,10 +897,10 @@ pub fn all_icaos() -> Vec<String> {
         for file in walk_nax(&dir) {
             let Ok(data) = std::fs::read(&file) else { continue };
             for rec in bgl::section_records(&data, bgl::SECTION_AIRPORT) {
-                if rec.id != bgl::REC_AIRPORT || rec.end - rec.start < 0x44 {
+                if !is_airport(rec.id) || rec.end - rec.start < 0x44 {
                     continue;
                 }
-                let icao = bgl::ident(bgl::u32le(&data, rec.start + 0x28));
+                let icao = airport_header(&data, &rec).map(|(i, _)| i).unwrap_or_default();
                 if !icao.is_empty() && !out.contains(&icao) {
                     out.push(icao);
                 }
@@ -840,10 +916,10 @@ pub fn find(icao: &str) -> Result<Option<AirportProcedures>> {
         for file in walk_nax(&dir) {
             let data = std::fs::read(&file).with_context(|| format!("read {}", file.display()))?;
             for rec in bgl::section_records(&data, bgl::SECTION_AIRPORT) {
-                if rec.id != bgl::REC_AIRPORT || rec.end - rec.start < 0x44 {
+                if !is_airport(rec.id) || rec.end - rec.start < 0x44 {
                     continue;
                 }
-                if bgl::ident(bgl::u32le(&data, rec.start + 0x28)) != want {
+                if airport_header(&data, &rec).map(|(i, _)| i).unwrap_or_default() != want {
                     continue;
                 }
                 if let Some(a) = airport(&data, &rec, &file, &waypoints(&data)) {
