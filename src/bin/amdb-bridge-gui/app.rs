@@ -65,12 +65,12 @@ impl amdbgen::route::progress::Sink for Planning {
 
 const PANEL_X: i32 = 660;
 const NARROW: u32 = 640;
-const WIDE: u32 = 1940;
+const WIDE: u32 = 2040;
 /// The map inside the panel, in pixels. Drawn by the same renderer that writes `route-map`, at
 /// the two-to-one the whole world takes on an equirectangular page, and big enough that a route
 /// across a hemisphere is a route and not a smudge.
-const MAP_W: i32 = 700;
-const MAP_H: i32 = 350;
+const MAP_W: i32 = 800;
+const MAP_H: i32 = 560;
 
 // Status colours, readable on the system dialog background.
 const GREEN: [u8; 3] = [16, 124, 16];
@@ -647,7 +647,7 @@ impl App {
         // left out, so what the plan assumed is visible instead of only in the code.
         const C: [i32; 4] = [PANEL_X, PANEL_X + 134, PANEL_X + 268, PANEL_X + 402];
         const FW: i32 = 124;
-        const MAP_X: i32 = PANEL_X + 552;
+        const MAP_X: i32 = PANEL_X + 556;
         nwg::Label::builder().parent(w).text("Flight planning").font(Some(&ui.font_header)).position((PX, 12)).size((400, 22)).build(&mut ui.plan_header)?;
 
         nwg::Label::builder().parent(w).text("Airline").font(Some(&ui.font_small)).position((C[0], 40)).size((FW, 16)).build(&mut ui.plan_airline_label)?;
@@ -744,21 +744,24 @@ impl App {
             c.set_enabled(false);
         }
 
-        let by = 600;
+        let by = 604;
         nwg::Button::builder().parent(w).text("Generate").position((C[0], by)).size((FW, 30)).build(&mut ui.plan_go)?;
         nwg::Label::builder().parent(w).text("idle").font(Some(&ui.font_small)).position((C[1], by + 8)).size((390, 18)).build(&mut ui.plan_status)?;
 
-        // The map, beside the form, with the route it found under it.
-        nwg::ImageFrame::builder().parent(w).position((MAP_X, 40)).size((MAP_W, MAP_H)).build(&mut ui.plan_map)?;
-        nwg::Label::builder().parent(w).text("").font(Some(&ui.font_small)).position((MAP_X, 40 + MAP_H + 8)).size((MAP_W, 18)).build(&mut ui.plan_result)?;
+        // What came of the plan, under the form it was asked for with, so a reader's eye goes
+        // down one column rather than across the page and back.
+        nwg::Label::builder().parent(w).text("").font(Some(&ui.font_small)).position((C[0], by + 38)).size((526, 18)).build(&mut ui.plan_result)?;
         nwg::TextBox::builder()
             .parent(w)
             .readonly(true)
             .flags(nwg::TextBoxFlags::VISIBLE | nwg::TextBoxFlags::VSCROLL)
             .font(Some(&ui.font_small))
-            .position((MAP_X, 40 + MAP_H + 30))
-            .size((MAP_W, 160))
+            .position((C[0], by + 60))
+            .size((526, 132))
             .build(&mut ui.plan_route)?;
+
+        // The map takes the whole of the right-hand side.
+        nwg::ImageFrame::builder().parent(w).position((MAP_X, 40)).size((MAP_W, MAP_H)).build(&mut ui.plan_map)?;
 
         nwg::AnimationTimer::builder().parent(w).interval(Duration::from_millis(400)).active(false).build(&mut ui.plan_timer)?;
 
