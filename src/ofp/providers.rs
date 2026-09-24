@@ -27,7 +27,9 @@ pub trait Providers: Send + Sync {
     fn airport(&self, icao: &str) -> Option<Airport>;
     fn airports_near(&self, at: LatLon, radius_nm: f64, min_runway_ft: f64) -> Vec<(Airport, f64)>;
     fn aircraft_spec(&self, icao_type: &str) -> Result<AircraftSpec>;
-    fn wind_field(&self, bounds: Bounds, when: DateTime<Utc>) -> Result<Arc<dyn WindField>>;
+    /// The winds and temperatures aloft over a corridor: a run of rectangles covering the way
+    /// from one airport to another, rather than one box round the two of them.
+    fn wind_field(&self, corridor: &[Bounds], when: DateTime<Utc>) -> Result<Arc<dyn WindField>>;
     fn metar(&self, icao: &str) -> Result<Metar>;
     fn taf(&self, icao: &str) -> Result<Taf>;
     fn sigmets(&self, bounds: Bounds, when: DateTime<Utc>) -> Result<Vec<Hazard>>;
@@ -60,8 +62,8 @@ impl Providers for RealProviders {
         perf::spec(icao_type)
     }
 
-    fn wind_field(&self, bounds: Bounds, when: DateTime<Utc>) -> Result<Arc<dyn WindField>> {
-        Ok(Arc::new(weather::Forecast::fetch(bounds, when)?))
+    fn wind_field(&self, corridor: &[Bounds], when: DateTime<Utc>) -> Result<Arc<dyn WindField>> {
+        Ok(Arc::new(weather::Forecast::fetch_corridor(corridor, when)?))
     }
 
     fn metar(&self, icao: &str) -> Result<Metar> {
@@ -233,7 +235,7 @@ pub(crate) mod fake {
             Ok(spec())
         }
 
-        fn wind_field(&self, _bounds: Bounds, _when: DateTime<Utc>) -> Result<Arc<dyn WindField>> {
+        fn wind_field(&self, _corridor: &[Bounds], _when: DateTime<Utc>) -> Result<Arc<dyn WindField>> {
             if self.fails("wind_field") {
                 anyhow::bail!("no forecast today");
             }

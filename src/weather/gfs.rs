@@ -28,9 +28,20 @@ const CYCLE_HOURS: [u32; 4] = [0, 6, 12, 18];
 /// hours apart, bracketing the time asked for, each at every level in [`LEVELS_HPA`], laid
 /// out as flat grids ready to be indexed rather than searched.
 pub struct Forecast {
-    grid: grib2::GridDef,
+    /// One or more grids, each covering part of the area asked for. A corridor along a great
+    /// circle is not a rectangle, and the model's own subsetting service answers only with
+    /// rectangles, so a long route is asked for as a run of them.
+    tiles: Vec<Tile>,
     t0: DateTime<Utc>,
     t1: DateTime<Utc>,
+    /// The strongest wind anywhere in either snapshot of any tile, at each level, knots: what
+    /// [`Forecast::max_tailwind_kt`] answers from.
+    max_wind_kt_by_level: [f64; LEVELS_HPA.len()],
+}
+
+/// One rectangle of the forecast: both snapshots over one grid.
+struct Tile {
+    grid: grib2::GridDef,
     /// `level * ni * nj + j * ni + i`, metres per second, Kelvin.
     u0: Vec<f32>,
     v0: Vec<f32>,
@@ -38,9 +49,6 @@ pub struct Forecast {
     u1: Vec<f32>,
     v1: Vec<f32>,
     temp1: Vec<f32>,
-    /// The strongest wind anywhere in either snapshot, at each level, knots: what
-    /// [`Forecast::max_tailwind_kt`] answers from.
-    max_wind_kt_by_level: [f64; LEVELS_HPA.len()],
 }
 
 impl Forecast {
@@ -52,12 +60,24 @@ impl Forecast {
     /// `when`, three hours apart, are fetched so [`WindField::air`] can interpolate
     /// between them.
     pub fn fetch(bounds: Bounds, when: DateTime<Utc>) -> Result<Forecast> {
+        Forecast::fetch_corridor(&[bounds], when)
+    }
+
+    /// The forecast over a corridor: a run of rectangles covering the way from one airport to
+    /// another, as [`crate::route::ellipse::Ellipse::corridor`] cuts it.
+    ///
+    /// Every rectangle is a request of its own and they go out together, because they are
+    /// independent requests to the same service and a long route has several of them.
+    pub fn fetch_corridor(bounds: &[Bounds], when: DateTime<Utc>) -> Result<Forecast> {
         let http = default_http();
         let cache = default_cache();
         Forecast::fetch_with(&http, &cache, bounds, when, Utc::now())
     }
 
-    fn fetch_with(http: &Http, cache: &Cache, bounds: Bounds, when: DateTime<Utc>, now: DateTime<Utc>) -> Result<Forecast> {
+    fn fetch_with(http: &Http, cache: &Cache, bounds: &[Bounds], when: DateTime<Utc>, now: DateTime<Utc>) -> Result<Forecast> {
+        if bounds.is_empty() {
+            anyhow::bail!("no area asked for");
+        }
         let mut cycle = latest_published_cycle(now);
         let mut last_err = None;
         // Eight cycles back is two days: generous enough for NOMADS to be well behind,
@@ -74,35 +94,71 @@ impl Forecast {
         Err(last_err.unwrap_or_else(|| anyhow!("no GFS cycle answered")))
     }
 
-    fn fetch_cycle(http: &Http, cache: &Cache, bounds: Bounds, when: DateTime<Utc>, cycle: DateTime<Utc>) -> Result<Forecast> {
+    fn fetch_cycle(http: &Http, cache: &Cache, bounds: &[Bounds], when: DateTime<Utc>, cycle: DateTime<Utc>) -> Result<Forecast> {
+        use rayon::prelude::*;
         let hours_since = (when - cycle).num_seconds() as f64 / 3600.0;
         let lo_hour = (hours_since / 3.0).floor().max(0.0) as u32 * 3;
         let hi_hour = lo_hour + 3;
-        let fields_lo = fetch_hour(http, cache, cycle, lo_hour, bounds).with_context(|| format!("GFS {} f{lo_hour:03}", cycle.format("%Y%m%d%HZ")))?;
-        let fields_hi = fetch_hour(http, cache, cycle, hi_hour, bounds).with_context(|| format!("GFS {} f{hi_hour:03}", cycle.format("%Y%m%d%HZ")))?;
-        Forecast::assemble(fields_lo, fields_hi)
+        let fetched: Vec<Result<(Vec<grib2::Field>, Vec<grib2::Field>)>> = bounds
+            .par_iter()
+            .map(|b| {
+                let lo = fetch_hour(http, cache, cycle, lo_hour, *b).with_context(|| format!("GFS {} f{lo_hour:03}", cycle.format("%Y%m%d%HZ")))?;
+                let hi = fetch_hour(http, cache, cycle, hi_hour, *b).with_context(|| format!("GFS {} f{hi_hour:03}", cycle.format("%Y%m%d%HZ")))?;
+                Ok((lo, hi))
+            })
+            .collect();
+        let mut pairs = Vec::with_capacity(fetched.len());
+        for one in fetched {
+            pairs.push(one?);
+        }
+        Forecast::assemble(pairs)
     }
 
-    fn assemble(fields_lo: Vec<grib2::Field>, fields_hi: Vec<grib2::Field>) -> Result<Forecast> {
-        let grid = fields_lo.first().map(|f| f.grid).ok_or_else(|| anyhow!("GFS answered with no fields"))?;
-        let snap_lo = build_snapshot(&fields_lo, &grid)?;
-        let snap_hi = build_snapshot(&fields_hi, &grid)?;
-        let n = grid.ni * grid.nj;
+    fn assemble(pairs: Vec<(Vec<grib2::Field>, Vec<grib2::Field>)>) -> Result<Forecast> {
+        let mut tiles = Vec::with_capacity(pairs.len());
         let mut max_wind_kt_by_level = [0.0f64; LEVELS_HPA.len()];
-        for (level, slot) in max_wind_kt_by_level.iter_mut().enumerate() {
-            let mut m = 0.0f64;
-            for (u, v) in [(&snap_lo.u, &snap_lo.v), (&snap_hi.u, &snap_hi.v)] {
-                for k in 0..n {
-                    let idx = level * n + k;
-                    let speed = ((u[idx] as f64).powi(2) + (v[idx] as f64).powi(2)).sqrt() * MPS_TO_KT;
-                    if speed.is_finite() && speed > m {
-                        m = speed;
+        let (mut t0, mut t1) = (None, None);
+        for (fields_lo, fields_hi) in pairs {
+            let grid = fields_lo.first().map(|f| f.grid).ok_or_else(|| anyhow!("GFS answered with no fields"))?;
+            let snap_lo = build_snapshot(&fields_lo, &grid)?;
+            let snap_hi = build_snapshot(&fields_hi, &grid)?;
+            let n = grid.ni * grid.nj;
+            // The bound the route search leans on has to hold over the whole corridor, so it is
+            // the strongest wind in any tile, not in whichever tile happened to come first.
+            for (level, slot) in max_wind_kt_by_level.iter_mut().enumerate() {
+                for (u, v) in [(&snap_lo.u, &snap_lo.v), (&snap_hi.u, &snap_hi.v)] {
+                    for k in 0..n {
+                        let idx = level * n + k;
+                        let speed = ((u[idx] as f64).powi(2) + (v[idx] as f64).powi(2)).sqrt() * MPS_TO_KT;
+                        if speed.is_finite() && speed > *slot {
+                            *slot = speed;
+                        }
                     }
                 }
             }
-            *slot = m;
+            t0.get_or_insert(snap_lo.time);
+            t1.get_or_insert(snap_hi.time);
+            tiles.push(Tile { grid, u0: snap_lo.u, v0: snap_lo.v, temp0: snap_lo.t, u1: snap_hi.u, v1: snap_hi.v, temp1: snap_hi.t });
         }
-        Ok(Forecast { grid, t0: snap_lo.time, t1: snap_hi.time, u0: snap_lo.u, v0: snap_lo.v, temp0: snap_lo.t, u1: snap_hi.u, v1: snap_hi.v, temp1: snap_hi.t, max_wind_kt_by_level })
+        Ok(Forecast {
+            tiles,
+            t0: t0.ok_or_else(|| anyhow!("GFS answered with no fields"))?,
+            t1: t1.ok_or_else(|| anyhow!("GFS answered with no fields"))?,
+            max_wind_kt_by_level,
+        })
+    }
+
+    /// The tile a place falls in, or failing that the one whose grid it is nearest: a route that
+    /// strays off the corridor gets the air at the corridor's edge, which is very nearly the air
+    /// where it actually is, rather than still air or no answer at all.
+    fn tile_for(&self, at: LatLon) -> &Tile {
+        if let Some(t) = self.tiles.iter().find(|t| t.covers(at)) {
+            return t;
+        }
+        self.tiles
+            .iter()
+            .min_by(|a, b| a.outside_by(at).total_cmp(&b.outside_by(at)))
+            .expect("a forecast is never built with no tiles")
     }
 
     /// The strongest wind anywhere in the grid at a level, knots: the bound the route
@@ -111,6 +167,40 @@ impl Forecast {
     pub fn max_tailwind_kt(&self, level_ft: f64) -> f64 {
         let (lo, hi, _) = level_bracket(isa_pressure_hpa(level_ft));
         self.max_wind_kt_by_level[lo].max(self.max_wind_kt_by_level[hi])
+    }
+
+    #[inline]
+    fn time_frac(&self, when: DateTime<Utc>) -> f64 {
+        let span = (self.t1 - self.t0).num_seconds() as f64;
+        if span <= 0.0 {
+            return 0.0;
+        }
+        ((when - self.t0).num_seconds() as f64 / span).clamp(0.0, 1.0)
+    }
+}
+
+impl Tile {
+    /// Whether a place is on this tile's own grid.
+    fn covers(&self, at: LatLon) -> bool {
+        let north = self.grid.la1;
+        let south = self.grid.la1 - self.grid.dj * (self.grid.nj.saturating_sub(1)) as f64;
+        let east_span = self.grid.di * (self.grid.ni.saturating_sub(1)) as f64;
+        let along = (at.1 - self.grid.lo1).rem_euclid(360.0);
+        at.0 <= north.max(south) && at.0 >= north.min(south) && along <= east_span
+    }
+
+    /// How far outside this tile a place lies, degrees, for picking the nearest tile to one that
+    /// no tile covers. Nought means it is on the grid.
+    fn outside_by(&self, at: LatLon) -> f64 {
+        let north = self.grid.la1;
+        let south = self.grid.la1 - self.grid.dj * (self.grid.nj.saturating_sub(1)) as f64;
+        let (lo_lat, hi_lat) = (north.min(south), north.max(south));
+        let east_span = self.grid.di * (self.grid.ni.saturating_sub(1)) as f64;
+        let along = (at.1 - self.grid.lo1).rem_euclid(360.0);
+        let d_lat = (lo_lat - at.0).max(at.0 - hi_lat).max(0.0);
+        // Outside in longitude either side of the grid's own run, whichever way round is nearer.
+        let d_lon = if along <= east_span { 0.0 } else { (along - east_span).min(360.0 - along) };
+        (d_lat * d_lat + d_lon * d_lon).sqrt()
     }
 
     /// The four grid corners around a place, and the fractions across them: index
@@ -144,24 +234,16 @@ impl Forecast {
         };
         (i0, i1, j0, j1, fx, fy)
     }
-
-    #[inline]
-    fn time_frac(&self, when: DateTime<Utc>) -> f64 {
-        let span = (self.t1 - self.t0).num_seconds() as f64;
-        if span <= 0.0 {
-            return 0.0;
-        }
-        ((when - self.t0).num_seconds() as f64 / span).clamp(0.0, 1.0)
-    }
 }
 
 impl WindField for Forecast {
     fn air(&self, at: LatLon, alt_ft: f64, when: DateTime<Utc>) -> Air {
         let (lo, hi, lfrac) = level_bracket(isa_pressure_hpa(alt_ft));
-        let (i0, i1, j0, j1, fx, fy) = self.cell(at);
+        let tile = self.tile_for(at);
+        let (i0, i1, j0, j1, fx, fy) = tile.cell(at);
         let tfrac = self.time_frac(when);
-        let n = self.grid.ni * self.grid.nj;
-        let ni = self.grid.ni;
+        let n = tile.grid.ni * tile.grid.nj;
+        let ni = tile.grid.ni;
 
         // Bilinear in position at one level, then linear in log-pressure between the two
         // bracketing levels, then linear in time between the two forecast snapshots: no
@@ -185,8 +267,8 @@ impl WindField for Forecast {
             let thi = at_level(t, hi);
             (ulo + (uhi - ulo) * lfrac, vlo + (vhi - vlo) * lfrac, tlo + (thi - tlo) * lfrac)
         };
-        let (u0, v0, t0) = snapshot(&self.u0, &self.v0, &self.temp0);
-        let (u1, v1, t1) = snapshot(&self.u1, &self.v1, &self.temp1);
+        let (u0, v0, t0) = snapshot(&tile.u0, &tile.v0, &tile.temp0);
+        let (u1, v1, t1) = snapshot(&tile.u1, &tile.v1, &tile.temp1);
         let u = u0 + (u1 - u0) * tfrac;
         let v = v0 + (v1 - v0) * tfrac;
         let t_k = t0 + (t1 - t0) * tfrac;
@@ -422,7 +504,86 @@ mod tests {
         let (u1, v1, temp1) = make(true);
         let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
         let t1 = t0 + Duration::hours(3);
-        Forecast { grid, t0, t1, u0, v0, temp0, u1, v1, temp1, max_wind_kt_by_level: [50.0; LEVELS_HPA.len()] }
+        Forecast { tiles: vec![Tile { grid, u0, v0, temp0, u1, v1, temp1 }], t0, t1, max_wind_kt_by_level: [50.0; LEVELS_HPA.len()] }
+    }
+
+    /// A forecast of two tiles side by side, each holding a flat wind of its own, so which tile
+    /// a lookup reads from is visible in the answer.
+    fn two_tiles() -> Forecast {
+        let levels = LEVELS_HPA.len();
+        let tile = |lo1: f64, u_ms: f32| {
+            let grid = grib2::GridDef { ni: 5, nj: 5, la1: 50.0, lo1, di: 1.0, dj: 1.0 };
+            let n = grid.ni * grid.nj;
+            Tile { grid, u0: vec![u_ms; levels * n], v0: vec![0.0; levels * n], temp0: vec![250.0; levels * n], u1: vec![u_ms; levels * n], v1: vec![0.0; levels * n], temp1: vec![250.0; levels * n] }
+        };
+        // West tile spans 0..4 E, east tile 10..14 E, with a gap between them.
+        let t0 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        Forecast { tiles: vec![tile(0.0, 10.0), tile(10.0, 40.0)], t0, t1: t0 + Duration::hours(3), max_wind_kt_by_level: [100.0; LEVELS_HPA.len()] }
+    }
+
+    /// A lookup reads the tile the place is on, not whichever tile came first.
+    #[test]
+    fn a_place_is_read_from_the_tile_it_falls_on() {
+        let f = two_tiles();
+        let when = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        let west = f.air((48.0, 2.0), 30_000.0, when);
+        let east = f.air((48.0, 12.0), 30_000.0, when);
+        assert!((west.wind_kt - 10.0 * MPS_TO_KT).abs() < 0.5, "{west:?}");
+        assert!((east.wind_kt - 40.0 * MPS_TO_KT).abs() < 0.5, "{east:?}");
+    }
+
+    /// A place in the gap between two tiles, or off the end of both, is read from the nearer of
+    /// them rather than answered with still air or a panic. A route that strays off the corridor
+    /// gets the air at its edge, which is very nearly the air where it is.
+    #[test]
+    fn a_place_no_tile_covers_is_read_from_the_nearest_one() {
+        let f = two_tiles();
+        let when = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+        // In the gap, but nearer the west tile's eastern edge.
+        let near_west = f.air((48.0, 5.0), 30_000.0, when);
+        assert!((near_west.wind_kt - 10.0 * MPS_TO_KT).abs() < 0.5, "{near_west:?}");
+        // In the gap, nearer the east tile.
+        let near_east = f.air((48.0, 9.0), 30_000.0, when);
+        assert!((near_east.wind_kt - 40.0 * MPS_TO_KT).abs() < 0.5, "{near_east:?}");
+        // Well north of both, which is outside in latitude rather than longitude.
+        let north = f.air((80.0, 2.0), 30_000.0, when);
+        assert!(north.wind_kt.is_finite(), "{north:?}");
+    }
+
+    /// The bound the route search leans on is the strongest wind in *any* tile: a search that
+    /// believed the calmest tile's maximum would underestimate what is left to fly and could
+    /// return a route that is not the cheapest.
+    #[test]
+    fn the_wind_bound_covers_every_tile() {
+        let mut pairs = Vec::new();
+        for u in [5.0f32, 60.0f32] {
+            let grid = grib2::GridDef { ni: 2, nj: 2, la1: 50.0, lo1: 0.0, di: 1.0, dj: 1.0 };
+            let n = grid.ni * grid.nj;
+            let field = |cat: u8, num: u8, value: f32, level: f64| grib2::Field {
+                grid,
+                reference_time: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+                forecast_hours: 0.0,
+                discipline: 0,
+                category: cat,
+                number: num,
+                level_type: 100,
+                level_value: level * 100.0,
+                values: vec![value; n],
+            };
+            let mut lo = Vec::new();
+            let mut hi = Vec::new();
+            for level in LEVELS_HPA {
+                for (cat, num, v) in [(2u8, 2u8, u), (2, 3, 0.0), (0, 0, 250.0)] {
+                    lo.push(field(cat, num, v, level));
+                    hi.push(field(cat, num, v, level));
+                }
+            }
+            pairs.push((lo, hi));
+        }
+        let f = Forecast::assemble(pairs).expect("two tiles assemble");
+        assert_eq!(f.tiles.len(), 2);
+        let bound = f.max_tailwind_kt(30_000.0);
+        assert!((bound - 60.0 * MPS_TO_KT).abs() < 1.0, "the bound is the strongest tile's, got {bound}");
     }
 
     #[test]

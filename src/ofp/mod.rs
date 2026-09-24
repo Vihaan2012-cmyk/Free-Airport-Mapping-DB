@@ -329,6 +329,12 @@ pub fn dispatch(opts: &DispatchOptions) -> Result<Dispatch> {
 
 /// Plan a flight from end to end against any `Providers`: what every other command in
 /// this module is built on top of, and what the tests exercise directly.
+/// How far either side of the great circle the winds are asked for. A route is allowed to
+/// wander this far off the direct line and still be flown on forecast air rather than on the
+/// air at the corridor's edge; it is the margin the one box round the two airports used, kept
+/// so that widening the corridor is a deliberate change and not a side effect of this one.
+const WIND_MARGIN_NM: f64 = 300.0;
+
 pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispatch> {
     let mut warnings: Vec<String> = Vec::new();
     // A plan is built the way a map is: one named thing after another. Each is announced
@@ -361,6 +367,16 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
     say("airports", format!("{} to {}, {direct_nm:.0} nm direct", origin.icao, destination.icao));
     say("aircraft", format!("{} {}, ceiling FL{:.0}", spec.icao_type, spec.name, spec.ceiling_ft / 100.0));
 
+    // The area everything about the air is asked over. One box round the two airports is the
+    // box round two *points*, and on a long route the great circle between them leaves it: from
+    // Bangalore to New York the box reaches 45 degrees north while the route runs past 70. So
+    // the air is asked for over a corridor that follows the circle, cut into the run of
+    // rectangles a rectangular source can answer -- fewer grid points on most routes, and on
+    // the ones where it is not fewer it is at least the right ones.
+    let corridor = crate::route::ellipse::Ellipse::new(origin.pos, destination.pos, 1.0, 1.0).corridor(WIND_MARGIN_NM);
+    // A single box still round the whole of it, for the sources that take one area and whose
+    // answers are a handful of items rather than a grid: hazards and notices are cheap to ask
+    // widely for, and narrowing them would only risk missing one.
     let bounds = Bounds::around(origin.pos, destination.pos, 300.0);
     let extra = ConditionsFile::load(opts.conditions_file.as_deref(), &mut warnings);
 
@@ -371,7 +387,7 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
     } else if opts.offline {
         Arc::new(dispatch::StillAir)
     } else {
-        match p.wind_field(bounds, opts.off_block) {
+        match p.wind_field(&corridor, opts.off_block) {
             Ok(w) => w,
             Err(e) => {
                 warnings.push(format!("winds aloft not available ({e:#}); planned on still air"));
@@ -380,7 +396,7 @@ pub fn dispatch_with(opts: &DispatchOptions, p: &dyn Providers) -> Result<Dispat
         }
     };
 
-    say("winds aloft", if opts.offline { "still air (offline)".to_string() } else { "forecast".to_string() });
+    say("winds aloft", if opts.offline { "still air (offline)".to_string() } else { format!("forecast over {} strip(s)", corridor.len()) });
 
     // The reports at both ends.
     let origin_metar = if opts.offline { None } else { p.metar(&origin.icao).map_err(|e| warnings.push(format!("{} METAR not available: {e:#}", origin.icao))).ok() };
