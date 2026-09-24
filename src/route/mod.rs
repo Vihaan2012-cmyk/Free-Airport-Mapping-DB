@@ -44,6 +44,7 @@ pub mod cost;
 pub mod directs;
 pub mod bridge;
 pub mod ellipse;
+pub mod progress;
 pub mod reference;
 pub mod etops;
 pub mod graph;
@@ -698,14 +699,22 @@ pub fn plan_routes(graph: &Graph, req: &RouteRequest, most: usize) -> anyhow::Re
     // flight's route worse, and a fatter ellipse offers the search fixes a shorter one would
     // have kept it from ever considering. So both escalate together, only when a narrower
     // rung fails outright: see [`STAGES`]'s own doc comment for why they are one ladder.
+    progress::report(progress::Event::Started { origin: req.origin.pos, destination: req.destination.pos });
     let mut last: anyhow::Error = anyhow::anyhow!("no route");
     for stage in STAGES {
         match Context::build(graph, req, stage.join_width, stage.ellipse_factor, Some(stage.direct_max_nm)).and_then(|ctx| plan_from_context(&ctx, req, most)) {
-            Ok(found) if !found.is_empty() => return Ok(found),
+            Ok(found) if !found.is_empty() => {
+                if let Some(best) = found.first() {
+                    progress::report(progress::Event::Best { path: best.points.iter().map(|w| w.pos).collect(), nm: best.distance_nm() });
+                }
+                progress::report(progress::Event::Finished { found: true });
+                return Ok(found);
+            }
             Ok(_) => last = anyhow::anyhow!("no route"),
             Err(e) => last = e,
         }
     }
+    progress::report(progress::Event::Finished { found: false });
     Err(last)
 }
 
