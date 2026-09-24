@@ -1807,6 +1807,8 @@ fn route_map_cmd(a: RouteMapArgs) -> Result<()> {
         })
         .collect();
 
+    let graph = crate::route::Graph::shared();
+    let floor = crate::route::reference::shortest_path(graph, origin, destination, 600.0);
     let ground = d.route.distance_nm();
     let direct = crate::dispatch::distance_nm(origin, destination);
     let map = Map {
@@ -1817,16 +1819,18 @@ fn route_map_cmd(a: RouteMapArgs) -> Result<()> {
         route: d.route.points.iter().map(|w| (w.ident.clone(), w.pos)).collect(),
         ellipses,
         corridor: Ellipse::new(origin, destination, 1.0, 1.0).corridor(300.0),
-        network: crate::route::Graph::shared().fixes().iter().map(|f| f.pos).collect::<Vec<LatLon>>(),
+        network: graph.fixes().iter().map(|f| f.pos).collect::<Vec<LatLon>>(),
+        floor: floor.as_ref().map(|(p, _)| p.iter().map(|(_, pos)| *pos).collect()).unwrap_or_default(),
         caption: format!(
-            "{} -> {}  {}  {:.0} nm flown, {:.0} nm direct ({:+.0}%)  {} fixes",
+            "{} -> {}  {}  {:.0} nm flown, {:.0} nm direct ({:+.0}%)  {} fixes{}",
             d.route.origin.icao,
             d.route.destination.icao,
             d.spec.icao_type,
             ground,
             direct,
             (ground / direct.max(1.0) - 1.0) * 100.0,
-            d.route.points.len()
+            d.route.points.len(),
+            floor.as_ref().map(|(_, nm)| format!("   shortest possible {nm:.0} nm")).unwrap_or_default()
         ),
     };
 
