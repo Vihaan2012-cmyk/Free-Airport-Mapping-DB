@@ -318,8 +318,40 @@ pub(crate) mod fake {
             }
             let nm = req.route.distance_nm();
             let block_kg = 4200.0;
+            // A flat profile, but a profile: every renderer's navigation log, and every export
+            // built from one, is only exercised if the fake hands back the points a real
+            // performance model would. A plan with no profile prints no log, and a log that is
+            // never printed in a test is a log whose columns nothing checks.
+            let mut profile = Vec::new();
+            let (mut dist_nm, mut minutes) = (0.0, 0.0);
+            for (i, w) in req.route.points.iter().enumerate() {
+                if i > 0 {
+                    let prev = &req.route.points[i - 1];
+                    dist_nm += dispatch::distance_nm(prev.pos, w.pos);
+                    minutes = dist_nm / 440.0 * 60.0;
+                }
+                let used = block_kg * 0.85 * (dist_nm / nm.max(1.0));
+                profile.push(dispatch::ProfilePoint {
+                    ident: w.ident.clone(),
+                    kind: if i == 1 { dispatch::ProfileKind::TopOfClimb } else { dispatch::ProfileKind::Waypoint },
+                    pos: w.pos,
+                    via: w.via.clone(),
+                    alt_ft: req.route.cruise_ft,
+                    dist_nm,
+                    time_min: minutes,
+                    fuel_used_kg: used,
+                    fuel_remaining_kg: block_kg - used,
+                    gross_kg: req.spec.oew_kg + req.payload_kg + block_kg - used,
+                    track_true_deg: if i == 0 { 0.0 } else { dispatch::bearing_deg(req.route.points[i - 1].pos, w.pos) },
+                    tas_kt: 440.0,
+                    gs_kt: 428.0,
+                    mach: 0.78,
+                    air: dispatch::Air { wind_from_deg: 270.0, wind_kt: 25.0, temp_c: -48.0 },
+                    mora_ft: Some(6_500.0),
+                });
+            }
             Ok(PerfPlan {
-                profile: Vec::new(),
+                profile,
                 fuel: FuelBreakdown { taxi_kg: 200.0, trip_kg: block_kg * 0.85, contingency_kg: block_kg * 0.05, alternate_kg: 500.0, final_reserve_kg: 300.0, extra_kg: 0.0, tanker_kg: 0.0, takeoff_kg: block_kg, block_kg: block_kg + 200.0, landing_kg: block_kg * 0.15 + 300.0 },
                 weights: Weights { oew_kg: req.spec.oew_kg, payload_kg: req.payload_kg, zfw_kg: req.spec.oew_kg + req.payload_kg, tow_kg: req.spec.oew_kg + req.payload_kg + block_kg, lw_kg: req.spec.oew_kg + req.payload_kg + block_kg * 0.15, max_zfw_kg: req.spec.mzfw_kg, max_tow_kg: req.spec.mtow_kg, max_lw_kg: req.spec.mlw_kg, limited_by: None },
                 step_climbs: Vec::new(),

@@ -289,7 +289,7 @@ fn fly_once(t: &TypeData, route: &FiledRoute, air: &dyn WindField, tow_kg: f64, 
                     weight = climb_here.end_weight_kg;
                     cruise_trace.push((dist, time, next_level, weight));
                     step_points.push(synthetic_point(&format!("STEP{}", step_climbs.len() + 1), ProfileKind::StepClimb, pos_along(points, &route_dist, dist.min(tod_dist)), "", next_level, dist, time, weight, tow_kg, zfw_kg, track, mach, local));
-                    step_climbs.push((format!("{:.0} nm from the origin", dist), next_level));
+                    step_climbs.push((fix_at(points, &route_dist, dist), next_level));
                     level = next_level;
                     continue;
                 }
@@ -386,6 +386,19 @@ fn fly_once(t: &TypeData, route: &FiledRoute, air: &dyn WindField, tow_kg: f64, 
         cruise_level_used: cruise_level,
         total_dist_nm: total_nm,
     }
+}
+
+/// The fix a distance along the route is at, for naming a step climb. A step is read off the
+/// plan against the route, so it is named for the nearest fix rather than described by how far
+/// along it happens: a crew steps at MESAN, not at "1,204 nm from the origin".
+fn fix_at(points: &[crate::dispatch::Waypoint], route_dist: &[f64], dist_nm: f64) -> String {
+    points
+        .iter()
+        .zip(route_dist)
+        .filter(|(w, _)| !w.ident.is_empty())
+        .min_by(|a, b| (a.1 - dist_nm).abs().total_cmp(&(b.1 - dist_nm).abs()))
+        .map(|(w, _)| w.ident.clone())
+        .unwrap_or_else(|| format!("{dist_nm:.0}NM"))
 }
 
 /// The position at a distance along the filed route's own points (not a trace).
