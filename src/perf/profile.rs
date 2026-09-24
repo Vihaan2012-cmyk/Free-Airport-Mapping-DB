@@ -200,6 +200,26 @@ fn synthetic_point(ident: &str, kind: ProfileKind, pos: crate::dispatch::LatLon,
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Make the climb monotonic and honour a cap at a fix for every fix before it.
+fn enforce_climb(profile: &mut [crate::dispatch::ProfilePoint], points: &[crate::dispatch::Waypoint], toc_dist: f64) {
+    let caps: std::collections::HashMap<&str, f64> = points.iter().filter_map(|w| w.alt_max_ft.map(|m| (w.ident.as_str(), m))).collect();
+    let climbing: Vec<usize> = (0..profile.len()).filter(|&i| profile[i].dist_nm <= toc_dist).collect();
+    // Backwards: a cap at a fix binds everything before it, because the aeroplane is climbing.
+    let mut cap = f64::MAX;
+    for &i in climbing.iter().rev() {
+        if let Some(&c) = caps.get(profile[i].ident.as_str()) {
+            cap = cap.min(c);
+        }
+        profile[i].alt_ft = profile[i].alt_ft.min(cap);
+    }
+    // Forwards: never lose height on a departure.
+    let mut floor = f64::MIN;
+    for &i in &climbing {
+        profile[i].alt_ft = profile[i].alt_ft.max(floor);
+        floor = profile[i].alt_ft;
+    }
+}
+
 fn fly_once(t: &TypeData, route: &FiledRoute, air: &dyn WindField, tow_kg: f64, zfw_kg: f64, mach: f64, mut cruise_level: f64, climb_cas: f64, climb_mach: f64, descent_cas: f64, descent_mach: f64, step_ft: f64, step_climbs_on: bool, rvsm: bool, scheme: LevelScheme, start_time: DateTime<Utc>, warnings: &mut Vec<String>) -> FlightResult {
     let points = &route.points;
     let mut route_dist = vec![0.0];
@@ -333,6 +353,15 @@ fn fly_once(t: &TypeData, route: &FiledRoute, air: &dyn WindField, tow_kg: f64, 
         n += 1.0;
         profile.push(synthetic_point(&wp.ident, ProfileKind::Waypoint, wp.pos, &wp.via, alt_ft, d, t_min, w_kg, tow_kg, zfw_kg, track, phase_mach, local_air));
     }
+    // The constraints applied point by point above say only where the aeroplane must be at
+    // each fix; they do not make the profile between them flyable. A climb that is pulled up
+    // to a minimum at one fix and down to a maximum at the next reads as a descent in the
+    // middle of a departure, and a cap at a fix says nothing about the fixes before it even
+    // though an aeroplane climbing towards that cap must already be below it. Both are fixed
+    // by two passes over the climb: backwards, carrying each cap to every fix before it, and
+    // then forwards, refusing to let the altitude fall.
+    enforce_climb(&mut profile, points, toc_dist);
+
     // The top of climb and the top of descent, inserted in their place by distance.
     let toc_pos = pos_along(points, &route_dist, toc_dist);
     let toc_air = air.air(toc_pos, cruise_level, start_time + chrono::Duration::milliseconds((toc_time * 60_000.0) as i64));
@@ -418,7 +447,12 @@ pub fn plan(req: &PerfRequest) -> anyhow::Result<PerfPlan> {
         d if d < 150.0 => 21_000.0,
         d if d < 300.0 => 27_000.0,
         d if d < 500.0 => 33_000.0,
-        d if d < 800.0 => 37_000.0,
+        d if d < 800.0 => 36_000.0,
+        // A sector of eight hundred to twelve hundred miles is flown in the middle thirties,
+        // not at the aeroplane's ceiling: the climb and descent take too large a share of it
+        // for the last few thousand feet to pay for themselves. London to Rome is eight
+        // hundred and forty-five miles and is flown at FL360 to FL380, not FL390.
+        d if d < 1200.0 => 38_000.0,
         _ => f64::MAX,
     };
     // The cap applies whichever way the level got here: a level the route search already

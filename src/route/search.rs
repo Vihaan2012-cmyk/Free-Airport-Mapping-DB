@@ -379,7 +379,29 @@ fn reconstruct(n_levels: usize, scratch: &Scratch, goal_state: usize, cost: f32,
 /// affordable exactly because it happens only the once, after the search, rather than
 /// inside it.
 #[allow(clippy::too_many_arguments)]
-pub fn refine(compact: &Compact, steps: &[Step], level_of: &dyn Fn(u8) -> f64, cost: &dyn crate::dispatch::CostModel, cost_index: f64, when: chrono::DateTime<chrono::Utc>, hazards: &[crate::dispatch::Hazard], max_direct_nm: f64) -> Vec<Step> {
+/// Straighten a route where a direct leg is shorter, clear and allowed.
+///
+/// The last of those three used not to be checked. A shortcut was tested against the hazards
+/// and the cost but never against the rules, so where a rule forbids an airway between two
+/// fixes this could redraw the same two fixes as an unnamed direct leg and call it an
+/// improvement — the aeroplane flying exactly the line the rule exists to keep it off. That is
+/// why the length of a shortcut was held down to the same limit as a join, which cost route
+/// quality everywhere to guard against a fault in one place. Now the rules are asked, and a
+/// shortcut is allowed only if they permit it.
+#[allow(clippy::too_many_arguments)]
+pub fn refine(
+    compact: &Compact,
+    steps: &[Step],
+    level_of: &dyn Fn(u8) -> f64,
+    cost: &dyn crate::dispatch::CostModel,
+    cost_index: f64,
+    when: chrono::DateTime<chrono::Utc>,
+    hazards: &[crate::dispatch::Hazard],
+    max_direct_nm: f64,
+    rules: &[&dyn crate::dispatch::EdgeRule],
+    ends: (&str, &str),
+    ident_of: &dyn Fn(u32) -> String,
+) -> Vec<Step> {
     if steps.len() < 3 {
         return steps.to_vec();
     }
@@ -402,7 +424,22 @@ pub fn refine(compact: &Compact, steps: &[Step], level_of: &dyn Fn(u8) -> f64, c
             if avoid.iter().any(|s| s.crossed_by(from, to)) {
                 continue;
             }
-            let direct = cost.leg(&crate::dispatch::LegQuery { from, to, level_ft, when, flown_nm: 0.0 }).value(cost_index);
+            // What the rules make of flying this line as a direct leg.
+            let (from_id, to_id) = (ident_of(steps[i].fix), ident_of(steps[j].fix));
+            let q = crate::dispatch::EdgeQuery { from: &from_id, from_pos: from, to: &to_id, to_pos: to, airway: "DCT", level_ft, when, origin: ends.0, destination: ends.1 };
+            let mut penalty = 1.0f64;
+            let mut forbidden = false;
+            for rule in rules {
+                match rule.check(&q) {
+                    crate::dispatch::Verdict::Forbid(_) => forbidden = true,
+                    crate::dispatch::Verdict::Penalise(f) => penalty *= f.max(1.0),
+                    crate::dispatch::Verdict::Allow => {}
+                }
+            }
+            if forbidden {
+                continue;
+            }
+            let direct = cost.leg(&crate::dispatch::LegQuery { from, to, level_ft, when, flown_nm: 0.0 }).value(cost_index) * penalty;
             let mut along = 0.0f64;
             for k in i..j {
                 let a = compact.pos(steps[k].fix);

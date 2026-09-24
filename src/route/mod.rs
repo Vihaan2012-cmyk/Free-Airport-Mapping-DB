@@ -68,6 +68,11 @@ pub use hazard::{crosses, midpoint};
 /// direct leg between two enroute fixes may be over land, where free-route airspace is
 /// generally good for a few hundred miles at a time.
 const MAX_DIRECT_NM: f64 = 220.0;
+/// How far the refinement pass may straighten a route in one leg. Longer than a join, because
+/// a join is a leg onto the network from an aerodrome while this is a leg between two fixes the
+/// route already flies over — and because the rules are now asked whether it is allowed, which
+/// is what used to hold it down to the same figure.
+const REFINE_MAX_NM: f64 = 600.0;
 /// The longest a free-route direct leg may be over open ocean, tried only once nothing
 /// shorter connects at all: there is nothing to fly between out there but the oceanic
 /// reporting points a track message once joined, spaced widely enough that
@@ -532,7 +537,23 @@ impl<'a> Context<'a> {
                 Box::new(move |idx: u8| levels_ft[idx as usize])
             }
         };
-        let refined = search::refine(&self.compact, &found.steps, level_of.as_ref(), self.req.cost, self.req.cost_index, self.frozen_when, &hazards, MAX_DIRECT_NM);
+        // With the rules asked, a shortcut can be allowed to run further than a join does:
+        // the reason it was held to the same short limit was that a long one might redraw a
+        // forbidden airway as a direct leg, and that is now checked rather than guarded against.
+        let ident_of = |node: u32| self.graph.fix_id(node).to_string();
+        let refined = search::refine(
+            &self.compact,
+            &found.steps,
+            level_of.as_ref(),
+            self.req.cost,
+            self.req.cost_index,
+            self.frozen_when,
+            &hazards,
+            REFINE_MAX_NM,
+            &rules,
+            (&self.req.origin.icao, &self.req.destination.icao),
+            &ident_of,
+        );
         let route = self.assemble(refined, level_of.as_ref());
         Some((route, AttemptStats { edges_costed: costed_total, nodes_expanded: expanded, cost: winning_cost }))
     }
@@ -946,13 +967,29 @@ mod tests {
     /// A rule that forbids one named airway outright, at any level: used below to force a
     /// route onto a fix that would otherwise never be worth the search's while, so a test
     /// can tell whether the ellipse — not the cost — is what kept a fix off the route.
+    /// A rule that forbids an airway — and the line it occupies, however it is filed.
+    ///
+    /// The second half matters. A rule that only matched the airway's *name* would let the
+    /// refinement pass redraw exactly the same two points as an unnamed direct leg and call it
+    /// an improvement, which is the fault `search::refine` now guards against: a real
+    /// restriction keeps an aeroplane off a line, not off a name.
     struct ForbidAirway(&'static str);
+    impl ForbidAirway {
+        /// Whether a leg runs between the same two places the forbidden airway joins, within a
+        /// mile either end.
+        fn same_line(q: &EdgeQuery) -> bool {
+            // The two ends of `UDIR` in `direct_and_a_far_detour`.
+            const FORBIDDEN: [(f64, f64); 2] = [(0.0, 0.0), (0.0, 8.0)];
+            let near = |a: LatLon, b: LatLon| distance_nm(a, b) < 60.0;
+            (near(q.from_pos, FORBIDDEN[0]) && near(q.to_pos, FORBIDDEN[1])) || (near(q.from_pos, FORBIDDEN[1]) && near(q.to_pos, FORBIDDEN[0]))
+        }
+    }
     impl EdgeRule for ForbidAirway {
         fn name(&self) -> &str {
             "forbid airway"
         }
         fn check(&self, q: &EdgeQuery) -> Verdict {
-            if q.airway == self.0 {
+            if q.airway == self.0 || (q.airway == "DCT" && ForbidAirway::same_line(q)) {
                 Verdict::Forbid("test".into())
             } else {
                 Verdict::Allow

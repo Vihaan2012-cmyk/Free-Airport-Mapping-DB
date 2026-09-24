@@ -616,6 +616,12 @@ pub fn airway_segments() -> Vec<AirwaySegment> {
     }
 }
 
+/// Where the flattened route network is kept between runs, keyed like everything else read
+/// whole out of one navigation database.
+pub fn graph_cache_key() -> Option<String> {
+    cache_key(database()?, "route-graph")
+}
+
 /// A cache key for something read whole out of one navigation database: the cycle it
 /// publishes, and the file's own length, so that a database replaced in place without the
 /// cycle changing is still noticed.
