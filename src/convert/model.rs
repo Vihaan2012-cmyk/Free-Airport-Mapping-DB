@@ -11,6 +11,7 @@
 
 /// A full navigation cycle, ready to write to any target format.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct NavSet {
     /// AIRAC cycle, e.g. "2503".
     pub cycle: String,
@@ -28,6 +29,7 @@ pub struct NavSet {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct AirportRec {
     pub icao: String,
     pub name: String,
@@ -61,6 +63,7 @@ pub enum Surface {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct RunwayRec {
     pub airport_icao: String,
     /// e.g. "09L".
@@ -91,6 +94,7 @@ pub enum NavaidKind {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct NavaidRec {
     pub ident: String,
     pub kind: NavaidKind,
@@ -118,6 +122,7 @@ pub enum IlsCategory {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct IlsRec {
     pub ident: String,
     pub airport_icao: String,
@@ -136,6 +141,7 @@ pub struct IlsRec {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct WaypointRec {
     pub ident: String,
     pub region_code: String,
@@ -157,6 +163,7 @@ pub enum AirwayLevel {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct AirwayLegRec {
     pub sequence: u32,
     pub from_ident: String,
@@ -169,6 +176,7 @@ pub struct AirwayLegRec {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct AirwayRec {
     pub ident: String,
     pub legs: Vec<AirwayLegRec>,
@@ -262,6 +270,7 @@ pub enum AltitudeRule {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct LegRec {
     pub sequence: u32,
     pub path_terminator: PathTerminator,
@@ -298,6 +307,7 @@ pub struct LegRec {
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct ProcedureRec {
     pub airport_icao: String,
     pub kind: ProcKind,
