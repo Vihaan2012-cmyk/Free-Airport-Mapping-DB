@@ -29,6 +29,10 @@ use std::collections::HashMap;
 /// to invent a name for a leg whose `via_airway` is `None`.
 pub const DIRECT: &str = "DCT";
 
+/// What a free-route direct leg is multiplied by, so that an airway wins a tie. See
+/// [`LazyLevel::direct`] for why this exists at all.
+const DIRECT_PREFERENCE: f32 = 1.008;
+
 /// The cost of flying the network at one level, frozen at one time: one entry per forward
 /// edge, parallel to [`Compact::edges`], `f32::INFINITY` where the level, a hazard to be
 /// avoided, or a rule forbids the edge outright.
@@ -289,6 +293,18 @@ impl<'a> LazyLevel<'a> {
             return c;
         }
         let (c, _) = cost_leg(self.graph.fix_id(from), self.compact.pos(from), self.graph.fix_id(to), self.compact.pos(to), DIRECT, self.level_ft, &self.shapes, &self.frozen);
+        // A direct leg costs a shade more than the same miles on a published airway.
+        //
+        // Between two fixes an airway already joins, a direct is exactly the same distance and
+        // therefore exactly the same price, so the search took whichever it happened to expand
+        // first -- and filed `GUNAM DCT TNK DCT TAVEV` where all three sit on G326. A route
+        // written that way is the same flight and a worse flight plan: it hides the structure,
+        // and it is likelier to be refused by a controller who can see the airway.
+        //
+        // The penalty is small enough that a direct which genuinely shortens the route still
+        // wins easily -- cutting a corner an airway goes round saves far more than this -- and
+        // large enough that an equal one never does.
+        let c = c * DIRECT_PREFERENCE;
         self.directs.borrow_mut().insert((from, to), c);
         self.directs_costed.set(self.directs_costed.get() + 1);
         c
