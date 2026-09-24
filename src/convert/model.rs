@@ -173,6 +173,12 @@ pub struct AirwayLegRec {
     pub level: AirwayLevel,
     pub is_start: bool,
     pub is_end: bool,
+    /// The minimum enroute altitude of this leg, feet, where the source has one. The
+    /// simulator's own data does carry it — see `convert::from_sim` for how the field was
+    /// found and checked — and PMDG's schema has a column for it, which is why it is here:
+    /// this crate's own route engine needs those limits to tell the low-level airway network
+    /// from the upper one. Fenix's schema has nowhere to put it and drops it.
+    pub min_ft: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]

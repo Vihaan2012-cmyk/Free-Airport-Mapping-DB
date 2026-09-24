@@ -99,6 +99,25 @@ const PROC_COLUMNS: &str = "[area_code] TEXT, [airport_identifier] TEXT, [proced
 const PROC_TABLES: [(&str, ProcKind); 3] = [("tbl_sids", ProcKind::Sid), ("tbl_stars", ProcKind::Star), ("tbl_iaps", ProcKind::Approach)];
 
 /// Which table a procedure belongs in.
+/// Every fix and beacon by identifier, so a writer can place a leg without searching.
+fn position_index(nav: &NavSet) -> HashMap<&str, (f64, f64)> {
+    let mut out: HashMap<&str, (f64, f64)> = HashMap::with_capacity(nav.waypoints.len() + nav.navaids.len());
+    for n in &nav.navaids {
+        out.insert(n.ident.as_str(), (n.lat, n.lon));
+    }
+    // A waypoint of the same name as a beacon wins, since a procedure leg naming a fix means
+    // the fix.
+    for w in &nav.waypoints {
+        out.insert(w.ident.as_str(), (w.lat, w.lon));
+    }
+    out
+}
+
+/// Every airport's area and region code by identifier, for the same reason.
+fn airport_index(nav: &NavSet) -> HashMap<&str, (&str, &str, Option<f64>)> {
+    nav.airports.iter().map(|a| (a.icao.as_str(), (a.area_code.as_str(), a.icao_code.as_str(), a.transition_altitude_ft))).collect()
+}
+
 fn proc_table(k: ProcKind) -> &'static str {
     match k {
         ProcKind::Sid => "tbl_sids",
@@ -377,12 +396,13 @@ fn write_runways(conn: &Connection, nav: &NavSet) -> Result<usize> {
     for i in &nav.ils {
         llz.insert((i.airport_icao.as_str(), i.runway_ident.as_str()), (i.ident.as_str(), i.category, i.crossing_height_ft));
     }
+    let airports = airport_index(nav);
     for r in &nav.runways {
         let found = llz.get(&(r.airport_icao.as_str(), r.ident.as_str()));
-        let area = nav.airports.iter().find(|a| a.icao == r.airport_icao);
+        let area = airports.get(r.airport_icao.as_str());
         stmt.execute(params![
-            area.map(|a| a.area_code.as_str()).unwrap_or("USA"),
-            area.map(|a| a.icao_code.as_str()).unwrap_or(""),
+            area.map(|a| a.0).unwrap_or("USA"),
+            area.map(|a| a.1).unwrap_or(""),
             r.airport_icao,
             format!("RW{}", r.ident),
             r.lat,
@@ -470,11 +490,12 @@ fn write_ils(conn: &Connection, nav: &NavSet) -> Result<usize> {
          llz_frequency, llz_bearing, llz_width, ils_mls_gls_category, gs_latitude, gs_longitude, gs_angle, gs_elevation, station_declination, id) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 3.5, ?10, ?11, ?12, ?13, ?14, 0, ?15)",
     )?;
+    let airports = airport_index(nav);
     for i in &nav.ils {
-        let area = nav.airports.iter().find(|a| a.icao == i.airport_icao);
+        let area = airports.get(i.airport_icao.as_str());
         stmt.execute(params![
-            area.map(|a| a.area_code.as_str()).unwrap_or("USA"),
-            area.map(|a| a.icao_code.as_str()).unwrap_or(""),
+            area.map(|a| a.0).unwrap_or("USA"),
+            area.map(|a| a.1).unwrap_or(""),
             i.airport_icao,
             format!("RW{}", i.runway_ident),
             i.ident,
@@ -501,15 +522,13 @@ fn write_airways(conn: &Connection, nav: &NavSet) -> Result<usize> {
         "INSERT INTO tbl_enroute_airways (area_code, route_identifier, seqno, icao_code, waypoint_identifier, waypoint_latitude, waypoint_longitude, \
          waypoint_description_code, route_type, flightlevel, direction_restriction, crusing_table_identifier, minimum_altitude1, minimum_altitude2, \
          maximum_altitude, outbound_course, inbound_course, inbound_distance, id) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'O', ?9, NULL, NULL, NULL, NULL, NULL, 0, 0, 0, ?10)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'O', ?9, NULL, NULL, ?10, NULL, NULL, 0, 0, 0, ?11)",
     )?;
-    let position = |ident: &str, region: &str| -> Option<(f64, f64)> {
-        nav.waypoints
-            .iter()
-            .find(|w| w.ident == ident && w.region_code == region)
-            .map(|w| (w.lat, w.lon))
-            .or_else(|| nav.navaids.iter().find(|n| n.ident == ident && n.region_code == region).map(|n| (n.lat, n.lon)))
-    };
+    // Every fix's position, indexed once. Searching the waypoint list for each leg is a
+    // linear scan of a quarter of a million records, and there are hundreds of thousands of
+    // legs: it turned a ten-second write into a six-minute one.
+    let index = position_index(nav);
+    let position = |ident: &str, _region: &str| -> Option<(f64, f64)> { index.get(ident).copied() };
     let mut written = 0usize;
     for a in &nav.airways {
         // Each leg names where it starts; the last leg's end closes the list.
@@ -525,7 +544,19 @@ fn write_airways(conn: &Connection, nav: &NavSet) -> Result<usize> {
                 } else {
                     "E   "
                 };
-                stmt.execute(params![a.ident.chars().next().map(|_| "USA").unwrap_or("USA"), a.ident, seq, region, ident, lat, lon, code, level_code(leg.level), format!("{}|{}", a.ident, seq)])?;
+                stmt.execute(params![
+                    "USA",
+                    a.ident,
+                    seq,
+                    region,
+                    ident,
+                    lat,
+                    lon,
+                    code,
+                    level_code(leg.level),
+                    leg.min_ft.map(|v| v.round() as i64),
+                    format!("{}|{}", a.ident, seq)
+                ])?;
                 seq += 10;
                 written += 1;
             }
@@ -584,14 +615,14 @@ fn write_procedures(conn: &Connection, nav: &NavSet, kind: ProcKind) -> Result<u
          center_waypoint, center_waypoint_latitude, center_waypoint_longitude, aircraft_category, id, recommanded_id, center_id) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, NULL, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, NULL, ?22, ?23, ?24, ?25, ?26, ?27, NULL, ?28, ?29, ?30, NULL, ?31, ?32, ?33)"
     ))?;
-    let position = |ident: &str| -> Option<(f64, f64)> {
-        nav.waypoints.iter().find(|w| w.ident == ident).map(|w| (w.lat, w.lon)).or_else(|| nav.navaids.iter().find(|n| n.ident == ident).map(|n| (n.lat, n.lon)))
-    };
+    let index = position_index(nav);
+    let position = |ident: &str| -> Option<(f64, f64)> { index.get(ident).copied() };
     let mut written = 0usize;
+    let airports = airport_index(nav);
     for p in nav.procedures.iter().filter(|p| p.kind == kind) {
-        let area = nav.airports.iter().find(|a| a.icao == p.airport_icao);
+        let area = airports.get(p.airport_icao.as_str());
         let rt = if p.kind == ProcKind::Approach { approach_route_type(&p.ident) } else { route_type(p).to_string() };
-        let transition_alt = area.and_then(|a| a.transition_altitude_ft).map(|v| v.round() as i64);
+        let transition_alt = area.and_then(|a| a.2).map(|v| v.round() as i64);
         for (i, leg) in p.legs.iter().enumerate() {
             let last = i + 1 == p.legs.len();
             let fix = leg.fix_ident.as_deref();
@@ -599,7 +630,7 @@ fn write_procedures(conn: &Connection, nav: &NavSet, kind: ProcKind) -> Result<u
             let nav_pos = leg.recommended_navaid.as_deref().and_then(position);
             let centre_pos = leg.center_fix.as_deref().and_then(position);
             stmt.execute(params![
-                area.map(|a| a.area_code.as_str()).unwrap_or("USA"),
+                area.map(|a| a.0).unwrap_or("USA"),
                 p.airport_icao,
                 p.ident,
                 rt,
@@ -725,7 +756,7 @@ mod tests {
             ],
             airways: vec![AirwayRec {
                 ident: "L620".into(),
-                legs: vec![AirwayLegRec { sequence: 1, from_ident: "DET".into(), from_region: "EG".into(), to_ident: "MAY".into(), to_region: "EG".into(), level: AirwayLevel::Both, is_start: true, is_end: true }],
+                legs: vec![AirwayLegRec { sequence: 1, from_ident: "DET".into(), from_region: "EG".into(), to_ident: "MAY".into(), to_region: "EG".into(), level: AirwayLevel::Both, is_start: true, is_end: true, min_ft: Some(4500.0) }],
             }],
             procedures: vec![ProcedureRec {
                 airport_icao: "EGLL".into(),

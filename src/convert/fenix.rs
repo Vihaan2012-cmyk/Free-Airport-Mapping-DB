@@ -849,6 +849,7 @@ mod tests {
                     level: AirwayLevel::High,
                     is_start: true,
                     is_end: false,
+                    min_ft: Some(18000.0),
                 }],
             }],
             procedures: vec![ProcedureRec {

@@ -199,3 +199,432 @@ fn route_entries_aligned() {
         k += 1;
     }
 }
+
+#[test]
+#[ignore]
+fn airport_record_children_and_position() {
+    let mut shown = 0usize;
+    let mut ids: BTreeMap<u16, (usize, usize)> = BTreeMap::new();
+    for_each_bgl(&[""], |_n, data| {
+        for r in bgl::section_records(&data, 0x03) {
+            if r.id != 0x56 || r.end - r.start < 0x44 {
+                continue;
+            }
+            for c in bgl::records(&data, r.start + 0x44, r.end) {
+                let e = ids.entry(c.id).or_insert((0, 0));
+                e.0 += 1;
+                e.1 = e.1.max(c.end - c.start);
+            }
+            if shown < 3 {
+                let d = &data[r.start..r.end];
+                println!(
+                    "icao={} @0x0c lon={:.5} @0x10 lat={:.5} @0x14 f32={:.1} u32={} len={}",
+                    bgl::ident(bgl::u32le(d, 0x28)),
+                    bgl::lon(bgl::u32le(d, 0x0c)),
+                    bgl::lat(bgl::u32le(d, 0x10)),
+                    bgl::f32le(d, 0x14),
+                    bgl::u32le(d, 0x14),
+                    d.len()
+                );
+                shown += 1;
+            }
+        }
+    });
+    println!("airport child records: {ids:?}");
+}
+
+#[test]
+#[ignore]
+fn airport_child_18_bytes() {
+    let mut shown = 0usize;
+    for_each_bgl(&[""], |_n, data| {
+        if shown >= 4 {
+            return;
+        }
+        for r in bgl::section_records(&data, 0x03) {
+            if r.id != 0x56 || r.end - r.start < 0x44 || shown >= 4 {
+                continue;
+            }
+            let icao = bgl::ident(bgl::u32le(&data, r.start + 0x28));
+            for c in bgl::records(&data, r.start + 0x44, r.end) {
+                if c.id != 0x12 || shown >= 4 {
+                    continue;
+                }
+                let d = &data[c.start..c.end];
+                println!("{icao} child 0x12 len={}: {:02x?}", d.len(), d);
+                println!("   lon@0x08={:.5} lat@0x0c={:.5} alt@0x10={} f32@0x14={:.2} f32@0x18={:.2} f32@0x1c={:.2}",
+                    bgl::lon(bgl::u32le(d, 0x08)), bgl::lat(bgl::u32le(d, 0x0c)), bgl::u32le(d, 0x10),
+                    bgl::f32le(d, 0x14), bgl::f32le(d, 0x18), bgl::f32le(d, 0x1c));
+                shown += 1;
+            }
+        }
+    });
+}
+
+#[test]
+#[ignore]
+fn what_atx_files_hold() {
+    let mut sections: BTreeMap<u32, BTreeMap<u16, (usize, usize)>> = BTreeMap::new();
+    let mut n = 0usize;
+    for_each_bgl(&["atx"], |_name, data| {
+        n += 1;
+        if n > 40 || data.len() < 0x38 {
+            return;
+        }
+        let count = bgl::u32le(&data, 0x14) as usize;
+        for i in 0..count.min(40) {
+            let b = 0x38 + i * 20;
+            if b + 20 > data.len() {
+                break;
+            }
+            let section = bgl::u32le(&data, b);
+            let entry = sections.entry(section).or_default();
+            for r in bgl::section_records(&data, section) {
+                let e = entry.entry(r.id).or_insert((0, 0));
+                e.0 += 1;
+                e.1 = e.1.max(r.end - r.start);
+            }
+        }
+    });
+    println!("atx files seen: {n}");
+    for (s, ids) in &sections {
+        println!("  section 0x{s:02x}: {ids:?}");
+    }
+}
+
+#[test]
+#[ignore]
+fn what_the_fs2024_archive_holds() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut sections: BTreeMap<u32, BTreeMap<u16, (usize, usize)>> = BTreeMap::new();
+    let mut n = 0usize;
+    for path in nav_archives() {
+        println!("archive {}", path.display());
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |name, data| {
+            n += 1;
+            if n > 200 || data.len() < 0x38 {
+                return;
+            }
+            if n <= 3 {
+                println!("  {name} {} bytes magic={:08x}", data.len(), bgl::u32le(&data, 0));
+            }
+            let count = bgl::u32le(&data, 0x14) as usize;
+            for i in 0..count.min(40) {
+                let b = 0x38 + i * 20;
+                if b + 20 > data.len() {
+                    break;
+                }
+                let section = bgl::u32le(&data, b);
+                let entry = sections.entry(section).or_default();
+                for r in bgl::section_records(&data, section) {
+                    let e = entry.entry(r.id).or_insert((0, 0));
+                    e.0 += 1;
+                    e.1 = e.1.max(r.end - r.start);
+                }
+            }
+        })
+        .unwrap();
+    }
+    println!("files scanned: {n}");
+    for (s, ids) in &sections {
+        println!("  section 0x{s:02x}: {ids:?}");
+    }
+}
+
+#[test]
+#[ignore]
+fn fs2024_airport_children() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut ids: BTreeMap<u16, (usize, usize)> = BTreeMap::new();
+    let mut shown = 0usize;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_n, data| {
+            for r in bgl::section_records(&data, 0x03) {
+                if r.id != 275 || r.end - r.start < 0x44 {
+                    continue;
+                }
+                if shown < 3 {
+                    println!(
+                        "icao@0x28={} lon={:.4} lat={:.4} elev_mm={} len={}",
+                        bgl::ident(bgl::u32le(&data, r.start + 0x28)),
+                        bgl::lon(bgl::u32le(&data, r.start + 0x0c)),
+                        bgl::lat(bgl::u32le(&data, r.start + 0x10)),
+                        bgl::u32le(&data, r.start + 0x14),
+                        r.end - r.start
+                    );
+                    shown += 1;
+                }
+                for c in bgl::records(&data, r.start + 0x44, r.end) {
+                    let e = ids.entry(c.id).or_insert((0, 0));
+                    e.0 += 1;
+                    e.1 = e.1.max(c.end - c.start);
+                }
+            }
+        })
+        .unwrap();
+    }
+    println!("FS2024 airport child records: {ids:?}");
+}
+
+#[test]
+#[ignore]
+fn where_is_the_fs2024_icao() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut shown = 0usize;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_n, data| {
+            if shown >= 4 {
+                return;
+            }
+            for r in bgl::section_records(&data, 0x03) {
+                if r.id != 275 || r.end - r.start < 0x60 || shown >= 4 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                let mut hits = Vec::new();
+                for off in (0..0x60).step_by(4) {
+                    let id = bgl::ident(bgl::u32le(d, off));
+                    let looks_icao = id.len() == 4 && id.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+                    if looks_icao {
+                        hits.push(format!("+0x{off:02x}={id}"));
+                    }
+                }
+                println!("len={} candidates: {}", d.len(), hits.join("  "));
+                println!("   first 0x60: {:02x?}", &d[..0x60]);
+                shown += 1;
+            }
+        })
+        .unwrap();
+    }
+}
+
+/// Find where FS2024 keeps an airport's identifier, by matching records to FS2020's by
+/// position — the one field both layouts agree on — and then searching the FS2024 record for
+/// the packed form of the identifier FS2020 gives.
+#[test]
+#[ignore]
+fn find_the_fs2024_icao_offset() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    // FS2020's airports, by rounded position.
+    let mut known: BTreeMap<(i64, i64), String> = BTreeMap::new();
+    for_each_bgl(&[""], |_n, data| {
+        for r in bgl::section_records(&data, 0x03) {
+            if r.id != 0x56 || r.end - r.start < 0x44 {
+                continue;
+            }
+            let icao = bgl::ident(bgl::u32le(&data, r.start + 0x28));
+            if icao.len() < 3 {
+                continue;
+            }
+            let lat = bgl::lat(bgl::u32le(&data, r.start + 0x10));
+            let lon = bgl::lon(bgl::u32le(&data, r.start + 0x0c));
+            known.insert(((lat * 1000.0) as i64, (lon * 1000.0) as i64), icao);
+        }
+    });
+    println!("FS2020 airports indexed by position: {}", known.len());
+
+    let mut hits: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut checked = 0usize;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_n, data| {
+            if checked >= 400 {
+                return;
+            }
+            for r in bgl::section_records(&data, 0x03) {
+                if r.id != 275 || r.end - r.start < 0x80 || checked >= 400 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                let lat = bgl::lat(bgl::u32le(d, 0x10));
+                let lon = bgl::lon(bgl::u32le(d, 0x0c));
+                let Some(want) = known.get(&((lat * 1000.0) as i64, (lon * 1000.0) as i64)) else { continue };
+                checked += 1;
+                for off in 0..d.len().min(0x120) {
+                    if off + 4 > d.len() {
+                        break;
+                    }
+                    if &bgl::ident(bgl::u32le(d, off)) == want {
+                        *hits.entry(off).or_default() += 1;
+                    }
+                }
+            }
+        })
+        .unwrap();
+    }
+    println!("records matched to FS2020 by position: {checked}");
+    let mut best: Vec<(usize, usize)> = hits.into_iter().collect();
+    best.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    for (off, n) in best.iter().take(8) {
+        println!("  identifier found at +0x{off:02x} in {n} of {checked} records");
+    }
+}
+
+/// Where do an FS2024 airport record's children begin, and is its identifier stored as text?
+/// The child stream is found by trying each offset and keeping the one whose records tile
+/// exactly to the end of the record — a wrong offset runs off the end or stops short.
+#[test]
+#[ignore]
+fn fs2024_airport_children_offset_and_text_ident() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut known: BTreeMap<(i64, i64), String> = BTreeMap::new();
+    for_each_bgl(&[""], |_n, data| {
+        for r in bgl::section_records(&data, 0x03) {
+            if r.id != 0x56 || r.end - r.start < 0x44 {
+                continue;
+            }
+            let icao = bgl::ident(bgl::u32le(&data, r.start + 0x28));
+            if icao.len() >= 3 {
+                known.insert(((bgl::lat(bgl::u32le(&data, r.start + 0x10)) * 1000.0) as i64, (bgl::lon(bgl::u32le(&data, r.start + 0x0c)) * 1000.0) as i64), icao);
+            }
+        }
+    });
+    let mut child_at: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut text_at: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut checked = 0usize;
+    let mut sample = true;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_n, data| {
+            if checked >= 300 {
+                return;
+            }
+            for r in bgl::section_records(&data, 0x03) {
+                if r.id != 275 || r.end - r.start < 0x80 || checked >= 300 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                let lat = bgl::lat(bgl::u32le(d, 0x10));
+                let lon = bgl::lon(bgl::u32le(d, 0x0c));
+                let Some(want) = known.get(&((lat * 1000.0) as i64, (lon * 1000.0) as i64)) else { continue };
+                checked += 1;
+                // The identifier as plain text, anywhere in the record.
+                let bytes = want.as_bytes();
+                for off in 0..d.len().saturating_sub(bytes.len()) {
+                    if &d[off..off + bytes.len()] == bytes {
+                        *text_at.entry(off).or_default() += 1;
+                    }
+                }
+                // Where a child stream tiles exactly to the end.
+                for off in (0x20..0x140).step_by(2) {
+                    if off + 6 > d.len() {
+                        break;
+                    }
+                    let mut at = off;
+                    let mut ok = 0;
+                    while at + 6 <= d.len() {
+                        let size = bgl::u32le(d, at + 2) as usize;
+                        if size < 6 || at + size > d.len() {
+                            break;
+                        }
+                        at += size;
+                        ok += 1;
+                    }
+                    if at == d.len() && ok >= 2 {
+                        *child_at.entry(off).or_default() += 1;
+                    }
+                }
+                if sample {
+                    sample = false;
+                    println!("sample {want} at {lat:.4},{lon:.4}, {} bytes", d.len());
+                }
+            }
+        })
+        .unwrap();
+    }
+    println!("records checked: {checked}");
+    let top = |m: BTreeMap<usize, usize>, label: &str| {
+        let mut v: Vec<(usize, usize)> = m.into_iter().collect();
+        v.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        for (off, n) in v.iter().take(6) {
+            println!("  {label} +0x{off:02x} in {n} of {checked}");
+        }
+    };
+    top(text_at, "identifier as text at");
+    top(child_at, "children tile from");
+}
+
+#[test]
+#[ignore]
+fn fs2024_children_with_the_right_offset() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut ids: BTreeMap<u16, (usize, usize)> = BTreeMap::new();
+    let mut shown = 0usize;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_n, data| {
+            for r in bgl::section_records(&data, 0x03) {
+                if r.id != 275 || r.end - r.start < 0x80 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                let ident: String = d[0x6f..].iter().take(5).take_while(|&&b| b.is_ascii_alphanumeric()).map(|&b| b as char).collect();
+                if shown < 4 && d.len() > 4000 {
+                    println!("{ident}: {} bytes, children:", d.len());
+                    for c in bgl::records(d, 0x5c, d.len()) {
+                        println!("   id 0x{:04x} ({}) len {}", c.id, c.id, c.end - c.start);
+                    }
+                    shown += 1;
+                }
+                for c in bgl::records(d, 0x5c, d.len()) {
+                    let e = ids.entry(c.id).or_insert((0, 0));
+                    e.0 += 1;
+                    e.1 = e.1.max(c.end - c.start);
+                }
+            }
+        })
+        .unwrap();
+    }
+    let mut v: Vec<(u16, (usize, usize))> = ids.into_iter().collect();
+    v.sort_by_key(|(_, (n, _))| std::cmp::Reverse(*n));
+    println!("FS2024 airport children, commonest first:");
+    for (id, (n, max)) in v.iter().take(14) {
+        println!("  id 0x{id:04x} ({id}) count {n} max {max}");
+    }
+}
+
+#[test]
+#[ignore]
+fn fs2024_big_airport_children() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        let mut done = false;
+        a.for_each_with_prefix(&[""], |_n, data| {
+            if done {
+                return;
+            }
+            for r in bgl::section_records(&data, 0x03) {
+                if r.id != 275 || r.end - r.start < 0x80 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                let ident: String = d[0x6f..].iter().take(5).take_while(|&&b| b.is_ascii_alphanumeric()).map(|&b| b as char).collect();
+                if !matches!(ident.as_str(), "KJFK" | "EGLL" | "KLAX" | "EDDF") {
+                    continue;
+                }
+                let mut ids: BTreeMap<u16, (usize, usize)> = BTreeMap::new();
+                for c in bgl::records(d, 0x5c, d.len()) {
+                    let e = ids.entry(c.id).or_insert((0, 0));
+                    e.0 += 1;
+                    e.1 = e.1.max(c.end - c.start);
+                }
+                println!("{ident}: {} bytes", d.len());
+                for (id, (n, max)) in &ids {
+                    println!("   id 0x{id:04x} ({id}) count {n} max {max}");
+                }
+                // A runway child, in full.
+                if let Some(c) = bgl::records(d, 0x5c, d.len()).into_iter().find(|c| c.id == 0x11a) {
+                    println!("   runway child, {} bytes: {:02x?}", c.end - c.start, &d[c.start..c.end]);
+                    println!("     text: {}", d[c.start..c.end].iter().map(|&b| if b.is_ascii_graphic() { b as char } else { '.' }).collect::<String>());
+                }
+                done = true;
+                return;
+            }
+        })
+        .unwrap();
+    }
+}
