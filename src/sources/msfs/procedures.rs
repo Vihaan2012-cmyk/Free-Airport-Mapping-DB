@@ -93,13 +93,45 @@ fn airport_header(d: &[u8], rec: &Record) -> Option<(String, usize)> {
     }
 }
 /// Transition records, with the offset their children start at.
-const TRANSITIONS: [(u16, usize); 3] = [(0x46, 0x14), (0x4A, 0x10), (0x49, 0x1C)];
+const TRANSITIONS: [(u16, usize); 4] = [(0x46, 0x14), (0x4A, 0x10), (0x49, 0x1C), (TRANSITION_2024, 0x14)];
+/// FS2024's own transition record, alongside the three FS2020 shapes above.
+const TRANSITION_2024: u16 = 0x110;
 /// Leg lists. The two under an approach are its final legs and its missed approach.
 const LEGS_PLAIN: u16 = 0xF9;
 const LEGS_FINAL: u16 = 0xF4;
 const LEGS_MISSED: u16 = 0xF5;
 const LEGS_TRANSITION: u16 = 0xF6;
 const LEG_SIZE: usize = 72;
+/// FS2024's leg lists. Their shape is FS2020's exactly — a count at `+0x06` and then fixed
+/// seventy-two byte legs — so only the identifying numbers changed, which is why `legs` needs
+/// nothing new. Established by checking that every one of these records has a length that
+/// leaves a whole number of legs after an eight byte header, and a plausible count in the two
+/// bytes at `+0x06`.
+/// FS2024's leg lists sit in this range, mirroring the four FS2020 ids above: `0x10A` and
+/// `0x10B` under an approach's transitions, `0x10D` under a departure's or an arrival's. The
+/// range is accepted rather than the three ids that have been seen, because a record in it is
+/// only taken as a leg list if its length actually leaves a whole number of seventy-two byte
+/// legs after the eight byte header — a structural check, so a record that merely shares the
+/// numbering cannot be misread as legs. Reading whatever sat here without that check is what
+/// invented two hundred and thirty-six thousand arrival legs.
+const LEGS_2024: std::ops::RangeInclusive<u16> = 0x10A..=0x10D;
+
+/// Whether a record is a list of legs, under either simulator's numbering.
+fn is_leg_list_of(d: &[u8], rec: &Record) -> bool {
+    if matches!(rec.id, LEGS_PLAIN | LEGS_FINAL | LEGS_MISSED | LEGS_TRANSITION) {
+        return true;
+    }
+    if !LEGS_2024.contains(&rec.id) {
+        return false;
+    }
+    // The length must leave a whole number of legs after the eight byte header. The count the
+    // record declares is *not* checked against that: `0x10A` and `0x10B` declare the number
+    // that fits, `0x10D` declares fewer than it holds, and `legs` stops at the record's end
+    // regardless — so the length is the honest test and the count is not.
+    let len = rec.end - rec.start;
+    let _ = d;
+    len >= 8 + LEG_SIZE && (len - 8) % LEG_SIZE == 0
+}
 
 /// ARINC 424 path terminators, in the simulators' numbering.
 const PATHS: [&str; 24] = ["", "AF", "CA", "CD", "CF", "CI", "CR", "DF", "FA", "FC", "FD", "FM", "HA", "HF", "HM", "IF", "PI", "RF", "TF", "VA", "VD", "VI", "VM", "VR"];
@@ -482,7 +514,7 @@ fn transitions(d: &[u8], proc_rec: &Record, children_at: usize, fixes: &Fixes) -
     let mut out = Vec::new();
     for rec in bgl::records(d, proc_rec.start + children_at, proc_rec.end) {
         // The legs of a procedure's own path hang directly off it.
-        if matches!(rec.id, LEGS_PLAIN | LEGS_FINAL | LEGS_MISSED | LEGS_TRANSITION) {
+        if is_leg_list_of(d, &rec) {
             let part = match rec.id {
                 LEGS_FINAL => "final",
                 LEGS_MISSED => "missed",
@@ -504,7 +536,7 @@ fn transitions(d: &[u8], proc_rec: &Record, children_at: usize, fixes: &Fixes) -
             String::new()
         };
         for legrec in bgl::records(d, rec.start + kids_at, rec.end) {
-            if matches!(legrec.id, LEGS_PLAIN | LEGS_FINAL | LEGS_MISSED | LEGS_TRANSITION) {
+            if is_leg_list_of(d, &legrec) {
                 let part = match legrec.id {
                     LEGS_FINAL => "final",
                     LEGS_MISSED => "missed",
@@ -536,9 +568,13 @@ fn terminal_transitions(d: &[u8], proc_rec: &Record, fixes: &Fixes) -> Vec<Trans
     const RUNWAY: u16 = 0x46;
     const COMMON: u16 = 0xF8;
     const ENROUTE: u16 = 0x4A;
+    /// FS2024's own departure/arrival transition record, whose leg lists sit at `+0x14` as
+    /// the enroute transition's do.
+    const TRANSITION_2024_TERMINAL: u16 = 0x116;
     let mut out = Vec::new();
     for rec in bgl::records(d, proc_rec.start + 0x14, proc_rec.end) {
         match rec.id {
+            _ if is_leg_list_of(d, &rec) => out.push(Transition { name: String::new(), part: "common".into(), legs: legs(d, &rec, fixes) }),
             COMMON => out.push(Transition { name: String::new(), part: "common".into(), legs: legs(d, &rec, fixes) }),
             RUNWAY if rec.end - rec.start > 0x0C => {
                 let number = d[rec.start + 0x07];
@@ -550,14 +586,33 @@ fn terminal_transitions(d: &[u8], proc_rec: &Record, fixes: &Fixes) -> Vec<Trans
                 };
                 // A number of none is a transition from every runway.
                 let name = if number == 0 || number > 36 { "ALL".to_string() } else { format!("RW{number:02}{side}") };
+                // Only a record that really is a list of legs: calling `legs` on whatever
+                // happens to sit here reads a count out of two bytes that mean something else
+                // and manufactures legs from nothing, which is exactly what FS2024's records
+                // did — two hundred and thirty-six thousand arrival legs against thirty-one
+                // thousand departure ones, a ratio no real dataset has.
                 for legrec in bgl::records(d, rec.start + 0x0C, rec.end) {
-                    out.push(Transition { name: name.clone(), part: "runway".into(), legs: legs(d, &legrec, fixes) });
+                    if is_leg_list_of(d, &legrec) {
+                        out.push(Transition { name: name.clone(), part: "runway".into(), legs: legs(d, &legrec, fixes) });
+                    }
+                }
+            }
+            TRANSITION_2024_TERMINAL if rec.end - rec.start > 0x18 => {
+                let name = name_at(d, &rec, 0x08);
+                // FS2024's terminal transition keeps its leg lists four bytes further in than
+                // the enroute transition it otherwise resembles.
+                for legrec in bgl::records(d, rec.start + 0x18, rec.end) {
+                    if is_leg_list_of(d, &legrec) {
+                        out.push(Transition { name: name.clone(), part: "enroute".into(), legs: legs(d, &legrec, fixes) });
+                    }
                 }
             }
             ENROUTE if rec.end - rec.start > 0x10 => {
                 let name = name_at(d, &rec, 0x08);
                 for legrec in bgl::records(d, rec.start + 0x10, rec.end) {
-                    out.push(Transition { name: name.clone(), part: "enroute".into(), legs: legs(d, &legrec, fixes) });
+                    if is_leg_list_of(d, &legrec) {
+                        out.push(Transition { name: name.clone(), part: "enroute".into(), legs: legs(d, &legrec, fixes) });
+                    }
                 }
             }
             _ => {}
@@ -756,7 +811,14 @@ fn airport(d: &[u8], rec: &Record, file: &Path, fixes: &Fixes) -> Option<Airport
             REC_APPROACH | REC_APPROACH_2024 => Kind::Approach,
             _ => continue,
         };
-        let trans = if kind == Kind::Approach { transitions(d, &child, 0x24, fixes) } else { terminal_transitions(d, &child, fixes) };
+        // FS2024's approach record carries a longer header, so its children begin eight
+        // bytes further in. Reading them at FS2020's offset finds nothing at all, which is why
+        // every approach came out empty before this.
+        let trans = if kind == Kind::Approach {
+            transitions(d, &child, if child.id == REC_APPROACH_2024 { 0x2C } else { 0x24 }, fixes)
+        } else {
+            terminal_transitions(d, &child, fixes)
+        };
         let runway = if kind == Kind::Approach {
             let from_legs = runway_of(&trans);
             if from_legs.is_empty() { header_runway(d, &child) } else { from_legs }
