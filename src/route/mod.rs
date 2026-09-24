@@ -44,6 +44,7 @@ pub mod cost;
 pub mod directs;
 pub mod bridge;
 pub mod ellipse;
+pub mod freeroute;
 pub mod progress;
 pub mod reference;
 pub mod etops;

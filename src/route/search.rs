@@ -440,6 +440,13 @@ pub fn refine(
             if crate::dispatch::distance_nm(from, to) > max_direct_nm {
                 continue;
             }
+            // And a shortcut is a direct leg, so it is only a shortcut where a flight may be
+            // planned point to point at all. Without this the search obeys free route airspace
+            // and then the straightening quietly undoes it: a route over India came back out
+            // as eight hundred miles of `DCT` across airspace that allows none.
+            if !super::freeroute::permits_leg(from, to, level_ft) {
+                continue;
+            }
             if avoid.iter().any(|s| s.crossed_by(from, to)) {
                 continue;
             }

@@ -1,0 +1,45 @@
+{
+  "note": "Where a flight may be planned point to point rather than along published airways, and above what level. Outside these areas a direct leg is not something a flight plan may contain, however much shorter it would be, so the route search is not offered one. Each area names the flight information regions it covers, by exact identifier or by the first letters of one, and the level it begins at. Identifiers are matched against the navigation database's own FIR and UIR table, so an area naming a region the installed data does not have simply covers nothing rather than covering the world.",
+  "areas": [
+    {
+      "reference": "EUROCONTROL NM, Free Route Airspace",
+      "name": "European free route airspace",
+      "note": "Free route operations are implemented across the ECAC area above FL195, the last states joining at the end of 2022. Below that level the published route network still applies, which is why the floor is not lower.",
+      "prefixes": ["EB", "EC", "ED", "EE", "EF", "EG", "EH", "EI", "EK", "EN", "EP", "ES", "EV", "EY", "BI", "BK", "LA", "LB", "LC", "LD", "LE", "LF", "LG", "LH", "LI", "LJ", "LK", "LM", "LO", "LP", "LQ", "LR", "LS", "LT", "LU", "LW", "LY", "LZ", "UK"],
+      "floor_fl": 195,
+      "ceiling_fl": 660
+    },
+    {
+      "reference": "ICAO NAT Doc 007",
+      "name": "North Atlantic oceanic",
+      "note": "The organised track system is built afresh twice a day and a crossing that does not use it is planned on its own line of reporting points, so the airspace is free route in everything but name. The oceanic control areas are named exactly rather than by prefix, because the same prefixes cover domestic airspace that is not free route.",
+      "firs": ["EGGX", "CZQX", "BIRD", "LPPO", "KZWY", "BGGL", "CZUL", "ENOB"],
+      "floor_fl": 55,
+      "ceiling_fl": 660
+    },
+    {
+      "reference": "FAA Order 7110.65, North American Route Program",
+      "name": "United States and Canada, high level",
+      "note": "Random routing between waypoints is permitted at and above FL390 in the continental United States and in Canadian domestic airspace. Below that the jet route structure is expected, which is why this does not reach down to the low levels the European area does.",
+      "prefixes": ["KZ", "CZ", "PA"],
+      "floor_fl": 390,
+      "ceiling_fl": 660
+    },
+    {
+      "reference": "Airservices Australia AIP ENR 1.1",
+      "name": "Australia and New Zealand",
+      "note": "Australian airspace above FL245 is flight planned point to point outside the terminal areas, and the flex tracks published for the Tasman and the Indian Ocean are themselves lines of waypoints rather than airways.",
+      "prefixes": ["YB", "YM", "NZ", "NF"],
+      "floor_fl": 245,
+      "ceiling_fl": 660
+    },
+    {
+      "reference": "ICAO PACOTS, Oakland and Fukuoka oceanic",
+      "name": "Pacific oceanic",
+      "note": "As the North Atlantic: a track system rebuilt daily, and random routing between reporting points for anything not on it.",
+      "firs": ["KZAK", "RJJJ", "NZZO", "PHZH", "NTTT", "AGGG", "ANAU"],
+      "floor_fl": 55,
+      "ceiling_fl": 660
+    }
+  ]
+}

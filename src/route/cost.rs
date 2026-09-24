@@ -299,6 +299,14 @@ impl<'a> LazyLevel<'a> {
         if let Some(&c) = self.directs.borrow().get(&(from, to)) {
             return c;
         }
+        // A direct leg is only a leg where a flight may actually be planned point to point.
+        // Outside free route airspace it is not something a flight plan may contain, however
+        // much shorter it is, so the search is not offered it at all: see `route::freeroute`
+        // for why this is a rule here and not a price.
+        if !super::freeroute::permits_leg(self.compact.pos(from), self.compact.pos(to), self.level_ft) {
+            self.directs.borrow_mut().insert((from, to), f32::INFINITY);
+            return f32::INFINITY;
+        }
         let (c, _) = cost_leg(self.graph.fix_id(from), self.compact.pos(from), self.graph.fix_id(to), self.compact.pos(to), DIRECT, self.level_ft, &self.shapes, &self.frozen);
         // A direct leg costs a shade more than the same miles on a published airway.
         //
