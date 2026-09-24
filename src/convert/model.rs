@@ -361,8 +361,10 @@ pub struct ProcedureRec {
 /// grid needs, because filling this in is another engineer's part of the pipeline.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MoraRec {
-    /// South-west corner of a one-degree cell.
-    pub lat: i32,
-    pub lon: i32,
+    /// South-west corner of a one-degree cell. Held as a float rather than an integer
+    /// because every other position in this model is, and a converter that has to remember
+    /// which one field is different is a converter that will one day forget.
+    pub lat: f64,
+    pub lon: f64,
     pub altitude_ft: f64,
 }
