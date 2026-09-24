@@ -8,6 +8,7 @@ pub mod canvas;
 pub mod charts_bulk;
 pub mod chart;
 pub mod preview;
+pub mod routemap;
 pub mod xplane;
 
 use crate::geom::LocalFrame;
