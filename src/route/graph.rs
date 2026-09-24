@@ -44,6 +44,10 @@ pub struct Edge {
     max_fl: u16,
 }
 
+/// Marks a file written by this layout of [`Graph::to_bytes`]; a file that does not begin with
+/// it is from an older one and is rebuilt rather than misread.
+const GRAPH_MAGIC: u32 = 0x4147_5231;
+
 const NO_MIN_FL: u16 = 0;
 const NO_MAX_FL: u16 = u16::MAX;
 
@@ -164,7 +168,7 @@ impl Compact {
 /// flattens it once and keeps the result.
 pub struct Graph {
     fixes: Vec<Fix>,
-    index: HashMap<String, u32>,
+    index: HashMap<u64, u32>,
     adj: Vec<Vec<RawEdge>>,
     airway_names: Vec<String>,
     airway_index: HashMap<String, u32>,
@@ -183,11 +187,20 @@ impl Default for Graph {
 }
 
 impl Graph {
-    fn key(id: &str, pos: LatLon) -> String {
-        // Fixes repeat their names round the world, so a fix is told apart by where it
-        // is, to three decimal places: closer than that and two published positions of
-        // the same fix are the same fix.
-        format!("{id}@{:.3},{:.3}", pos.0, pos.1)
+    /// What tells one fix from another: its name and where it is, to three decimal places —
+    /// closer than that and two published positions of the same fix are the same fix.
+    ///
+    /// A number rather than a string, because there are eighty-four thousand fixes and this is
+    /// called for every one of them twice over, once while building the network and once while
+    /// reading it back from disk. Formatting a string each time cost more than reading the
+    /// whole file did.
+    fn key(id: &str, pos: LatLon) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        id.hash(&mut h);
+        ((pos.0 * 1000.0).round() as i64).hash(&mut h);
+        ((pos.1 * 1000.0).round() as i64).hash(&mut h);
+        h.finish()
     }
 
     fn fix(&mut self, id: &str, pos: LatLon) -> u32 {
@@ -299,11 +312,106 @@ impl Graph {
         static G: OnceLock<Graph> = OnceLock::new();
         G.get_or_init(|| {
             let t0 = Instant::now();
-            let g = Graph::from_navdata();
+            let g = Graph::cached_or_built();
             let c = g.compact();
-            log::info!("route graph: {} fixes, {} directed edges, built in {:?}, {:.1} MB", g.fixes.len(), c.edges.len(), t0.elapsed(), c.memory_mb());
+            log::info!("route graph: {} fixes, {} directed edges, ready in {:?}, {:.1} MB", g.fixes.len(), c.edges.len(), t0.elapsed(), c.memory_mb());
             g
         })
+    }
+
+    /// The network as it was last built, read back from disk, or built and kept.
+    ///
+    /// Building it means reading ninety thousand rows out of the aircraft's navigation
+    /// database and interning every fix and airway name, which is most of what a plan spends
+    /// before it starts searching. None of it can change while that database stays where it
+    /// is, so it is written out flat and read back: the identifiers as their own bytes, the
+    /// edges as fixed records that need no parsing at all.
+    fn cached_or_built() -> Graph {
+        let key = crate::sources::navdata::graph_cache_key();
+        let store = crate::cache::Cache::for_index(false);
+        if let Some(k) = &key {
+            if let Ok(bytes) = store.get_or_fetch_bytes(k, || Ok(Graph::from_navdata().to_bytes())) {
+                if let Some(g) = Graph::from_bytes(&bytes) {
+                    return g;
+                }
+                log::debug!("the cached route graph is of an older layout; building it afresh");
+            }
+        }
+        Graph::from_navdata()
+    }
+
+    /// The network as bytes: a count, then every fix as a length-prefixed identifier and two
+    /// floats, then every airway name, then every edge as a fixed nine-byte record.
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.fixes.len() * 24 + self.adj.iter().map(|a| a.len()).sum::<usize>() * 12 + 64);
+        out.extend(GRAPH_MAGIC.to_le_bytes());
+        out.extend((self.fixes.len() as u32).to_le_bytes());
+        out.extend((self.airway_names.len() as u32).to_le_bytes());
+        for f in &self.fixes {
+            out.push(f.id.len().min(255) as u8);
+            out.extend(f.id.as_bytes().iter().take(255));
+            out.extend((f.pos.0 as f32).to_le_bytes());
+            out.extend((f.pos.1 as f32).to_le_bytes());
+        }
+        for n in &self.airway_names {
+            out.push(n.len().min(255) as u8);
+            out.extend(n.as_bytes().iter().take(255));
+        }
+        for row in &self.adj {
+            out.extend((row.len() as u32).to_le_bytes());
+            for e in row {
+                out.extend(e.to.to_le_bytes());
+                out.extend(e.airway.to_le_bytes());
+                out.extend(e.min_fl.to_le_bytes());
+                out.extend(e.max_fl.to_le_bytes());
+            }
+        }
+        out
+    }
+
+    fn from_bytes(b: &[u8]) -> Option<Graph> {
+        let mut at = 0usize;
+        let take = |at: &mut usize, n: usize| -> Option<&[u8]> {
+            let out = b.get(*at..*at + n)?;
+            *at += n;
+            Some(out)
+        };
+        if u32::from_le_bytes(take(&mut at, 4)?.try_into().ok()?) != GRAPH_MAGIC {
+            return None;
+        }
+        let n_fixes = u32::from_le_bytes(take(&mut at, 4)?.try_into().ok()?) as usize;
+        let n_airways = u32::from_le_bytes(take(&mut at, 4)?.try_into().ok()?) as usize;
+        let mut g = Graph::default();
+        g.fixes.reserve(n_fixes);
+        for i in 0..n_fixes {
+            let len = *take(&mut at, 1)?.first()? as usize;
+            let id = String::from_utf8_lossy(take(&mut at, len)?).into_owned();
+            let lat = f32::from_le_bytes(take(&mut at, 4)?.try_into().ok()?) as f64;
+            let lon = f32::from_le_bytes(take(&mut at, 4)?.try_into().ok()?) as f64;
+            g.index.insert(Graph::key(&id, (lat, lon)), i as u32);
+            g.fixes.push(Fix { id, pos: (lat, lon) });
+        }
+        for i in 0..n_airways {
+            let len = *take(&mut at, 1)?.first()? as usize;
+            let name = String::from_utf8_lossy(take(&mut at, len)?).into_owned();
+            g.airway_index.insert(name.clone(), i as u32);
+            g.airway_names.push(name);
+        }
+        g.adj = Vec::with_capacity(n_fixes);
+        for _ in 0..n_fixes {
+            let count = u32::from_le_bytes(take(&mut at, 4)?.try_into().ok()?) as usize;
+            let mut row = Vec::with_capacity(count);
+            for _ in 0..count {
+                row.push(RawEdge {
+                    to: u32::from_le_bytes(take(&mut at, 4)?.try_into().ok()?),
+                    airway: u32::from_le_bytes(take(&mut at, 4)?.try_into().ok()?),
+                    min_fl: u16::from_le_bytes(take(&mut at, 2)?.try_into().ok()?),
+                    max_fl: u16::from_le_bytes(take(&mut at, 2)?.try_into().ok()?),
+                });
+            }
+            g.adj.push(row);
+        }
+        Some(g)
     }
 
     /// The flattened network, built on first use and kept: forward and reverse

@@ -17,6 +17,18 @@ use crate::route::airspace::fir_crossings;
 use serde_json::{json, Value};
 use std::fmt::Write as _;
 
+/// The passenger count to report. `DispatchOptions` holds what was *asked for*, which is zero
+/// when the count was left to the planner, while the weights the plan was actually flown at
+/// are in the dispatch itself — so where nothing was asked for, the payload says how many
+/// there were. A tablet importing a plan that says nobody is aboard loads an empty aeroplane.
+fn passengers_of(d: &crate::dispatch::Dispatch, opts: &crate::ofp::DispatchOptions) -> u32 {
+    if opts.passengers > 0 {
+        return opts.passengers;
+    }
+    (d.perf.weights.payload_kg / 100.0).round().max(0.0) as u32
+}
+
+
 /// One row of `navlog.fix[]`.
 struct Fix {
     ident: String,
@@ -190,8 +202,8 @@ pub fn ofp_json(d: &Dispatch, opts: &DispatchOptions) -> Value {
             "payload": d.perf.weights.payload_kg,
             "cargo": 0.0,
             "freight_added": 0.0,
-            "pax_count": opts.passengers,
-            "pax_count_actual": opts.passengers,
+            "pax_count": passengers_of(d, opts),
+            "pax_count_actual": passengers_of(d, opts),
             "bag_count_actual": 0,
             "pax_weight": 0.0,
             "bag_weight": 0.0,
