@@ -31,6 +31,13 @@ pub const DIRECT: &str = "DCT";
 
 /// What a free-route direct leg is multiplied by, so that an airway wins a tie. See
 /// [`LazyLevel::direct`] for why this exists at all.
+///
+/// It is a tie-break and not a preference, and it is deliberately not larger. Measured on
+/// London to Sydney, raising it to thirty per cent moved the count of direct legs from eighteen
+/// to seventeen and made the route one per cent longer: the legs are direct because the fixes
+/// at their ends share no airway at all, not because a direct was chosen over one, so there is
+/// nothing for a bigger penalty to steer towards. What decides that is which fixes the search
+/// is offered in the first place, which is [`super::directs`]'s to answer, not this.
 const DIRECT_PREFERENCE: f32 = 1.008;
 
 /// The cost of flying the network at one level, frozen at one time: one entry per forward
