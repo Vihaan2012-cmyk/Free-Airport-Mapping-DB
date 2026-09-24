@@ -87,12 +87,26 @@ pub fn section_records(d: &[u8], section: u32) -> Vec<Record> {
 }
 
 /// The 32-bit packed form used for idents (airports, waypoints, runways).
-pub fn ident(mut v: u32) -> String {
+pub fn ident(v: u32) -> String {
+    ident_shifted(v, 5)
+}
+
+/// The same packing as [`ident`], as FS2024 writes it: one more tag bit before the characters
+/// begin. Everything else about it is identical — base thirty-eight, the same alphabet, the
+/// same order — which is how it was found: the packed value FS2024 holds for a fix, shifted six
+/// bits, is the same number FS2020's is shifted five. Checked against four thousand fixes
+/// matched between the two simulators by position; six bits decodes three thousand three
+/// hundred and sixty-six of them and no other shift decodes a single one.
+pub fn ident_2024(v: u32) -> String {
+    ident_shifted(v, 6)
+}
+
+fn ident_shifted(mut v: u32, shift: u32) -> String {
     const CH: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     if v == 0 {
         return String::new();
     }
-    v >>= 5;
+    v >>= shift;
     let mut out = Vec::new();
     while v > 1 {
         let r = (v % 38) as usize;

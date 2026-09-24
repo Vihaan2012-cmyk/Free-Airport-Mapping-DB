@@ -84,40 +84,70 @@ struct RouteEntry {
     level: AirwayLevel,
 }
 
-const ENTRY_LEN: usize = 33;
+/// An airway entry is thirty-three bytes under FS2020 and forty-nine under FS2024, with the
+/// name and the altitude in different places in each. Using one stride for both reads every
+/// FS2024 name from the middle of the record before it: forty thousand airways came out where
+/// nine and a half thousand exist, and their names were bytes rather than words.
+const ENTRY_LEN_2020: usize = 33;
+const ENTRY_LEN_2024: usize = 49;
 const WAYPOINT_HEADER: usize = 28;
+const REC_WAYPOINT_2024: u16 = 0x108;
+
+/// Whether a string is a name an airway really has: a letter, then letters and digits. Real
+/// ones are `UN873`, `Q907`, `T229`, `V16`. Anything else is a field read at the wrong offset,
+/// and is thrown away rather than written into a database as though it were a route.
+fn is_airway_name(s: &str) -> bool {
+    let n = s.len();
+    (2..=7).contains(&n) && s.starts_with(|c: char| c.is_ascii_uppercase()) && s.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
 
 fn route_entries(d: &[u8]) -> Vec<RouteEntry> {
     let mut out = Vec::new();
+    let is_2024 = u16::from_le_bytes([d[0], d[1]]) == REC_WAYPOINT_2024;
+    let (stride, name_at, alt_at) = if is_2024 { (ENTRY_LEN_2024, 9, 33) } else { (ENTRY_LEN_2020, 1, 0x1d) };
     let mut at = WAYPOINT_HEADER;
-    while at + ENTRY_LEN <= d.len() {
-        let e = &d[at..at + ENTRY_LEN];
-        let name: String = e[1..9].iter().take_while(|&&b| b != 0).map(|&b| b as char).collect();
-        if !name.is_empty() {
+    while at + stride <= d.len() {
+        let e = &d[at..at + stride];
+        let name: String = e[name_at..(name_at + 8).min(stride)].iter().take_while(|&&b| b != 0).map(|&b| b as char).collect();
+        let name = name.trim().to_string();
+        if !is_airway_name(&name) {
+            at += stride;
+            continue;
+        }
+        {
             let fix = |off: usize| -> Option<String> {
+                if off + 4 > stride {
+                    return None;
+                }
                 let id = bgl::ident(bgl::u32le(e, off));
-                (!id.is_empty()).then_some(id)
+                (!id.is_empty() && is_airway_name(&id)).then_some(id)
             };
             let metres = |off: usize| -> Option<f64> {
+                if off + 4 > stride {
+                    return None;
+                }
                 let v = bgl::f32le(e, off) as f64;
-                (v.is_finite() && v > 1.0).then(|| (v * FT_PER_M / 100.0).round() * 100.0)
+                (v.is_finite() && v > 1.0 && v < 20_000.0).then(|| (v * FT_PER_M / 100.0).round() * 100.0)
             };
             out.push(RouteEntry {
-                name: name.trim().to_string(),
-                prev: fix(0x09),
-                next: fix(0x15),
-                min_ft: metres(0x1d),
+                name,
+                // FS2020 names the fix before and after; where FS2024 keeps them has not been
+                // established, so under it an airway's fixes are put in order by geography
+                // instead — see `assemble_airways`.
+                prev: if is_2024 { None } else { fix(0x09) },
+                next: if is_2024 { None } else { fix(0x15) },
+                min_ft: metres(alt_at),
                 // The type byte distinguishes the low-level network from the upper one; a
                 // value this has not been seen to carry is taken as serving both rather than
                 // as excluding a route from a search that would otherwise find it.
-                level: match e[0] {
+                level: match e[if is_2024 { 8 } else { 0 }] {
                     1 => AirwayLevel::Low,
                     2 => AirwayLevel::High,
                     _ => AirwayLevel::Both,
                 },
             });
         }
-        at += ENTRY_LEN;
+        at += stride;
     }
     out
 }
@@ -302,7 +332,11 @@ fn read_airports(d: &[u8], out: &mut Vec<AirportRec>) {
         // established rather than guessed.
         let elevation_ft = bgl::u32le(d, rec.start + 0x14) as f64 / 1000.0 * FT_PER_M;
         let children_at = if rec.id == REC_AIRPORT_2024 { rec.start + 0x5C } else { rec.start + 0x44 };
-        let name = child_text(d, children_at, rec.end, 0x19).unwrap_or_default();
+        // The simulator stores an airport's name as a key into its own localisation table
+        // ("TT:AIRPORTEK.KJFK.name"), which is not a name and must not be written as one. The
+        // table is not in the navigation data, so where that is all there is the identifier
+        // stands in — an FMS shows "KJFK", which is what a pilot reads anyway.
+        let name = child_text(d, children_at, rec.end, 0x19).filter(|n| !n.contains(".name") && !n.starts_with("TT:")).unwrap_or_else(|| icao.clone());
         let region = if rec.id == REC_AIRPORT_2024 { icao.chars().take(2).collect() } else { bgl::ident(bgl::u32le(d, rec.start + 0x24)) };
         out.push(AirportRec {
             icao,
@@ -345,7 +379,11 @@ fn read_navaids(d: &[u8], out: &mut Vec<NavaidRec>) {
             if rec.end - rec.start < 0x24 {
                 continue;
             }
-            let ident = bgl::ident(bgl::u32le(d, rec.start + 0x20));
+            // FS2024 renumbered the beacons as it did everything else, and packs their
+            // identifiers with one more tag bit.
+            let is_2024 = matches!(rec.id, 0x105 | 0x106);
+            let unpack = if is_2024 { bgl::ident_2024 } else { bgl::ident };
+            let ident = unpack(bgl::u32le(d, rec.start + 0x20));
             if ident.is_empty() {
                 continue;
             }
@@ -357,7 +395,7 @@ fn read_navaids(d: &[u8], out: &mut Vec<NavaidRec>) {
             }
             let raw = bgl::u32le(d, rec.start + freq_at) as f64;
             let frequency = if vor { raw / 1.0e6 } else { raw / 1000.0 };
-            let region = bgl::ident(bgl::u32le(d, rec.start + 0x1c));
+            let region = unpack(bgl::u32le(d, rec.start + 0x1c));
             out.push(NavaidRec {
                 ident,
                 // The record says whether a beacon is a VOR or an NDB but not whether a DME
@@ -386,7 +424,8 @@ fn read_fixes(d: &[u8], out: &mut Vec<Fix>) {
             continue;
         }
         let r = &d[rec.start..rec.end];
-        let ident = bgl::ident(bgl::u32le(r, 0x14));
+        let unpack = if rec.id == REC_WAYPOINT_2024 { bgl::ident_2024 } else { bgl::ident };
+        let ident = unpack(bgl::u32le(r, 0x14));
         if ident.is_empty() {
             continue;
         }
@@ -395,7 +434,7 @@ fn read_fixes(d: &[u8], out: &mut Vec<Fix>) {
         if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
             continue;
         }
-        let region = bgl::ident(bgl::u32le(r, 0x18));
+        let region = unpack(bgl::u32le(r, 0x18));
         out.push(Fix { ident, region: region.chars().take(2).collect(), lat, lon, routes: route_entries(r) });
     }
 }
@@ -409,69 +448,130 @@ fn read_fixes(d: &[u8], out: &mut Vec<Fix>) {
 /// links are still emitted as their own short chains rather than dropped, since a route search
 /// can use a stretch of an airway it cannot see the whole of.
 fn assemble_airways(fixes: &[Fix]) -> Vec<AirwayRec> {
-    // Every (airway, fix) link, by airway. The region of a fix is looked up in a map rather
-    // than searched for in the link list: a linear search there is what turned a long airway
-    // into quadratic work, and there are airways with thousands of fixes on them.
-    let mut region_of: HashMap<&str, &str> = HashMap::new();
-    let mut by_airway: HashMap<&str, Vec<(&Fix, &RouteEntry)>> = HashMap::new();
+    // A fix is identified by its name *and* its region, never by its name alone. Airway names
+    // repeat all over the world — there is an `A1` in a dozen countries — and so do fix names,
+    // so keying a chain on the name alone splices one country's airway onto another's and
+    // breaks both into fragments. That is what turned ten thousand airways into forty
+    // thousand.
+    type Key<'a> = (&'a str, &'a str);
+    let mut position: HashMap<Key, &Fix> = HashMap::new();
+    let mut by_airway: HashMap<(&str, &str), Vec<(&Fix, &RouteEntry)>> = HashMap::new();
     for f in fixes {
-        region_of.insert(f.ident.as_str(), f.region.as_str());
+        position.insert((f.ident.as_str(), f.region.as_str()), f);
         for e in &f.routes {
-            by_airway.entry(e.name.as_str()).or_default().push((f, e));
+            by_airway.entry((e.name.as_str(), f.region.as_str())).or_default().push((f, e));
         }
     }
-    let mut out = Vec::new();
-    for (name, links) in by_airway {
-        // Which fix follows which, and the altitude and level of the leg between.
-        let mut forward: HashMap<&str, (&str, Option<f64>, AirwayLevel, &str)> = HashMap::new();
-        let mut has_predecessor: HashMap<&str, bool> = HashMap::new();
+    let mut out: Vec<AirwayRec> = Vec::new();
+    for ((name, region), links) in by_airway {
+        // Which fix follows which. A fix the entry names without a region of its own is taken
+        // to be in the same region as the fix carrying the entry, which is what an airway
+        // being a local thing means.
+        let mut forward: HashMap<Key, (Key, Option<f64>, AirwayLevel)> = HashMap::new();
+        let mut seen: HashMap<Key, bool> = HashMap::new();
         for (f, e) in &links {
-            has_predecessor.entry(f.ident.as_str()).or_insert(false);
+            let here: Key = (f.ident.as_str(), f.region.as_str());
+            seen.entry(here).or_insert(false);
             if let Some(next) = &e.next {
-                forward.insert(f.ident.as_str(), (next.as_str(), e.min_ft, e.level, f.region.as_str()));
-                has_predecessor.insert(next.as_str(), true);
+                let there: Key = (next.as_str(), region);
+                forward.insert(here, (there, e.min_ft, e.level));
+                seen.insert(there, true);
             }
         }
-        // A set, not a list: walking a chain and asking "have I been here" of a growing
-        // vector is the other half of the same quadratic cost.
-        let mut used: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut used: std::collections::HashSet<Key> = std::collections::HashSet::new();
         let mut legs: Vec<AirwayLegRec> = Vec::new();
-        // A fix nothing leads to starts a chain. Where the data is circular or its ends lie
-        // outside what was read, no such fix exists, so every fix is tried in turn and the
-        // `used` set keeps a chain from being emitted twice.
-        let mut starts: Vec<&str> = has_predecessor.iter().filter(|(_, &p)| !p).map(|(i, _)| *i).collect();
+        let mut starts: Vec<Key> = seen.iter().filter(|(_, &had)| !had).map(|(k, _)| *k).collect();
         starts.sort_unstable();
-        let mut rest: Vec<&str> = has_predecessor.keys().copied().collect();
+        let mut rest: Vec<Key> = seen.keys().copied().collect();
         rest.sort_unstable();
         for start in starts.into_iter().chain(rest) {
-            if used.contains(start) {
+            if used.contains(&start) {
                 continue;
             }
             let mut at = start;
-            while let Some(&(next, min_ft, level, region)) = forward.get(at) {
+            while let Some(&(next, min_ft, level)) = forward.get(&at) {
                 if !used.insert(at) {
                     break;
                 }
                 legs.push(AirwayLegRec {
                     sequence: legs.len() as u32 + 1,
-                    from_ident: at.to_string(),
-                    from_region: region.to_string(),
-                    to_ident: next.to_string(),
-                    to_region: region_of.get(next).copied().unwrap_or_default().to_string(),
+                    from_ident: at.0.to_string(),
+                    from_region: at.1.to_string(),
+                    to_ident: next.0.to_string(),
+                    to_region: position.get(&next).map(|f| f.region.clone()).unwrap_or_else(|| next.1.to_string()),
                     level,
                     is_start: at == start,
-                    is_end: !forward.contains_key(next),
+                    is_end: !forward.contains_key(&next),
                     min_ft,
                 });
                 at = next;
+            }
+        }
+        // Where nothing linked (FS2024, whose entries do not say which fix comes next in any
+        // place this has found), the fixes are put in order by geography: start at one end of
+        // the line they lie along and take the nearest unused fix each time. An airway is a
+        // published line between two places, so its fixes are nearly collinear and this
+        // recovers the real order for all but the few that double back on themselves.
+        if legs.is_empty() && links.len() >= 2 {
+            let mut points: Vec<&Fix> = links.iter().map(|(f, _)| *f).collect();
+            points.sort_by(|a, b| a.ident.cmp(&b.ident));
+            points.dedup_by(|a, b| a.ident == b.ident && a.region == b.region);
+            if points.len() >= 2 {
+                let level = links[0].1.level;
+                let min_ft = links[0].1.min_ft;
+                // One end is the fix furthest from the centre of them all.
+                let (clat, clon) = (points.iter().map(|f| f.lat).sum::<f64>() / points.len() as f64, points.iter().map(|f| f.lon).sum::<f64>() / points.len() as f64);
+                let far = |f: &Fix| crate::dispatch::distance_nm((clat, clon), (f.lat, f.lon));
+                let start = points.iter().enumerate().max_by(|a, b| far(a.1).total_cmp(&far(b.1))).map(|(i, _)| i).unwrap_or(0);
+                let mut order: Vec<&Fix> = vec![points.remove(start)];
+                while !points.is_empty() {
+                    let last = *order.last().unwrap();
+                    let nearest = points
+                        .iter()
+                        .enumerate()
+                        .min_by(|a, b| {
+                            crate::dispatch::distance_nm((last.lat, last.lon), (a.1.lat, a.1.lon)).total_cmp(&crate::dispatch::distance_nm((last.lat, last.lon), (b.1.lat, b.1.lon)))
+                        })
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                    order.push(points.remove(nearest));
+                }
+                for (i, pair) in order.windows(2).enumerate() {
+                    legs.push(AirwayLegRec {
+                        sequence: i as u32 + 1,
+                        from_ident: pair[0].ident.clone(),
+                        from_region: pair[0].region.clone(),
+                        to_ident: pair[1].ident.clone(),
+                        to_region: pair[1].region.clone(),
+                        level,
+                        is_start: i == 0,
+                        is_end: i + 2 == order.len(),
+                        min_ft,
+                    });
+                }
             }
         }
         if !legs.is_empty() {
             out.push(AirwayRec { ident: name.to_string(), legs });
         }
     }
+    // One airway may legitimately be several chains in several regions; they are written under
+    // the one name, in order, as the format itself does.
     out.sort_by(|a, b| a.ident.cmp(&b.ident));
-    out
+    let mut merged: Vec<AirwayRec> = Vec::new();
+    for a in out {
+        match merged.last_mut() {
+            Some(prev) if prev.ident == a.ident => {
+                let base = prev.legs.len() as u32;
+                prev.legs.extend(a.legs.into_iter().map(|mut l| {
+                    l.sequence += base;
+                    l
+                }));
+            }
+            _ => merged.push(a),
+        }
+    }
+    merged
 }
 
 /// Every airport's procedures, out of the bytes already read, in parallel.
@@ -588,14 +688,14 @@ mod tests {
     /// A waypoint record built by hand in the shape the files use, with two airways through
     /// it, so the entry layout is pinned by a test rather than only by the dump it came from.
     fn waypoint_with_two_airways() -> Vec<u8> {
-        let mut d = vec![0u8; WAYPOINT_HEADER + ENTRY_LEN * 2];
+        let mut d = vec![0u8; WAYPOINT_HEADER + ENTRY_LEN_2020 * 2];
         d[0] = 0x22;
         d[6] = 3;
         d[7] = 2;
         // 1371.6 metres is four thousand five hundred feet.
         let put_f32 = |d: &mut Vec<u8>, at: usize, v: f32| d[at..at + 4].copy_from_slice(&v.to_le_bytes());
         for (k, (name, min_m)) in [("W347", 1371.6f32), ("Q67", 0.0)].into_iter().enumerate() {
-            let base = WAYPOINT_HEADER + k * ENTRY_LEN;
+            let base = WAYPOINT_HEADER + k * ENTRY_LEN_2020;
             d[base] = 3;
             d[base + 1..base + 1 + name.len()].copy_from_slice(name.as_bytes());
             put_f32(&mut d, base + 0x1d, min_m);

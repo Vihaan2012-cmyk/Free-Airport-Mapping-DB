@@ -628,3 +628,423 @@ fn fs2024_big_airport_children() {
         .unwrap();
     }
 }
+
+/// Where do an FS2024 procedure record's own children (its leg lists and transitions) begin,
+/// and what ids do they carry? Found the same way as the airport's: try each offset, keep the
+/// one whose records tile exactly to the end.
+#[test]
+#[ignore]
+fn fs2024_procedure_children() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut tally: BTreeMap<(u16, usize), BTreeMap<u16, usize>> = BTreeMap::new();
+    let mut offsets: BTreeMap<u16, BTreeMap<usize, usize>> = BTreeMap::new();
+    let mut n = 0usize;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_x, data| {
+            if n >= 60 {
+                return;
+            }
+            for r in bgl::section_records(&data, 0x03) {
+                if r.id != 275 || r.end - r.start < 0x200 || n >= 60 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                for c in bgl::records(d, 0x5c, d.len()) {
+                    if !matches!(c.id, 0x42 | 0x48 | 0x111) {
+                        continue;
+                    }
+                    n += 1;
+                    let body = &d[c.start..c.end];
+                    for off in (0x08..0x40).step_by(2) {
+                        if off + 6 > body.len() {
+                            break;
+                        }
+                        let mut at = off;
+                        let mut ok = 0;
+                        while at + 6 <= body.len() {
+                            let size = bgl::u32le(body, at + 2) as usize;
+                            if size < 6 || at + size > body.len() {
+                                break;
+                            }
+                            at += size;
+                            ok += 1;
+                        }
+                        if at == body.len() && ok >= 1 {
+                            *offsets.entry(c.id).or_default().entry(off).or_default() += 1;
+                            for cc in bgl::records(body, off, body.len()) {
+                                *tally.entry((c.id, off)).or_default().entry(cc.id).or_default() += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .unwrap();
+    }
+    for (id, offs) in &offsets {
+        let mut v: Vec<(usize, usize)> = offs.iter().map(|(a, b)| (*a, *b)).collect();
+        v.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+        println!("record 0x{id:03x}: children tile from {:?}", &v[..v.len().min(3)]);
+        if let Some((best, _)) = v.first() {
+            if let Some(ids) = tally.get(&(*id, *best)) {
+                println!("    at +0x{best:02x} the child ids are {ids:?}");
+            }
+        }
+    }
+}
+
+/// Are FS2024's renumbered records leg lists? A leg list is a count and then fixed 72-byte
+/// legs, so its length minus its header should divide by 72.
+#[test]
+#[ignore]
+fn fs2024_leg_lists() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut shapes: BTreeMap<u16, BTreeMap<String, usize>> = BTreeMap::new();
+    let mut n = 0usize;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_x, data| {
+            if n >= 400 {
+                return;
+            }
+            for r in bgl::section_records(&data, 0x03) {
+                if r.id != 275 || r.end - r.start < 0x200 || n >= 400 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                for c in bgl::records(d, 0x5c, d.len()) {
+                    if !matches!(c.id, 0x42 | 0x48 | 0x111) {
+                        continue;
+                    }
+                    let body = &d[c.start..c.end];
+                    let at = if c.id == 0x111 { 0x2c } else { 0x14 };
+                    if at + 6 > body.len() {
+                        continue;
+                    }
+                    for cc in bgl::records(body, at, body.len()) {
+                        n += 1;
+                        let len = cc.end - cc.start;
+                        // Try a few plausible header sizes and see which leaves a multiple of 72.
+                        let fits: Vec<usize> = [6usize, 8, 0x0c, 0x10, 0x14, 0x1c, 0x20].into_iter().filter(|h| len > *h && (len - h) % 72 == 0).collect();
+                        let count_at_6 = if len > 8 { bgl::u32le(body, cc.start + 6) & 0xffff } else { 0 };
+                        shapes
+                            .entry(cc.id)
+                            .or_default()
+                            .entry(format!("header_candidates={fits:?} u16@+6={count_at_6}"))
+                            .and_modify(|v| *v += 1)
+                            .or_insert(1);
+                    }
+                }
+            }
+        })
+        .unwrap();
+    }
+    for (id, v) in &shapes {
+        let mut rows: Vec<(&String, &usize)> = v.iter().collect();
+        rows.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
+        println!("child 0x{id:03x} ({id}):");
+        for (k, c) in rows.iter().take(3) {
+            println!("    {k}  ({c} times)");
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn inside_fs2024_sid_and_star() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut done = 0usize;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_x, data| {
+            if done >= 2 {
+                return;
+            }
+            for r in bgl::section_records(&data, 0x03) {
+                if r.id != 275 || r.end - r.start < 0x4000 || done >= 2 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                let ident: String = d[0x6f..].iter().take(5).take_while(|&&b| b.is_ascii_alphanumeric()).map(|&b| b as char).collect();
+                for c in bgl::records(d, 0x5c, d.len()) {
+                    if !matches!(c.id, 0x42 | 0x48) || done >= 2 {
+                        continue;
+                    }
+                    let body = &d[c.start..c.end];
+                    println!("{ident} {} record 0x{:02x}, {} bytes", if c.id == 0x42 { "SID " } else { "STAR" }, c.id, body.len());
+                    println!("   header: {:02x?}", &body[..0x20.min(body.len())]);
+                    for lvl1 in bgl::records(body, 0x14, body.len()) {
+                        let n1 = lvl1.end - lvl1.start;
+                        println!("   child 0x{:03x} len {n1} count@+6={}", lvl1.id, u16::from_le_bytes([body[lvl1.start + 6], body[lvl1.start + 7]]));
+                        for off in [0x08usize, 0x0c, 0x10, 0x14, 0x18] {
+                            if lvl1.start + off + 6 > lvl1.end {
+                                continue;
+                            }
+                            let kids: Vec<String> = bgl::records(body, lvl1.start + off, lvl1.end).iter().map(|k| format!("0x{:03x}/{}", k.id, k.end - k.start)).collect();
+                            if !kids.is_empty() {
+                                println!("       from +0x{off:02x}: {}", kids.join(" "));
+                            }
+                        }
+                    }
+                    done += 1;
+                }
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[test]
+#[ignore]
+fn fs2024_airway_entry_layout() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut shown = 0usize;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_x, data| {
+            if shown >= 2 {
+                return;
+            }
+            for r in bgl::section_records(&data, 0x22) {
+                let len = r.end - r.start;
+                if r.id != 0x108 || len < 200 || len > 400 || shown >= 2 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                let n = d[7] as usize;
+                println!("len={len} n={n} (len-28)/n={:.2}", (len - 28) as f64 / n.max(1) as f64);
+                for stride in [49usize] {
+                    let mut at = 28;
+                    let mut k = 0;
+                    while at + stride <= len && k < 5 {
+                        let e = &d[at..at + stride];
+                        let text: String = e.iter().map(|&b| if b.is_ascii_graphic() { b as char } else { '.' }).collect();
+                        println!("  entry {k} @{at}: {text}");
+                        println!("     {:02x?}", e);
+                        // Any f32 in the entry that converts to a round hundred of feet.
+                        let alts: Vec<String> = (0..stride.saturating_sub(4))
+                            .filter_map(|o| {
+                                let v = bgl::f32le(e, o) as f64;
+                                let ft = v * 3.280_839_895;
+                                (v > 100.0 && v < 20000.0 && (ft / 100.0 - (ft / 100.0).round()).abs() < 0.02).then(|| format!("+{o}={:.0}ft", ft))
+                            })
+                            .collect();
+                        println!("     round altitudes: {}", alts.join(" "));
+                        at += stride;
+                        k += 1;
+                    }
+                }
+                shown += 1;
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[test]
+#[ignore]
+fn fs2024_airway_entry_idents() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut tally: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut n = 0usize;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_x, data| {
+            if n >= 2000 {
+                return;
+            }
+            for r in bgl::section_records(&data, 0x22) {
+                let len = r.end - r.start;
+                if r.id != 0x108 || len < 28 + 49 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                let mut at = 28;
+                while at + 49 <= len && n < 2000 {
+                    let e = &d[at..at + 49];
+                    n += 1;
+                    for off in 0..45 {
+                        let id = bgl::ident(bgl::u32le(e, off));
+                        let plausible = (3..=5).contains(&id.len()) && id.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+                        if plausible {
+                            *tally.entry(off).or_default() += 1;
+                        }
+                    }
+                    at += 49;
+                }
+            }
+        })
+        .unwrap();
+    }
+    let mut v: Vec<(usize, usize)> = tally.into_iter().collect();
+    v.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+    println!("entries scanned: {n}");
+    for (off, c) in v.iter().take(10) {
+        println!("  plausible ident at +{off} in {c} of {n}");
+    }
+}
+
+#[test]
+#[ignore]
+fn where_is_the_fs2024_fix_ident() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut known: BTreeMap<(i64, i64), String> = BTreeMap::new();
+    for_each_bgl(&[""], |_n, data| {
+        for r in bgl::section_records(&data, 0x22) {
+            if r.id != 0x22 || r.end - r.start < 28 {
+                continue;
+            }
+            let d = &data[r.start..r.end];
+            let id = bgl::ident(bgl::u32le(d, 0x14));
+            if id.len() >= 3 {
+                known.insert(((bgl::lat(bgl::u32le(d, 0x0c)) * 2000.0) as i64, (bgl::lon(bgl::u32le(d, 0x08)) * 2000.0) as i64), id);
+            }
+        }
+    });
+    println!("FS2020 fixes indexed: {}", known.len());
+    let mut hits: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut checked = 0usize;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_x, data| {
+            if checked >= 1500 {
+                return;
+            }
+            for r in bgl::section_records(&data, 0x22) {
+                if r.id != 0x108 || r.end - r.start < 28 || checked >= 1500 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                for (lat_at, lon_at) in [(0x0cusize, 0x08usize)] {
+                    let lat = bgl::lat(bgl::u32le(d, lat_at));
+                    let lon = bgl::lon(bgl::u32le(d, lon_at));
+                    let Some(want) = known.get(&((lat * 2000.0) as i64, (lon * 2000.0) as i64)) else { continue };
+                    checked += 1;
+                    let bytes = want.as_bytes();
+                    for off in 0..d.len().saturating_sub(bytes.len()) {
+                        if &d[off..off + bytes.len()] == bytes {
+                            *hits.entry(off).or_default() += 1;
+                        }
+                    }
+                }
+            }
+        })
+        .unwrap();
+    }
+    println!("FS2024 fixes matched by position: {checked}");
+    let mut v: Vec<(usize, usize)> = hits.into_iter().collect();
+    v.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+    for (off, c) in v.iter().take(6) {
+        println!("  identifier at +0x{off:02x} in {c} of {checked}");
+    }
+}
+
+#[test]
+#[ignore]
+fn compare_matched_fix_records() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut known: BTreeMap<(i64, i64), (String, Vec<u8>)> = BTreeMap::new();
+    for_each_bgl(&[""], |_n, data| {
+        for r in bgl::section_records(&data, 0x22) {
+            if r.id != 0x22 || r.end - r.start < 28 {
+                continue;
+            }
+            let d = &data[r.start..r.end];
+            let id = bgl::ident(bgl::u32le(d, 0x14));
+            if id.len() >= 4 {
+                known.insert(((bgl::lat(bgl::u32le(d, 0x0c)) * 2000.0) as i64, (bgl::lon(bgl::u32le(d, 0x08)) * 2000.0) as i64), (id, d[..28].to_vec()));
+            }
+        }
+    });
+    let mut shown = 0usize;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_x, data| {
+            if shown >= 5 {
+                return;
+            }
+            for r in bgl::section_records(&data, 0x22) {
+                if r.id != 0x108 || r.end - r.start < 28 || shown >= 5 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                let key = ((bgl::lat(bgl::u32le(d, 0x0c)) * 2000.0) as i64, (bgl::lon(bgl::u32le(d, 0x08)) * 2000.0) as i64);
+                let Some((id, old)) = known.get(&key) else { continue };
+                println!("{id}:");
+                println!("   FS2020 header: {:02x?}", old);
+                println!("   FS2024 header: {:02x?}", &d[..28]);
+                println!("   FS2020 u32@0x14={:08x} decodes {}", bgl::u32le(old, 0x14), bgl::ident(bgl::u32le(old, 0x14)));
+                println!("   FS2024 u32@0x14={:08x} @0x18={:08x} @0x10={:08x}", bgl::u32le(d, 0x14), bgl::u32le(d, 0x18), bgl::u32le(d, 0x10));
+                shown += 1;
+            }
+        })
+        .unwrap();
+    }
+}
+
+/// Decode a packed identifier with a given number of tag bits shifted off first.
+fn ident_shift(mut v: u32, shift: u32) -> String {
+    const CH: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    if v == 0 {
+        return String::new();
+    }
+    v >>= shift;
+    let mut out = Vec::new();
+    while v > 1 {
+        let r = (v % 38) as usize;
+        v /= 38;
+        out.push(if r < 2 { b' ' } else { CH[r - 2] });
+    }
+    out.reverse();
+    String::from_utf8_lossy(&out).trim().to_string()
+}
+
+#[test]
+#[ignore]
+fn which_shift_decodes_fs2024_idents() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut known: BTreeMap<(i64, i64), String> = BTreeMap::new();
+    for_each_bgl(&[""], |_n, data| {
+        for r in bgl::section_records(&data, 0x22) {
+            if r.id != 0x22 || r.end - r.start < 28 {
+                continue;
+            }
+            let d = &data[r.start..r.end];
+            let id = bgl::ident(bgl::u32le(d, 0x14));
+            if id.len() >= 4 {
+                known.insert(((bgl::lat(bgl::u32le(d, 0x0c)) * 2000.0) as i64, (bgl::lon(bgl::u32le(d, 0x08)) * 2000.0) as i64), id);
+            }
+        }
+    });
+    let mut hits: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut checked = 0usize;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_x, data| {
+            if checked >= 4000 {
+                return;
+            }
+            for r in bgl::section_records(&data, 0x22) {
+                if r.id != 0x108 || r.end - r.start < 28 || checked >= 4000 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                let Some(want) = known.get(&((bgl::lat(bgl::u32le(d, 0x0c)) * 2000.0) as i64, (bgl::lon(bgl::u32le(d, 0x08)) * 2000.0) as i64)) else { continue };
+                checked += 1;
+                for shift in 0..10u32 {
+                    if &ident_shift(bgl::u32le(d, 0x14), shift) == want {
+                        *hits.entry(shift).or_default() += 1;
+                    }
+                }
+            }
+        })
+        .unwrap();
+    }
+    println!("checked {checked} matched fixes");
+    let mut v: Vec<(u32, usize)> = hits.into_iter().collect();
+    v.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+    for (shift, c) in v.iter().take(4) {
+        println!("  shifting {shift} bits decodes {c} of {checked}");
+    }
+}
