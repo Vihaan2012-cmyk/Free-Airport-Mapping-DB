@@ -142,6 +142,39 @@ impl Frame {
     }
 }
 
+/// The world's coastlines, as closed rings of latitude and longitude.
+///
+/// Natural Earth's 110-metre land, which is public domain, packed to two signed sixteen-bit
+/// numbers a point in hundredths of a degree -- about a third of a mile, and far finer than a
+/// coastline drawn at this size. Twenty kilobytes for the whole world, carried in the binary,
+/// so a map draws the same offline as on, and nothing has to be fetched to know where the sea
+/// is. Before this the land was implied by the wash of navigation fixes, which is honest about
+/// what the search can use and says nothing at all about where anything is.
+fn land() -> &'static [Vec<LatLon>] {
+    static LAND: std::sync::OnceLock<Vec<Vec<LatLon>>> = std::sync::OnceLock::new();
+    LAND.get_or_init(|| {
+        let raw: &[u8] = include_bytes!("../../data/world_land.bin");
+        let mut rings = Vec::new();
+        let mut at = 0usize;
+        while at + 2 <= raw.len() {
+            let count = u16::from_le_bytes([raw[at], raw[at + 1]]) as usize;
+            at += 2;
+            let mut ring = Vec::with_capacity(count);
+            for _ in 0..count {
+                if at + 4 > raw.len() {
+                    break;
+                }
+                let lat = i16::from_le_bytes([raw[at], raw[at + 1]]) as f64 / 100.0;
+                let lon = i16::from_le_bytes([raw[at + 2], raw[at + 3]]) as f64 / 100.0;
+                ring.push((lat, lon));
+                at += 4;
+            }
+            rings.push(ring);
+        }
+        rings
+    })
+}
+
 /// A line through a run of places, broken wherever it would cross the page's seam.
 fn polyline(c: &mut dyn Canvas, frame: &Frame, points: &[LatLon]) {
     let mut started = false;
@@ -221,10 +254,37 @@ fn draw(c: &mut dyn Canvas, map: &Map, width: f32, height: f32) {
     }
     let frame = Frame::fit(&held, width, height, width * MARGIN_SHARE);
 
-    // The network, as a wash of single pixels. It is the backdrop and the subject at once: the
-    // shape it makes is the shape of the inhabited world, and it is also the whole of what the
-    // search has to route through, so a bare patch on this picture is a bare patch in the plan.
-    c.set_fill_rgb(0.78, 0.80, 0.84);
+    // The land, filled, so the picture is a map before it is a diagram.
+    c.set_fill_rgb(0.93, 0.93, 0.90);
+    for ring in land() {
+        let mut started = false;
+        for pair in ring.windows(2) {
+            if frame.wraps(pair[0], pair[1]) {
+                started = false;
+                continue;
+            }
+            if !started {
+                let (x, y) = frame.at(pair[0]);
+                c.move_to(x, y);
+                started = true;
+            }
+            let (x, y) = frame.at(pair[1]);
+            c.line_to(x, y);
+        }
+        if started {
+            c.close_path();
+        }
+    }
+    c.fill_nonzero();
+    c.set_stroke_rgb(0.72, 0.74, 0.72);
+    c.set_line_width(0.7);
+    for ring in land() {
+        polyline(c, &frame, ring);
+    }
+
+    // The network over it: what the search can actually route through, so a bare patch on this
+    // picture is a bare patch in the plan.
+    c.set_fill_rgb(0.62, 0.66, 0.74);
     for &p in map.network.iter().filter(|&&p| frame.holds(p)) {
         let (x, y) = frame.at(p);
         c.rect(x, y, 1.2, 1.2);
