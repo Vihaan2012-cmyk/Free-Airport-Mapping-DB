@@ -1,3 +1,5 @@
+// A briefing is forty-odd fields, and `serde_json::json!` expands one macro call per key.
+#![recursion_limit = "512"]
 //! amdbgen library: AMDB generation pipeline plus the aircraft bridge server/patcher.
 
 pub mod bridge;
