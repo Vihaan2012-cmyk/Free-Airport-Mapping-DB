@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.2.0 (2026-09-25)
+
+**AMDB Navdata**, the navigation-data converter as a tool of its own: a window, an
+installer and a command line, for people who want the converter and not a bridge, a
+desktop app, a chart renderer and a flight planner as well.
+
+  AMDB-Navdata-Setup-<version>.exe   an installer, with a Start menu entry and PATH
+  AMDB-Navdata-<version>.zip         the same two programs, to unpack anywhere
+
+- **A window.** Tick the aeroplane, press Convert, watch it go. The aircraft listed are the
+  ones actually installed on the machine, read from the Community folders and named by
+  variant — PMDG 737-800, 777-200ER, 777F, 777-300ER — because a list of every aeroplane
+  the converter could write for would mostly be aeroplanes the reader does not own.
+
+- It decides nothing of its own. The window fills in the same arguments the command line
+  parses and calls the same function, so the three ways in cannot disagree about what they
+  do, or be fixed one at a time. Nothing was taken out of the full installer to make this
+  exist: `amdbgen navdata` is still there, unchanged.
+
+- The window reads FS2024. FS2020 gives a fuller answer — on one machine 296,740 SIDs
+  against 64,818, and 496,489 approaches against 112,428, because FS2024's procedure
+  records are re-laid-out in ways this crate has not finished decoding — and
+  `amdb-navdata --sim fs2020` still gives it.
+
+- The counts a conversion reports went out through `println!`, which only a terminal sees,
+  so a window showed the warnings about what was left empty and never what was written.
+  They go through `term` now, which prints the line as it was and hands it to whatever is
+  listening.
+
 ## 1.1.2 (2026-09-25)
 
 Taken from [J380-1's iniBuilds A380 work](https://github.com/J380-1/Free-Airport-Mapping-DB),
