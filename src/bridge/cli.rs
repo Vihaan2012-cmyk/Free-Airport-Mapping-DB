@@ -404,6 +404,12 @@ fn effective_settings(d: &DataArgs) -> Result<Settings> {
 }
 
 pub(crate) fn make_store(d: &DataArgs, s: &Settings) -> Result<Store> {
+    // The airport diagram is drawn from a built aerodrome rather than from the simulator's
+    // navigation data, so the chart code is given its own settings for finding or making
+    // one. They are built from the same arguments as the store's rather than shared with
+    // them: `Config` carries a download cache and an HTTP client, which are not things to
+    // hand round between threads by copying.
+    super::charts::set_ground(config(d, s));
     let mut store = Store::new(config(d, s))?;
     store.retention = if d.out.is_some() {
         Retention::KeepAll
