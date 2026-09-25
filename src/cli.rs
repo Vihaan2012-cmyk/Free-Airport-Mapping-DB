@@ -273,44 +273,46 @@ enum Cmd {
     Convert(ConvertArgs),
 }
 
+/// The converter's arguments. Public, and public field by field, because the window in
+/// `amdb-navdata-gui` fills in exactly these: one set of rules about what a request is.
 #[derive(Args, Clone)]
 pub struct ConvertArgs {
     /// fenix (the Fenix A320), or dfd for the Navigraph layout the iniBuilds A350, the
     /// Synaptic A220 and PMDG's 737 and 777 all read.
     #[arg(long = "to")]
-    to: String,
+    pub to: String,
     /// Read the simulator's own navigation data (FS2020's loose files, or FS2024's packed
     /// archive) rather than a JSON file. This is the ordinary way to use the command: the
     /// point of it is to put the simulator's current data into an aircraft that shipped with
     /// a stale copy.
     #[arg(long = "from-sim", conflicts_with = "from_json")]
-    from_sim: bool,
+    pub from_sim: bool,
     /// Which simulator to read: `fs2020`, `fs2024`, or left out for whichever can supply
     /// the most. FS2024's navigation data is newer, but its airport and procedure records
     /// are renumbered and re-laid-out in ways this crate has not finished decoding, so
     /// FS2020 is what a complete conversion currently comes from.
     #[arg(long = "sim", default_value = "fs2020")]
-    sim: String,
+    pub sim: String,
     /// What AIRAC cycle to stamp the result with. The simulator does not label its own data
     /// with one anywhere this crate has found, so it is said rather than guessed.
     #[arg(long, default_value = "0000")]
-    cycle: String,
+    pub cycle: String,
     /// A `NavSet` dumped as JSON, instead of reading the simulator: for testing a writer
     /// against data built by hand. See `convert::model`.
     #[arg(long = "from-json", value_name = "FILE")]
-    from_json: Option<PathBuf>,
+    pub from_json: Option<PathBuf>,
     /// Where to write the new database. Required unless --in-place is given: this command
     /// never guesses a path to overwrite.
     #[arg(long)]
-    out: Option<PathBuf>,
+    pub out: Option<PathBuf>,
     /// Back up and overwrite the aircraft's own installed database (Fenix's
     /// `imported.db3`, auto-detected under %PROGRAMDATA%) rather than writing a new file.
     #[arg(long = "in-place")]
-    in_place: bool,
+    pub in_place: bool,
     /// Report what would be written without touching disk at all — not even a temporary
     /// file.
     #[arg(long = "dry-run")]
-    dry_run: bool,
+    pub dry_run: bool,
 }
 
 /// Where the airport index comes from.
@@ -1430,7 +1432,7 @@ pub fn convert_cmd(a: ConvertArgs) -> Result<()> {
     for line in &report {
         match &line.omitted_because {
             Some(why) => term::warn(&format!("{}: left empty — {why}", line.table)),
-            None => println!("{:<24} {}", line.table, line.rows),
+            None => term::plain(&format!("{:<24} {}", line.table, line.rows)),
         }
     }
     Ok(())

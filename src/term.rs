@@ -85,6 +85,16 @@ pub fn banner(app: &str) {
     info(&format!("Welcome to {}, v{}", style(app).bold(), env!("CARGO_PKG_VERSION")));
 }
 
+/// A line of a program's own output -- a table of counts, a list -- rather than a status
+/// line. It goes to the terminal exactly as given, and to the sink, so a window with no
+/// terminal to print to sees the answer and not only the warnings about it.
+pub fn plain(msg: &str) {
+    let _ = term().write_line(msg);
+    if let Some(sink) = SINK.get() {
+        sink("plain", &console::strip_ansi_codes(msg));
+    }
+}
+
 pub fn info(msg: &str) {
     let (s, m) = split_scope(msg);
     line(&INFO.to_string(), "info", cyan, s, m);
