@@ -371,9 +371,16 @@ const CHARTS_ROOTS: [(&str, &str); 3] = [("getIdentityApiRoot", "/identity"), ("
 const CHARTS_LITERALS: [(&str, &str); 2] = [("'https://identity.api.navigraph.com'", "/identity"), ("'https://api.navigraph.com'", "")];
 
 /// The flight bag scripts, by file name.
+///
+/// This is only a cheap way to avoid reading every script in a Community folder; whether
+/// a file is really a flight bag is settled by [`knows_charts`], which asks whether the
+/// SDK's three address functions are in it. `efb.js` is FlyByWire's -- the A32NX and the
+/// A380X both build their flight bag to that name out of `fbw-common` -- and is general
+/// enough that it would match other things, which is exactly why the real test is the
+/// contents and not the name.
 fn is_efb_script(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
-    name.starts_with("ini-efb") || name == "pmdgtablet.js" || name.starts_with("efb-a220")
+    name.starts_with("ini-efb") || name == "pmdgtablet.js" || name.starts_with("efb-a220") || name == "efb.js"
 }
 
 /// Whether a script is one the charts patch knows: built on the SDK, or naming the hosts.
@@ -983,6 +990,51 @@ mod tests {
 
     /// The three address functions as the A350's obfuscated bundle writes them, and as
     /// the PMDG tablet does, each pointed at the bridge and put back to the byte.
+    /// Every flight bag on this machine, rewritten and read back.
+    ///
+    /// They are all built on the same Navigraph SDK, so nothing about any one rewrite is
+    /// new -- but FlyByWire's bundle is seven megabytes of minified JavaScript naming the
+    /// three address functions several times each, once at the definition and again at
+    /// every call, and the rewrite has to find the definitions and only those. A file
+    /// named `efb.js` is also general enough to be somebody else's, which is why the scan
+    /// settles it on the contents. Neither is worth taking on trust.
+    ///
+    /// Nothing is written: each file is rewritten in memory and thrown away.
+    ///
+    /// `cargo test --release -- --ignored rewrites_every_flight_bag`
+    #[test]
+    #[ignore]
+    fn rewrites_every_flight_bag() {
+        let mut seen = 0;
+        for community in detect_community_dirs() {
+            for (pkg, path, already) in scan_charts(&community) {
+                let text = std::fs::read_to_string(&path).unwrap();
+                // A file already pointed at the bridge is not rewritten again; put it back
+                // first so this checks the rewrite rather than the guard against it.
+                let text = if already { unpatch_charts_text(&text).expect("a patched file can be put back") } else { text };
+                let out = patch_charts_text(&text, 8770).unwrap_or_else(|| panic!("{pkg}: {} is a flight bag the patch does not know", path.display()));
+                assert!(out.contains("'http://127.0.0.1:8770/identity'"), "{pkg}: identity");
+                if CHARTS_ROOTS.iter().all(|(n, _)| text.contains(n)) {
+                    // Built on the SDK: it asks the three functions for whole addresses.
+                    assert!(out.contains("'http://127.0.0.1:8770/v2/charts'"), "{pkg}: charts");
+                    assert!(out.contains("'http://127.0.0.1:8770/v2/airport'"), "{pkg}: airport");
+                } else {
+                    // Its own client, naming the hosts outright and adding the path itself,
+                    // so what it is given is the bridge and nothing after it.
+                    assert!(out.contains("'http://127.0.0.1:8770'"), "{pkg}: host");
+                }
+                // What was replaced is kept inside the replacement, so `off` puts the file
+                // back to the byte rather than to something that merely looks the same.
+                assert!(out.contains(CHARTS_MARK), "{pkg}: the mark that lets it be put back");
+                assert_eq!(unpatch_charts_text(&out).as_deref(), Some(text.as_str()), "{pkg}: does not come back the same");
+                assert!(patch_charts_text(&out, 8770).is_none(), "{pkg}: a patched file is patched twice");
+                println!("{pkg}: {} ok ({} bytes)", path.file_name().unwrap().to_string_lossy(), text.len());
+                seen += 1;
+            }
+        }
+        assert!(seen > 0, "no flight bag found in any Community folder");
+    }
+
     #[test]
     fn flight_bag_charts_point_here_and_come_back() {
         let a350 = "IDENTITY_REVOCATION_ENDPOINT=_0x33dd97(0x1a89),getIdentityApiRoot=()=>_0x33dd97(0x36c)+getDefaultAppDomain(),getIdentityDeviceAuthEndpoint=()=>getIdentityApiRoot()+IDENTITY_DEVICE_AUTH_ENDPOINT;var getChartsApiRoot=()=>_0x33dd97(0x1687)+getDefaultAppDomain()+_0x33dd97(0x1354),getAirportApiRoot=()=>_0x33dd97(0x1687)+getDefaultAppDomain()+_0x33dd97(0x48a);function getAirportInfo(){}";
