@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.2.1 (2026-09-25)
+
+Emergency fix: **AMDB Bridge.exe could not start.**
+
+The setup step that configures the A350 and A380X runs `AMDB Bridge.exe --setup-navigraph
+on`, and that exe links WebView2 for the planning panel's web view. WebView2 needs
+`WebView2Loader.dll` beside the exe to start at all -- not to open the panel, to start --
+and nothing in this project ever put it there. Cargo builds it into a hashed subfolder of
+`target/release/build/` and stops; copying it beside the exe was always left undone.
+
+Every release since the planning panel was added shipped this. `python tools/make_installer.py`
+now stages the DLL into `target/release/` after the build, and the installer carries it.
+
+- Also: a chart's image address came back as `http://` even when the flight bag asked for
+  it over TLS on 443, through the Fenix redirect. Fenix would get a list of charts and
+  every image on it blank, fetching port 80 where nothing answers. It now names the scheme
+  it was asked over.
+
 ## 1.2.0 (2026-09-25)
 
 **AMDB Navdata**, the navigation-data converter as a tool of its own: a window, an

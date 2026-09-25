@@ -105,7 +105,14 @@ fn handle_charts(store: &Store, req: Request, path: &str) -> Option<Request> {
     match rest.as_slice() {
         [icao] => {
             let host = req.headers().iter().find(|h| h.field.equiv("Host")).map(|h| h.value.as_str().to_string()).unwrap_or_else(|| format!("127.0.0.1:{}", super::DEFAULT_PORT));
-            match super::charts::index_json(icao, &format!("http://{host}")) {
+            // The addresses the pictures are fetched back from have to name the way in
+            // that was used to ask. A flight bag reached by redirecting its host asks over
+            // TLS on 443 and its `Host` carries no port, so handing it `http://` would
+            // send it to port 80, where nothing answers: the list would arrive and every
+            // chart on it come back blank. A patched bag asks on the bridge's own port,
+            // which the header keeps, and is served plainly as before.
+            let scheme = if host.contains(':') { "http" } else { "https" };
+            match super::charts::index_json(icao, &format!("{scheme}://{host}")) {
                 Ok(v) => respond_json(req, 200, v.to_string()),
                 Err(e) => error(req, 404, e),
             }

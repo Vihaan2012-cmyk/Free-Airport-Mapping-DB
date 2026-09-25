@@ -54,6 +54,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#Root}\target\release\amdb-bridge-gui.exe"; DestDir: "{app}"; DestName: "{#AppExe}"; Flags: ignoreversion
+Source: "{#Root}\target\release\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\target\release\amdb-bridge.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\target\release\amdbgen.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\packages\msfs-a220-amm\*"; DestDir: "{app}\msfs\zzz-amdb-a220-amm"; Flags: ignoreversion recursesubdirs createallsubdirs

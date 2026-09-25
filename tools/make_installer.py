@@ -12,6 +12,7 @@ Setup's compiler on installer/amdb-bridge.iss, and packs the converter separatel
 Needs Rust and Inno Setup 6 (winget install JRSoftware.InnoSetup).
 """
 
+import glob
 import os
 import re
 import shutil
@@ -44,6 +45,34 @@ def run(cmd, **kw):
     subprocess.run(cmd, cwd=ROOT, check=True, **kw)
 
 
+def stage_webview2_loader():
+    """Copy WebView2Loader.dll beside the built exes.
+
+    `webview2-com-sys` (which `amdb-bridge-gui` links, for the planning panel's web
+    view) fetches this DLL during its build and leaves it in a hashed subfolder of
+    `target/release/build/`, one per architecture. Cargo never copies it to
+    `target/release/` itself -- that is left to whoever packages the final exe -- and
+    nothing here ever did, so `AMDB Bridge.exe` could not start on a machine that had
+    never had one land beside it by accident. Every release since the web view was
+    added shipped that.
+
+    The hashed folder name is not stable across a `cargo update` or a different
+    toolchain, so the installer cannot name it directly; this copies the x64 one (the
+    only architecture the installer targets) to the one place in `target/release`
+    that is stable, and the `.iss` file sources it from there.
+    """
+    hits = glob.glob(os.path.join(ROOT, "target", "release", "build", "webview2-com-sys-*", "out", "x64", "WebView2Loader.dll"))
+    if not hits:
+        print("warning: WebView2Loader.dll not found in any webview2-com-sys build output; AMDB Bridge.exe will not start")
+        return
+    # More than one hashed folder can exist after a dependency bump; the newest build
+    # is the one this compile actually produced.
+    src = max(hits, key=os.path.getmtime)
+    dst = os.path.join(ROOT, "target", "release", "WebView2Loader.dll")
+    shutil.copyfile(src, dst)
+    print(f"staged {dst}")
+
+
 def main():
     compiler = iscc()
     if not compiler:
@@ -59,6 +88,7 @@ def main():
     # layout.json lists every file with its size, so it has to be rebuilt after any change.
     run([sys.executable, os.path.join("tools", "build_a220_amm.py"), "--dry-run"], stdout=subprocess.DEVNULL)
     run(["cargo", "build", "--release", "--locked", "--bin", "amdb-bridge-gui", "--bin", "amdb-bridge", "--bin", "amdbgen", "--bin", "amdb-navdata", "--bin", "amdb-navdata-gui"])
+    stage_webview2_loader()
     run([compiler, f"/DAppVersion={v}", "/Q", os.path.join("installer", "amdb-bridge.iss")])
     run([compiler, f"/DAppVersion={v}", "/Q", os.path.join("installer", "amdb-navdata.iss")])
 
