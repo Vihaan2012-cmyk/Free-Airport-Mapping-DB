@@ -98,6 +98,16 @@ const TRANSITIONS: [(u16, usize); 4] = [(0x46, 0x14), (0x4A, 0x10), (0x49, 0x1C)
 const TRANSITION_2024: u16 = 0x110;
 /// Leg lists. The two under an approach are its final legs and its missed approach.
 const LEGS_PLAIN: u16 = 0xF9;
+/// The leg list under a departure's or an arrival's *runway* transition, which is its own
+/// record rather than one of the four an approach uses.
+///
+/// It is written down in `terminal_transitions`' own description of the layout -- "legs 0xF7 at
+/// +0x0C" -- and was left out of the list of ids [`is_leg_list_of`] will accept. That guard was
+/// added to stop FS2024's records manufacturing two hundred thousand arrival legs from bytes
+/// that meant something else; leaving this out of it meant the guard also refused every real
+/// one, so every departure and arrival came back with no transitions, no legs and nothing to
+/// draw. A chart of a SID showed its name, its airport and an empty page.
+const LEGS_RUNWAY: u16 = 0xF7;
 const LEGS_FINAL: u16 = 0xF4;
 const LEGS_MISSED: u16 = 0xF5;
 const LEGS_TRANSITION: u16 = 0xF6;
@@ -118,7 +128,7 @@ const LEGS_2024: std::ops::RangeInclusive<u16> = 0x10A..=0x10D;
 
 /// Whether a record is a list of legs, under either simulator's numbering.
 fn is_leg_list_of(d: &[u8], rec: &Record) -> bool {
-    if matches!(rec.id, LEGS_PLAIN | LEGS_FINAL | LEGS_MISSED | LEGS_TRANSITION) {
+    if matches!(rec.id, LEGS_PLAIN | LEGS_RUNWAY | LEGS_FINAL | LEGS_MISSED | LEGS_TRANSITION) {
         return true;
     }
     if !LEGS_2024.contains(&rec.id) {
