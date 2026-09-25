@@ -1,6 +1,6 @@
 [package]
 name = "amdbgen"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 description = "Generates a Navigraph-style Airport Mapping Database (DO-272 / AMXM layers) from free sources"
 license = "MIT"
