@@ -1687,14 +1687,22 @@ fn draw_furniture(
     key_lift: f32,
     // The field's height, which decides the bands the key shows.
     field_ft: f64,
+    // A panel sitting over the top right of the map, as (left edge, foot). A terminal
+    // page on landscape paper draws the ground right across the box and lays its routing
+    // panel over the corner, so the edge of the map and the edge of the paper are not the
+    // same place; the ticks belong on the edge that can be seen.
+    panel: Option<(f32, f32)>,
 ) {
     // Degrees and minutes along the edges, as a chart rules them.
     let step = (if v.span_nm() > 24.0 { 20.0 } else if v.span_nm() > 10.0 { 10.0 } else { 5.0 }) / 60.0;
+    let (panel_x, panel_y) = panel.unwrap_or((v.x + v.w, v.y));
     let mut lat = (v.north / step).floor() * step;
     while lat > v.north - v.deg_h {
         let (_, py) = v.at(lat, v.west);
+        // The right-hand tick goes on whichever edge is showing at this height.
+        let right = if py > panel_y { panel_x } else { v.x + v.w };
         line(c, v.x, py, v.x + 6.0, py, 0.7, 0.45);
-        line(c, v.x + v.w - 6.0, py, v.x + v.w, py, 0.7, 0.45);
+        line(c, right - 6.0, py, right, py, 0.7, 0.45);
         text(c, font, 5.0, v.x + 8.0, py + 1.5, &degrees_minutes(lat, true), 0.45);
         lat -= step;
     }
@@ -1702,8 +1710,12 @@ fn draw_furniture(
     while lon < v.west + v.deg_w {
         let (px, _) = v.at(v.north, lon);
         line(c, px, v.y, px, v.y + 6.0, 0.7, 0.45);
-        line(c, px, v.y + v.h - 6.0, px, v.y + v.h, 0.7, 0.45);
-        text_centred(c, font, 5.0, px, v.y + v.h - 12.0, &degrees_minutes(lon, false), 0.45);
+        // The top edge is the panel's underside where the panel covers it, and a label
+        // that would still land on the panel is left off rather than printed over it.
+        if px < panel_x - 14.0 {
+            line(c, px, v.y + v.h - 6.0, px, v.y + v.h, 0.7, 0.45);
+            text_centred(c, font, 5.0, px, v.y + v.h - 12.0, &degrees_minutes(lon, false), 0.45);
+        }
         lon += step;
     }
 
@@ -2100,7 +2112,7 @@ fn draw_plan(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     // the tints moved up to sit on top of it.
     let table_h = draw_recommended_altitudes(c, font, bold, ch, v.x + 6.0, v.y + 26.0);
     let map_highest = ch.patch.heights.iter().filter(|h| h.is_finite()).fold(est.highest_terrain_ft, |m, h| m.max(*h as f64 / 0.3048));
-    draw_furniture(c, font, bold, &v, ch.variation_deg, Some(track_deg), has_water, map_highest, if table_h > 0.0 { table_h + 4.0 } else { 0.0 }, ch.field_elev_ft);
+    draw_furniture(c, font, bold, &v, ch.variation_deg, Some(track_deg), has_water, map_highest, if table_h > 0.0 { table_h + 4.0 } else { 0.0 }, ch.field_elev_ft, None);
     box_outline(c, x, y, w, h, 1.2, INK);
     v
 }

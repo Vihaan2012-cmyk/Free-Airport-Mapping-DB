@@ -112,6 +112,46 @@ fn type_code(t: Option<ApproachType>) -> &'static str {
     }
 }
 
+/// Where built aerodromes live, and how to build one that is not there yet.
+///
+/// The ground diagram is drawn from the layers an airport is built into, not from the
+/// simulator's navigation data, so unlike every other chart here it needs that build. The
+/// bridge already builds airports on demand for the moving map; this is the same folder
+/// and the same settings, kept here so that the background drawing thread -- which owns
+/// no `Store` -- can reach them.
+static GROUND: std::sync::OnceLock<crate::pipeline::Config> = std::sync::OnceLock::new();
+
+/// Told to the module once, as the bridge starts.
+pub fn set_ground(cfg: crate::pipeline::Config) {
+    let _ = GROUND.set(cfg);
+}
+
+/// The folder holding `icao`'s layers, building it if this is the first time it has been
+/// asked for. Returns `None` when the bridge has not been started, which is the case in
+/// the tests and when the chart code is used from the command line.
+fn ground_dir(icao: &str) -> Result<PathBuf> {
+    let cfg = GROUND.get().ok_or_else(|| anyhow!("the bridge has not said where built airports are kept"))?;
+    let dir = cfg.out.join(icao);
+    if dir.join("manifest.json").is_file() {
+        return Ok(dir);
+    }
+    // A bulk worker or the moving map may be on this airport right now; waiting for it
+    // is cheaper, and safer, than building the same folder twice.
+    let t0 = std::time::Instant::now();
+    while crate::pipeline::is_building(icao) && t0.elapsed().as_secs() < 900 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    if dir.join("manifest.json").is_file() {
+        return Ok(dir);
+    }
+    crate::term::start(&format!("[{icao}] Building {icao} for its airport diagram"));
+    let summary = crate::pipeline::run(cfg, std::slice::from_ref(&icao.to_string()))?;
+    if let Some((_, e)) = summary.failed.first() {
+        return Err(anyhow!("{icao}: build failed: {e}"));
+    }
+    Ok(dir)
+}
+
 /// Where drawn charts are kept, by cycle, so a new cycle draws them again.
 fn cache_dir(icao: &str) -> PathBuf {
     let cycle = crate::sources::msfs::airac_dates().map(|(from, _)| from.replace(' ', "")).unwrap_or_else(|| "current".to_string());
@@ -161,6 +201,26 @@ fn entries(icao: &str, found: &AirportProcedures) -> Vec<Entry> {
             });
         }
     }
+    // The aerodrome itself, filed where a binder files it: ahead of the approaches, and
+    // the page a crew opens on the ground.
+    //
+    // It is named against every runway the aerodrome has. The flight bags group a chart
+    // list by runway and put anything that names none under a heading reading "Runway
+    // n/a", which is no place for the one page that belongs to the whole aerodrome; a
+    // 10-9 is filed under each runway for the same reason.
+    let mut all_runways: Vec<String> = groups.iter().flatten().flat_map(|p| terminal::runways_of(p)).collect();
+    all_runways.sort();
+    all_runways.dedup();
+    out.push(Entry {
+        id: format!("{icao}-APT"),
+        category: "APT",
+        type_code: "AM",
+        precision: false,
+        index_number: "10-9".to_string(),
+        name: "AIRPORT DIAGRAM".to_string(),
+        procedures: Vec::new(),
+        runways: all_runways,
+    });
     for (n, p) in approach::approaches(found).into_iter().enumerate() {
         out.push(Entry {
             id: chart_id(icao, p),
@@ -237,7 +297,17 @@ pub fn index_json(icao: &str, base: &str) -> Result<Value> {
     }
     let count = |c: &str| list.iter().filter(|e| e.category == c).count();
     crate::term::info(&format!("[{icao}] Chart list: {} departure, {} arrival and {} approach pages", count("DEP"), count("ARR"), count("APP")));
-    draw_ahead(&icao, list.iter().filter(|e| e.category == "APP").chain(list.iter().filter(|e| e.category != "APP")).map(|e| e.id.clone()).collect());
+    // Approaches first -- they are what a list is usually opened for -- then the terminal
+    // pages, and the ground diagram last, because it is the one that may have to fetch and
+    // build the aerodrome before it can draw anything.
+    let order = |c: &str| match c {
+        "APP" => 0,
+        "APT" => 2,
+        _ => 1,
+    };
+    let mut ahead: Vec<&Entry> = list.iter().collect();
+    ahead.sort_by_key(|e| order(e.category));
+    draw_ahead(&icao, ahead.into_iter().map(|e| e.id.clone()).collect());
     Ok(json!({ "charts": charts }))
 }
 
@@ -326,9 +396,10 @@ pub fn image(icao: &str, id: &str, night: bool) -> Result<Vec<u8>> {
     }
     let t0 = std::time::Instant::now();
     crate::term::info(&format!("[{icao}] Drawing {id} for the flight bag"));
-    // A departure or arrival page, or an approach.
+    // The ground diagram, a departure or arrival page, or an approach.
     let terminal = ["DEP", "ARR"].iter().find_map(|k| id.strip_prefix(&format!("{icao}-{k}-")));
     let picture = match terminal {
+        _ if id == format!("{icao}-APT") => crate::output::chart::picture(&ground_dir(&icao)?, SCALE)?,
         Some(name) => crate::output::approach::terminal::with_terminal(&icao, name, |t| crate::output::approach::terminal::picture(t, SCALE))?,
         None => {
             let want = approach_name(&icao, id).ok_or_else(|| anyhow!("{id} is not one of {icao}'s charts"))?;
@@ -377,6 +448,52 @@ mod tests {
         assert!(v.get("sub").is_some());
         assert_eq!(v["subscriptions"][0], "charts");
         assert!(v["exp"].as_i64().unwrap() > chrono::Utc::now().timestamp());
+    }
+
+    /// The ground diagram through the bridge: on the list where a binder files it, and
+    /// drawn as a picture with a georeference an EFB can put the aeroplane on. Needs an
+    /// airport already built under `out/`, so it is run by hand:
+    /// `cargo test --release -- --ignored serves_an_airport_diagram`
+    #[test]
+    #[ignore]
+    fn serves_an_airport_diagram() {
+        let mut cfg = crate::bridge::cli::config(&Default::default(), &Default::default());
+        cfg.out = "out".into();
+        super::set_ground(cfg);
+        let list = index_json("WSSS", "http://127.0.0.1:8770").unwrap();
+        let charts = list["charts"].as_array().unwrap();
+        let apt = charts.iter().find(|c| c["id"] == "WSSS-APT").expect("the diagram is on the list");
+        assert_eq!(apt["category"], "APT");
+        assert_eq!(apt["index_number"], "10-9");
+        // Named against every runway, so the flight bags file it under each of them
+        // rather than under a heading reading "Runway n/a".
+        let rwys = apt["runways"].as_array().unwrap();
+        assert!(rwys.iter().any(|r| r == "02L") && rwys.iter().any(|r| r == "20R"), "{rwys:?}");
+        let png = image("WSSS", "WSSS-APT", false).unwrap();
+        assert_eq!(&png[1..4], b"PNG");
+        assert_ne!(png, image("WSSS", "WSSS-APT", true).unwrap());
+        // Asked again, the list now knows where the diagram's map lies on the ground.
+        let again = index_json("WSSS", "http://127.0.0.1:8770").unwrap();
+        let apt = again["charts"].as_array().unwrap().iter().find(|c| c["id"] == "WSSS-APT").unwrap().clone();
+        assert_eq!(apt["is_georeferenced"], true);
+        let b = &apt["bounding_boxes"]["planview"]["latlng"];
+        assert!(b["lng1"].as_f64().unwrap() < b["lng2"].as_f64().unwrap(), "{b}");
+        assert!(b["lat1"].as_f64().unwrap() < b["lat2"].as_f64().unwrap(), "{b}");
+        println!("WSSS-APT {}x{} over {b}", apt["width"], apt["height"]);
+        let thumb = thumbnail("WSSS", "WSSS-APT", false).unwrap();
+        assert_eq!(&thumb[1..4], b"PNG");
+        std::fs::write(std::env::temp_dir().join("efb-WSSS-APT.png"), &png).unwrap();
+
+        // And a departure page, which shares the list with it. A SID with no legs draws a
+        // blank sheet, which is what the leg-list reader's missing 0xF7 used to produce,
+        // so the picture is checked for having something on it rather than only for being
+        // a PNG: a page of white compresses to almost nothing.
+        let dep = charts.iter().find(|c| c["category"] == "DEP").expect("a departure page");
+        let id = dep["id"].as_str().unwrap().to_string();
+        let png = image("WSSS", &id, false).unwrap();
+        assert!(png.len() > 60_000, "{id} came out at {} bytes: an empty sheet?", png.len());
+        println!("{id} \"{}\" {} bytes", dep["name"], png.len());
+        std::fs::write(std::env::temp_dir().join(format!("efb-{id}.png")), &png).unwrap();
     }
 
     /// A real airport through the whole of it: the list, one chart drawn by day and by
