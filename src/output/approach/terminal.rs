@@ -1286,42 +1286,6 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
     taken.reserve(v.x, v.y + v.h - 96.0, 72.0, 96.0);
     taken.reserve(v.x, v.y, 200.0, 28.0);
 
-    // The other airports, in grey.
-    let grey = (0.42, 0.42, 0.42);
-    for (place, name, code, lat, lon) in &t.nearby {
-        let (px, py) = v.at(*lat, *lon);
-        if !v.inside((px, py), -8.0) {
-            continue;
-        }
-        let lines: Vec<&str> = [place.as_str(), name.as_str(), code.as_str()].into_iter().filter(|s| !s.is_empty()).collect();
-        let bw = lines.iter().map(|l| text_width(f, 6.8, l)).fold(0.0f32, f32::max) + 2.0;
-        let bh = lines.len() as f32 * 8.0;
-        let place_at = [(px - bw / 2.0, py + 8.0), (px - bw / 2.0, py - 8.0 - bh), (px + 9.0, py - bh / 2.0), (px - 9.0 - bw, py - bh / 2.0)]
-            .into_iter()
-            .find(|(x0, y0)| taken.free(*x0, *y0, bw, bh) && taken.free(px - 6.0, py - 6.0, 12.0, 12.0) && v.inside((*x0, *y0), 0.0) && v.inside((x0 + bw, y0 + bh), 0.0));
-        let Some((x0, y0)) = place_at else { continue };
-        c.set_stroke_rgb(grey.0, grey.1, grey.2);
-        c.set_line_width(0.8);
-        circle(c, px, py, 3.2);
-        c.stroke();
-        for k in 0..6 {
-            let a = (k as f32 * 60.0).to_radians();
-            c.move_to(px + 3.2 * a.cos(), py + 3.2 * a.sin());
-            c.line_to(px + 5.4 * a.cos(), py + 5.4 * a.sin());
-            c.stroke();
-        }
-        for (k, l) in lines.iter().enumerate() {
-            let lw = text_width(f, 6.8, l);
-            c.text_styled(f, 6.8, px - lw / 2.0, y0 + bh - 7.0 - k as f32 * 8.0, 0.0, l, grey);
-        }
-        taken.reserve(x0, y0, bw, bh);
-        taken.reserve(px - 6.0, py - 6.0, 12.0, 12.0);
-    }
-
-    // The beacons.
-    let wanted: Vec<String> = t.procedures.iter().flat_map(|p| p.transitions.iter()).flat_map(|tr| tr.legs.iter()).flat_map(|l| [l.navaid.clone(), l.fix.clone()]).filter(|s| !s.is_empty()).collect();
-    draw_navaids(c, f, b, &v, &t.navaids, &wanted, &mut taken);
-
     // The published holds the procedures end in, where they are flown.
     for hold in &t.holds {
         draw_hold_on_map(c, &v, hold, variation);
@@ -1443,6 +1407,54 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
             draw_fix_block(c, f, b, &v, leg, &notes, rnav, &mut taken, &mut seen);
         }
     }
+    // The context, placed last so that it gives way rather than takes.
+    //
+    // These used to go down before the procedure's own fixes did, which had it exactly the
+    // wrong way round: the page filled up with the names of aerodromes nobody is flying to,
+    // and the fixes -- which are what the chart is for -- were left with nowhere to go and
+    // printed on top of them anyway. Heathrow's BARMI 1H ends in a corner with Southend,
+    // City and Biggin Hill in it, and BRASO, WESUL and LAM came out one on top of another.
+    //
+    // Placed after them, each of these finds a gap or is simply left off. Losing the name
+    // of a neighbouring aerodrome costs the reader nothing; losing a fix on the arrival
+    // costs them the chart.
+    // The other airports, in grey.
+    let grey = (0.42, 0.42, 0.42);
+    for (place, name, code, lat, lon) in &t.nearby {
+        let (px, py) = v.at(*lat, *lon);
+        if !v.inside((px, py), -8.0) {
+            continue;
+        }
+        let lines: Vec<&str> = [place.as_str(), name.as_str(), code.as_str()].into_iter().filter(|s| !s.is_empty()).collect();
+        let bw = lines.iter().map(|l| text_width(f, 6.8, l)).fold(0.0f32, f32::max) + 2.0;
+        let bh = lines.len() as f32 * 8.0;
+        let place_at = [(px - bw / 2.0, py + 8.0), (px - bw / 2.0, py - 8.0 - bh), (px + 9.0, py - bh / 2.0), (px - 9.0 - bw, py - bh / 2.0)]
+            .into_iter()
+            .find(|(x0, y0)| taken.free(*x0, *y0, bw, bh) && taken.free(px - 6.0, py - 6.0, 12.0, 12.0) && v.inside((*x0, *y0), 0.0) && v.inside((x0 + bw, y0 + bh), 0.0));
+        let Some((x0, y0)) = place_at else { continue };
+        c.set_stroke_rgb(grey.0, grey.1, grey.2);
+        c.set_line_width(0.8);
+        circle(c, px, py, 3.2);
+        c.stroke();
+        for k in 0..6 {
+            let a = (k as f32 * 60.0).to_radians();
+            c.move_to(px + 3.2 * a.cos(), py + 3.2 * a.sin());
+            c.line_to(px + 5.4 * a.cos(), py + 5.4 * a.sin());
+            c.stroke();
+        }
+        for (k, l) in lines.iter().enumerate() {
+            let lw = text_width(f, 6.8, l);
+            c.text_styled(f, 6.8, px - lw / 2.0, y0 + bh - 7.0 - k as f32 * 8.0, 0.0, l, grey);
+        }
+        taken.reserve(x0, y0, bw, bh);
+        taken.reserve(px - 6.0, py - 6.0, 12.0, 12.0);
+    }
+
+    // The beacons.
+    let wanted: Vec<String> = t.procedures.iter().flat_map(|p| p.transitions.iter()).flat_map(|tr| tr.legs.iter()).flat_map(|l| [l.navaid.clone(), l.fix.clone()]).filter(|s| !s.is_empty()).collect();
+    draw_navaids(c, f, b, &v, &t.navaids, &wanted, &mut taken);
+
+
     let holds: Vec<&Leg> = routes.iter().flat_map(|r| r.legs.iter().copied()).collect();
     draw_holds(c, f, &v, &holds);
     if let Some(patch) = &t.patch {
