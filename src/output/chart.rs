@@ -9,7 +9,8 @@ use crate::output::manifest::Manifest;
 use anyhow::{Context, Result};
 use geo::{Area, Centroid};
 use geo_types::{Coord, Geometry, LineString, Polygon};
-use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref, Str};
+use crate::output::canvas::{Canvas, Raster};
+use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -19,8 +20,8 @@ const A4_LONG: f32 = 841.89;
 const MARGIN: f32 = 26.0;
 const HEADER_H: f32 = 132.0;
 const FOOTER_H: f32 = 30.0;
-const FONT: Name = Name(b"F1");
-const BOLD: Name = Name(b"F2");
+const FONT: Name = Name(b"F");
+const BOLD: Name = Name(b"B");
 
 pub(crate) struct Feat {
     pub geom: Geometry<f64>,
@@ -61,11 +62,6 @@ fn prop_f64(p: &Map<String, Value>, k: &str) -> Option<f64> {
 }
 
 /// WinAnsi-safe bytes for the built-in fonts.
-fn ascii(s: &str) -> Vec<u8> {
-    crate::output::winansi(s)
-}
-
-/// Approximate advance width of Helvetica text.
 fn text_w(size: f32, s: &str) -> f32 {
     0.53 * size * s.chars().count() as f32
 }
@@ -84,7 +80,7 @@ impl MapArea {
         (self.ox + l.x as f32 * self.scale, self.oy + l.y as f32 * self.scale)
     }
 
-    fn ring(&self, content: &mut Content, r: &LineString<f64>) {
+    fn ring(&self, content: &mut dyn Canvas, r: &LineString<f64>) {
         for (i, c) in r.0.iter().enumerate() {
             let (x, y) = self.pt(*c);
             if i == 0 {
@@ -96,7 +92,7 @@ impl MapArea {
         content.close_path();
     }
 
-    fn polygon_path(&self, content: &mut Content, p: &Polygon<f64>) {
+    fn polygon_path(&self, content: &mut dyn Canvas, p: &Polygon<f64>) {
         self.ring(content, p.exterior());
         for h in p.interiors() {
             self.ring(content, h);
@@ -104,7 +100,7 @@ impl MapArea {
     }
 
     /// Fill (even-odd, so holes stay open) and/or stroke every polygon of a geometry.
-    fn fill_geom(&self, content: &mut Content, g: &Geometry<f64>, fill: Option<[f32; 3]>, stroke: Option<([f32; 3], f32)>) {
+    fn fill_geom(&self, content: &mut dyn Canvas, g: &Geometry<f64>, fill: Option<[f32; 3]>, stroke: Option<([f32; 3], f32)>) {
         let polys: Vec<&Polygon<f64>> = match g {
             Geometry::Polygon(p) => vec![p],
             Geometry::MultiPolygon(m) => m.0.iter().collect(),
@@ -131,7 +127,7 @@ impl MapArea {
         };
     }
 
-    fn stroke_lines(&self, content: &mut Content, g: &Geometry<f64>, colour: [f32; 3], width: f32) {
+    fn stroke_lines(&self, content: &mut dyn Canvas, g: &Geometry<f64>, colour: [f32; 3], width: f32) {
         let lines: Vec<&LineString<f64>> = match g {
             Geometry::LineString(l) => vec![l],
             Geometry::MultiLineString(m) => m.0.iter().collect(),
@@ -156,21 +152,16 @@ impl MapArea {
     }
 }
 
-fn text(content: &mut Content, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) {
-    content.set_fill_gray(grey);
-    content.begin_text();
-    content.set_font(font, size);
-    content.next_line(x, y);
-    content.show(Str(&ascii(s)));
-    content.end_text();
+fn text(content: &mut dyn Canvas, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) {
+    content.text(font, size, x, y, s, grey);
 }
 
-fn text_right(content: &mut Content, font: Name, size: f32, x_right: f32, y: f32, s: &str, grey: f32) {
+fn text_right(content: &mut dyn Canvas, font: Name, size: f32, x_right: f32, y: f32, s: &str, grey: f32) {
     text(content, font, size, x_right - text_w(size, s), y, s, grey);
 }
 
 /// Label with a white box behind it, centred on (x, y).
-fn label_boxed(content: &mut Content, font: Name, size: f32, x: f32, y: f32, s: &str) {
+fn label_boxed(content: &mut dyn Canvas, font: Name, size: f32, x: f32, y: f32, s: &str) {
     let w = text_w(size, s) + 2.0;
     let h = size + 1.2;
     content.set_fill_gray(1.0);
@@ -204,7 +195,7 @@ impl Taken {
     /// A boxed label that gives way. `must` places it wherever it asked to go and keeps the
     /// room -- for the things a ground chart exists to show, the runway designators, which are
     /// never worth dropping to make space for a taxiway letter.
-    fn boxed(&mut self, c: &mut Content, font: Name, size: f32, x: f32, y: f32, s: &str, must: bool) -> bool {
+    fn boxed(&mut self, c: &mut dyn Canvas, font: Name, size: f32, x: f32, y: f32, s: &str, must: bool) -> bool {
         let (w, h) = (text_w(size, s) + 2.0, size + 1.2);
         let step = h + 1.5;
         let places: &[(f32, f32)] = if must {
@@ -224,7 +215,7 @@ impl Taken {
     }
 }
 
-fn circle(content: &mut Content, x: f32, y: f32, r: f32) {
+fn circle(content: &mut dyn Canvas, x: f32, y: f32, r: f32) {
     const K: f32 = 0.5523;
     content.move_to(x + r, y);
     content.cubic_to(x + r, y + K * r, x + K * r, y + r, x, y + r);
@@ -246,7 +237,25 @@ fn fmt_coord(lat: f64, lon: f64) -> String {
 }
 
 /// Write `<dir>`'s airport diagram to `out`. Returns the PDF size in bytes.
-pub fn write(dir: &Path, out: &Path) -> Result<u64> {
+/// Where the map sits on the sheet and what ground it covers: what a flight bag needs to
+/// lay the picture over the world, and what the PDF needs to size its page.
+pub struct Sheet {
+    pub page_w: f32,
+    pub page_h: f32,
+    /// The map box in points, from the foot of the page: (x, y, w, h).
+    pub plan_pt: (f32, f32, f32, f32),
+    /// The corners of that box on the ground: (west, south, east, north).
+    pub plan_deg: (f64, f64, f64, f64),
+}
+
+/// Draw the diagram onto any surface. The PDF stream and the bitmap are both `Canvas`,
+/// so the sheet is described once and comes out as a page to print or as a picture for a
+/// flight bag, rather than being written twice and drifting apart.
+///
+/// The surface is not passed in but asked for: which way round the page goes is not known
+/// until the aerodrome has been read and measured, and a bitmap has to be made at its
+/// final size. `make` is handed the page in points the moment that is settled.
+fn render<C: Canvas>(dir: &Path, make: impl FnOnce(f32, f32) -> Result<C>) -> Result<(C, Sheet)> {
     let manifest: Manifest = serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).with_context(|| format!("read {}/manifest.json (is it a built airport?)", dir.display()))?)?;
     let frame = LocalFrame::new(manifest.arp[0], manifest.arp[1]);
     let l = |n: &str| load_layer(dir, n);
@@ -326,43 +335,44 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
     let oy = y0 + (h - (ext[3] - ext[1]) as f32 * scale) / 2.0 - ext[1] as f32 * scale;
     let map = MapArea { frame, scale, ox, oy };
 
-    let mut c = Content::new();
+    let mut canvas = make(page_w, page_h)?;
+    let c = &mut canvas;
+
     // ---- map (clipped) ----
     c.save_state();
     c.rect(x0, y0, w, h);
     c.clip_nonzero();
     c.end_path();
-    c.set_line_join(pdf_writer::types::LineJoinStyle::RoundJoin);
     for f in &water {
-        map.fill_geom(&mut c, &f.geom, Some([0.86, 0.91, 0.96]), None);
+        map.fill_geom(c, &f.geom, Some([0.86, 0.91, 0.96]), None);
     }
     for f in &aprons {
-        map.fill_geom(&mut c, &f.geom, Some([0.88, 0.88, 0.88]), None);
+        map.fill_geom(c, &f.geom, Some([0.88, 0.88, 0.88]), None);
     }
     for f in &taxiways {
-        map.fill_geom(&mut c, &f.geom, Some([0.74, 0.74, 0.74]), None);
+        map.fill_geom(c, &f.geom, Some([0.74, 0.74, 0.74]), None);
     }
     for f in &construction {
-        map.fill_geom(&mut c, &f.geom, Some([0.93, 0.93, 0.93]), Some(([0.4, 0.4, 0.4], 0.5)));
+        map.fill_geom(c, &f.geom, Some([0.93, 0.93, 0.93]), Some(([0.4, 0.4, 0.4], 0.5)));
     }
     for f in displaced.iter().chain(&blastpads).chain(&stopways) {
-        map.fill_geom(&mut c, &f.geom, Some([0.55, 0.55, 0.55]), None);
+        map.fill_geom(c, &f.geom, Some([0.55, 0.55, 0.55]), None);
     }
     for f in &runways {
-        map.fill_geom(&mut c, &f.geom, Some([0.08, 0.08, 0.08]), None);
+        map.fill_geom(c, &f.geom, Some([0.08, 0.08, 0.08]), None);
     }
     for f in &buildings {
         let terminal = prop_f64(&f.props, "plysttyp") == Some(1.0);
-        map.fill_geom(&mut c, &f.geom, Some(if terminal { [0.22, 0.22, 0.22] } else { [0.42, 0.42, 0.42] }), None);
+        map.fill_geom(c, &f.geom, Some(if terminal { [0.22, 0.22, 0.22] } else { [0.42, 0.42, 0.42] }), None);
     }
     for f in &holds {
-        map.stroke_lines(&mut c, &f.geom, [0.0, 0.0, 0.0], 1.1);
+        map.stroke_lines(c, &f.geom, [0.0, 0.0, 0.0], 1.1);
     }
     for f in &hotspots {
-        map.fill_geom(&mut c, &f.geom, None, Some(([0.65, 0.0, 0.0], 1.2)));
+        map.fill_geom(c, &f.geom, None, Some(([0.65, 0.0, 0.0], 1.2)));
         if let (Some(id), Some(ct)) = (prop_str(&f.props, "idhot"), f.geom.centroid()) {
             let (x, y) = map.pt(ct.0);
-            text(&mut c, BOLD, 6.0, x + 3.0, y + 3.0, &id, 0.65);
+            text(c, BOLD, 6.0, x + 3.0, y + 3.0, &id, 0.65);
         }
     }
     // Stand numbers (skipped on very large aprons to keep the sheet readable).
@@ -371,7 +381,7 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
         for f in &stands {
             if let (Geometry::Point(p), Some(id)) = (&f.geom, prop_str(&f.props, "idstd")) {
                 let (x, y) = map.pt(p.0);
-                text(&mut c, FONT, 5.0, x - text_w(5.0, &id) / 2.0, y - 1.6, &id, 0.25);
+                text(c, FONT, 5.0, x - text_w(5.0, &id) / 2.0, y - 1.6, &id, 0.25);
             }
         }
     }
@@ -392,7 +402,7 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
         let l = map.frame.forward(p.0.x, p.0.y);
         let q = Coord { x: l.x - sn * back, y: l.y - cs * back };
         let (x, y) = (map.ox + q.x as f32 * map.scale, map.oy + q.y as f32 * map.scale);
-        taken.boxed(&mut c, BOLD, 11.0, x, y, &id, true);
+        taken.boxed(c, BOLD, 11.0, x, y, &id, true);
     }
     // Taxiway letters: one per designator, on its largest piece.
     let mut best: BTreeMap<String, (f64, Coord<f64>)> = BTreeMap::new();
@@ -411,7 +421,7 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
     }
     for (id, (_, ct)) in &best {
         let (x, y) = map.pt(*ct);
-        taken.boxed(&mut c, BOLD, 8.5, x, y, id, false);
+        taken.boxed(c, BOLD, 8.5, x, y, id, false);
     }
     // Terminal names.
     let mut named: BTreeMap<String, (f64, Coord<f64>)> = BTreeMap::new();
@@ -438,7 +448,7 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
         }
         let (x, y) = map.pt(*ct);
         let short: String = name.chars().take(26).collect::<String>().to_uppercase();
-        taken.boxed(&mut c, FONT, 6.5, x, y, &short, false);
+        taken.boxed(c, FONT, 6.5, x, y, &short, false);
     }
     // Tower and ARP symbols.
     for f in &towers {
@@ -450,19 +460,19 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
             c.set_fill_gray(0.0);
             c.rect(x - 2.5, y - 2.5, 5.0, 5.0);
             c.fill_nonzero();
-            text(&mut c, BOLD, 7.0, x + 4.5, y - 2.5, "TWR", 0.0);
+            text(c, BOLD, 7.0, x + 4.5, y - 2.5, "TWR", 0.0);
         }
     }
     if let Some(Geometry::Point(p)) = arp.first().map(|f| &f.geom) {
         let (x, y) = map.pt(p.0);
         c.set_stroke_gray(0.0);
         c.set_line_width(0.8);
-        circle(&mut c, x, y, 4.0);
+        circle(c, x, y, 4.0);
         c.stroke();
         c.set_fill_gray(0.0);
-        circle(&mut c, x, y, 1.2);
+        circle(c, x, y, 1.2);
         c.fill_nonzero();
-        text(&mut c, BOLD, 7.0, x + 6.0, y - 2.5, "ARP", 0.0);
+        text(c, BOLD, 7.0, x + 6.0, y - 2.5, "ARP", 0.0);
     }
     c.restore_state();
 
@@ -479,7 +489,7 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
     c.line_to(nx + 5.0, ny);
     c.close_path();
     c.fill_nonzero();
-    text(&mut c, BOLD, 8.0, nx - 3.0, ny + 19.0, "N", 0.0);
+    text(c, BOLD, 8.0, nx - 3.0, ny + 19.0, "N", 0.0);
     let bar_m = [100.0, 200.0, 250.0, 500.0, 1000.0, 2000.0, 5000.0].into_iter().filter(|m| m * scale <= 110.0).last().unwrap_or(100.0);
     let bar_w = bar_m * scale;
     let (bx, by) = (x0 + 12.0, y0 + 12.0);
@@ -493,9 +503,9 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
     c.set_fill_gray(0.0);
     c.rect(bx, by, bar_w / 2.0, 4.0);
     c.fill_nonzero();
-    text(&mut c, FONT, 6.0, bx - 1.5, by + 6.0, "0", 0.0);
+    text(c, FONT, 6.0, bx - 1.5, by + 6.0, "0", 0.0);
     let lbl = format!("{} m / {} ft", bar_m as i64, (bar_m as f64 * 3.28084).round() as i64);
-    text_right(&mut c, FONT, 6.0, bx + bar_w + 1.0, by + 6.0, &lbl, 0.0);
+    text_right(c, FONT, 6.0, bx + bar_w + 1.0, by + 6.0, &lbl, 0.0);
 
     // ---- header ----
     let top = page_h - MARGIN;
@@ -508,7 +518,7 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
     let arp_props = arp.first().map(|f| f.props.clone()).unwrap_or_default();
     let city = prop_str(&arp_props, "city");
     let country = manifest.country.clone().or_else(|| prop_str(&arp_props, "country"));
-    text(&mut c, BOLD, 18.0, x0, top - 15.0, &name.to_uppercase(), 0.0);
+    text(c, BOLD, 18.0, x0, top - 15.0, &name.to_uppercase(), 0.0);
     let mut place: Vec<String> = Vec::new();
     if let Some(c) = city {
         place.push(c);
@@ -519,23 +529,23 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
             place.push(c);
         }
     }
-    text(&mut c, FONT, 9.0, x0, top - 26.0, &place.join(", "), 0.2);
+    text(c, FONT, 9.0, x0, top - 26.0, &place.join(", "), 0.2);
     let codes = match &manifest.iata {
         Some(i) => format!("{} / {}", manifest.icao, i),
         None => manifest.icao.clone(),
     };
-    text_right(&mut c, BOLD, 18.0, x1, top - 15.0, &codes, 0.0);
-    text_right(&mut c, FONT, 8.0, x1, top - 26.0, "AIRPORT DIAGRAM", 0.2);
+    text_right(c, BOLD, 18.0, x1, top - 15.0, &codes, 0.0);
+    text_right(c, FONT, 8.0, x1, top - 26.0, "AIRPORT DIAGRAM", 0.2);
     let elev = manifest.elevation_ft.map(|e| format!("ELEV {e:.0}'")).unwrap_or_default();
     let ta = prop_f64(&arp_props, "transalt").map(|t| format!("   TRANS ALT {t:.0}'")).unwrap_or_default();
     let tl = prop_str(&arp_props, "translvl").map(|t| format!("   TRANS LEVEL {t}")).unwrap_or_default();
-    text(&mut c, BOLD, 8.5, x0, top - 40.0, &format!("{elev}   ARP {}{ta}{tl}", fmt_coord(manifest.arp[0], manifest.arp[1])), 0.0);
+    text(c, BOLD, 8.5, x0, top - 40.0, &format!("{elev}   ARP {}{ta}{tl}", fmt_coord(manifest.arp[0], manifest.arp[1])), 0.0);
 
     // Runway table (left).
     let mut ry = top - 55.0;
-    text(&mut c, BOLD, 7.5, x0, ry, "RWY", 0.0);
-    text(&mut c, BOLD, 7.5, x0 + 56.0, ry, "DIMENSIONS", 0.0);
-    text(&mut c, BOLD, 7.5, x0 + 176.0, ry, "SURFACE", 0.0);
+    text(c, BOLD, 7.5, x0, ry, "RWY", 0.0);
+    text(c, BOLD, 7.5, x0 + 56.0, ry, "DIMENSIONS", 0.0);
+    text(c, BOLD, 7.5, x0 + 176.0, ry, "SURFACE", 0.0);
     let surf = crate::model::codes::legend();
     let mut rows: BTreeMap<String, &Feat> = BTreeMap::new();
     for f in &runways {
@@ -551,9 +561,9 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
         let len = prop_f64(&f.props, "length").unwrap_or(0.0);
         let wid = prop_f64(&f.props, "width").unwrap_or(0.0);
         let st = prop_str(&f.props, "surftype").and_then(|s| surf.get("surftype").and_then(|m| m.get(&s)).and_then(Value::as_str).map(str::to_uppercase)).unwrap_or_default();
-        text(&mut c, BOLD, 8.0, x0, ry, id, 0.0);
-        text(&mut c, FONT, 8.0, x0 + 56.0, ry, &format!("{:.0} x {:.0} m  ({:.0}' x {:.0}')", len, wid, len * 3.28084, wid * 3.28084), 0.0);
-        text(&mut c, FONT, 8.0, x0 + 176.0, ry, &st, 0.0);
+        text(c, BOLD, 8.0, x0, ry, id, 0.0);
+        text(c, FONT, 8.0, x0 + 56.0, ry, &format!("{:.0} x {:.0} m  ({:.0}' x {:.0}')", len, wid, len * 3.28084, wid * 3.28084), 0.0);
+        text(c, FONT, 8.0, x0 + 176.0, ry, &st, 0.0);
     }
 
     // Frequencies (right).
@@ -564,7 +574,7 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
     c.move_to(fx - 8.0, top - 46.0);
     c.line_to(fx - 8.0, y1 + 10.0);
     c.stroke();
-    text(&mut c, BOLD, 7.5, fx, fy, "COMMUNICATIONS", 0.0);
+    text(c, BOLD, 7.5, fx, fy, "COMMUNICATIONS", 0.0);
     let mut fr: Vec<(String, String)> = freqs.iter().filter_map(|f| Some((prop_str(&f.props, "name").unwrap_or_else(|| "FREQ".into()), prop_str(&f.props, "frq")?))).collect();
     fr.sort();
     fr.dedup();
@@ -572,20 +582,60 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
     for (n, q) in fr.iter().take(rows_fit) {
         fy -= 9.0;
         let short: String = n.chars().take(26).collect();
-        text(&mut c, FONT, 7.5, fx, fy, &short.to_uppercase(), 0.0);
-        text_right(&mut c, BOLD, 7.5, x1, fy, q, 0.0);
+        text(c, FONT, 7.5, fx, fy, &short.to_uppercase(), 0.0);
+        text_right(c, BOLD, 7.5, x1, fy, q, 0.0);
     }
     if fr.is_empty() {
-        text(&mut c, FONT, 6.5, fx, fy - 7.5, "no frequencies published", 0.4);
+        text(c, FONT, 6.5, fx, fy - 7.5, "no frequencies published", 0.4);
     }
 
     // ---- footer ----
     let fy0 = y0 - 9.0;
-    text(&mut c, FONT, 5.5, x0, fy0, &format!("amdbgen {} - generated {} - sources: {} - (c) OpenStreetMap contributors (ODbL), X-Plane Scenery Gateway", env!("CARGO_PKG_VERSION"), manifest.generated.get(..10).unwrap_or(&manifest.generated), manifest.sources.join(", ")), 0.35);
-    text(&mut c, BOLD, 6.0, x0, fy0 - 9.0, "FOR FLIGHT SIMULATION ONLY - NOT FOR REAL-WORLD NAVIGATION", 0.0);
-    text_right(&mut c, FONT, 5.5, x1, fy0, &format!("{} scale 1:{}", manifest.icao, ((1.0 / scale) * 2834.65).round() as i64), 0.35);
+    text(c, FONT, 5.5, x0, fy0, &format!("amdbgen {} - generated {} - sources: {} - (c) OpenStreetMap contributors (ODbL), X-Plane Scenery Gateway", env!("CARGO_PKG_VERSION"), manifest.generated.get(..10).unwrap_or(&manifest.generated), manifest.sources.join(", ")), 0.35);
+    text(c, BOLD, 6.0, x0, fy0 - 9.0, "FOR FLIGHT SIMULATION ONLY - NOT FOR REAL-WORLD NAVIGATION", 0.0);
+    text_right(c, FONT, 5.5, x1, fy0, &format!("{} scale 1:{}", manifest.icao, ((1.0 / scale) * 2834.65).round() as i64), 0.35);
 
-    // ---- assemble ----
+    let sw = frame.inverse(Coord { x: ((x0 - map.ox) / map.scale) as f64, y: ((y0 - map.oy) / map.scale) as f64 });
+    let ne = frame.inverse(Coord { x: ((x1 - map.ox) / map.scale) as f64, y: ((y1 - map.oy) / map.scale) as f64 });
+    Ok((canvas, Sheet { page_w, page_h, plan_pt: (x0, y0, w, h), plan_deg: (sw.0, sw.1, ne.0, ne.1) }))
+}
+
+/// The diagram as a picture, by day and by night, for a flight bag.
+///
+/// The same pass that writes the PDF paints the bitmap, so the page an EFB shows is the
+/// page that would print. The georeference is the map box and the ground under it, which
+/// is what puts the aeroplane's own position on the diagram while it taxis.
+pub fn picture(dir: &Path, scale: f32) -> Result<crate::output::approach::Picture> {
+    let (mut r, sheet) = render(dir, |page_w, page_h| Raster::new(page_w, page_h, scale))?;
+    let day = r.png_bytes()?;
+    r.to_night();
+    let night = r.png_bytes()?;
+    let (width, height) = r.size();
+    // The page is measured up from its foot and the picture down from its head.
+    let (s, h) = (scale as f64, sheet.page_h);
+    let (px, py, pw, ph) = sheet.plan_pt;
+    let (west, south, east, north) = sheet.plan_deg;
+    Ok(crate::output::approach::Picture {
+        day,
+        night,
+        width,
+        height,
+        plan: crate::output::approach::Georef {
+            pixels: (px as f64 * s, (h - py) as f64 * s, (px + pw) as f64 * s, (h - py - ph) as f64 * s),
+            latlng: (west, south, east, north),
+        },
+    })
+}
+
+/// The diagram as a PDF page.
+pub fn write(dir: &Path, out: &Path) -> Result<u64> {
+    let (c, sheet) = render(dir, |_, _| {
+        let mut c = Content::new();
+        c.set_line_join(pdf_writer::types::LineJoinStyle::RoundJoin);
+        Ok(c)
+    })?;
+    let (page_w, page_h) = (sheet.page_w, sheet.page_h);
+
     let mut pdf = Pdf::new();
     let (catalog, pages, page, font, bold, stream) = (Ref::new(1), Ref::new(2), Ref::new(3), Ref::new(4), Ref::new(5), Ref::new(6));
     pdf.catalog(catalog).pages(pages);
@@ -620,6 +670,27 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The bitmap path, against a real built aerodrome: what an EFB is served.
+    /// `cargo test --release -- --ignored draws_a_diagram_for_a_flight_bag`
+    #[test]
+    #[ignore]
+    fn draws_a_diagram_for_a_flight_bag() {
+        for icao in ["KJFK", "EGLL", "WSSS"] {
+            let dir = std::path::PathBuf::from("out").join(icao);
+            if !dir.join("manifest.json").is_file() {
+                continue;
+            }
+            let p = picture(&dir, 2.5).unwrap();
+            assert_eq!(&p.day[1..4], b"PNG");
+            assert_ne!(p.day, p.night);
+            let (w, s, e, n) = p.plan.latlng;
+            assert!(w < e && s < n, "{icao}: {w} {s} {e} {n}");
+            let out = std::env::temp_dir().join(format!("{icao}-apt-efb.png"));
+            std::fs::write(&out, &p.day).unwrap();
+            println!("{icao}: {}x{} px, {:.3}..{:.3}E {:.3}..{:.3}N -> {}", p.width, p.height, w, e, s, n, out.display());
+        }
+    }
 
     #[test]
     fn writes_a_pdf_for_a_minimal_airport() {
