@@ -1,5 +1,64 @@
 # Changelog
 
+## 1.1.0 (2026-09-25)
+
+A flight planner, a navigation-data converter, and the airport diagram on the tablets.
+
+- **A flight planner.** `amdbgen dispatch EGLL KJFK` plans a route over a worldwide airway
+  network, costs it in fuel, picks its levels and its way round, and prints an operational
+  flight plan laid out the way LIDO lays one out — measured off a real one, column by
+  column. The plan is exported as an ICAO field-15 message and served where the bridge's
+  SimBrief-compatible API will find it, so the tablets that read a SimBrief plan read this
+  one.
+
+  The search is a weighted A\* over a network pruned to an ellipse round the two airports,
+  with landmark bounds measured over the network it actually flies. It plans direct legs
+  where the airway network is sparse or the airspace is free route, reads Europe's Route
+  Availability Document, follows the day's oceanic tracks, keeps out of conflict zones and
+  NOTAM areas, and holds a twin inside its ETOPS diversion circles.
+
+  The winds are fetched from GFS along the route in strips rather than in one box round its
+  ends; METARs, TAFs and SIGMETs are read for the airports and the alternates. Weights come
+  from a table of 497 real airframes.
+
+- **A planning panel in the desktop app**, drawn as a web view rather than as forty Windows
+  controls: the whole form down one side, the route drawn on a world map as the search runs,
+  and the briefing — flight info, summary, load sheet, fuel, the filed plan, and the charts
+  for each end — under it when it finishes. Every option can be left on automatic.
+
+- **A navigation-data converter.** `amdbgen navdata` reads the simulator's own navigation
+  data — FS2020's loose files or FS2024's packed archive — and writes it into an aircraft's
+  own database, so an add-on flies current data instead of whatever cycle it shipped with.
+  Fenix's `imported.db3` and the Navigraph DFD layout the iniBuilds A350, the Synaptic A220
+  and PMDG's 737 and 777 all read. A backup is always kept beside what it replaces.
+
+- **Grid MORA computed rather than copied**, from Copernicus terrain and OpenStreetMap and
+  FAA obstructions.
+
+- **The airport diagram on the tablets.** The ground chart joins the departures, arrivals
+  and approaches an EFB lists, filed at 10-9 under every runway, with the georeference that
+  puts the aeroplane on it while it taxis. It is drawn from a built aerodrome, which the
+  bridge builds on first request the same way it already does for the moving map.
+
+- **Departure and arrival charts drew a blank page**, every one of them, at every airport.
+  A SID or a STAR keeps its legs under a runway transition, and that transition's leg list
+  is a record the reader had been taught to refuse: a guard added to stop FS2024
+  manufacturing legs out of bytes that meant something else was written without it in the
+  list. Nothing had transitions, nothing had legs, and there was nothing to draw or to
+  frame.
+
+- **The airport diagram, read twice and written over itself.** Which way round the sheet
+  went was decided by the aerodrome's own shape against a rule of thumb, rather than against
+  the box it has to sit in — Kennedy went on the wide sheet and sat in the middle of it with
+  a third of the paper blank down either side. The boxed labels were drawn in a fixed order
+  with no idea of one another, so taxiway PC sat across runway 13R and P sat across PC, and
+  the three of them read as one taxiway called PCP. And each runway's length and width came
+  out twice, up the runway and in the table. All three are fixed.
+
+- On landscape paper a terminal page lays its routing panel over the corner of the map. The
+  degree-and-minute ticks were ruled on the paper's edge rather than the map's, which put
+  them under the panel and printed their labels across it.
+
 ## 1.0.0 (2026-09-23)
 
 The first release that does everything it set out to: a moving map on every airport in
