@@ -233,6 +233,41 @@ fn circle(content: &mut dyn Canvas, x: f32, y: f32, r: f32) {
     content.close_path();
 }
 
+/// A designator as a chart sets it. OpenStreetMap is not consistent about these -- one
+/// aerodrome's links come through as `LINK35` and the next line of the same set as
+/// `Link 41` -- and two spellings of one convention read as two conventions on the page.
+fn taxiway_name(s: &str) -> String {
+    let up = s.to_uppercase();
+    match up.strip_prefix("LINK ") {
+        Some(rest) => format!("LINK{}", rest.trim()),
+        None => up,
+    }
+}
+
+/// The point halfway along a line, and how long the line is, both in the frame's metres.
+/// A centreline is not straight, so this walks it rather than averaging its ends.
+fn halfway(l: &LineString<f64>) -> Option<(f64, Coord<f64>)> {
+    let pts = &l.0;
+    if pts.len() < 2 {
+        return None;
+    }
+    let seg: Vec<f64> = pts.windows(2).map(|w| (w[1].x - w[0].x).hypot(w[1].y - w[0].y)).collect();
+    let total: f64 = seg.iter().sum();
+    if total <= 0.0 {
+        return None;
+    }
+    let mut left = total / 2.0;
+    for (i, d) in seg.iter().enumerate() {
+        if left <= *d {
+            let t = if *d > 0.0 { left / d } else { 0.0 };
+            let (a, b) = (pts[i], pts[i + 1]);
+            return Some((total, Coord { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }));
+        }
+        left -= d;
+    }
+    Some((total, pts[pts.len() - 1]))
+}
+
 fn fmt_coord(lat: f64, lon: f64) -> String {
     let f = |v: f64, pos: char, neg: char, w: usize| {
         let h = if v >= 0.0 { pos } else { neg };
@@ -268,6 +303,7 @@ fn render<C: Canvas>(dir: &Path, make: impl FnOnce(f32, f32) -> Result<C>) -> Re
     let frame = LocalFrame::new(manifest.arp[0], manifest.arp[1]);
     let l = |n: &str| load_layer(dir, n);
     let (runways, taxiways, aprons) = (l("runwayelement"), l("taxiwayelement"), l("apronelement"));
+    let guidance = l("taxiwayguidanceline");
     let thresholds = l("runwaythreshold");
     let buildings = l("verticalpolygonalstructure");
     let water = l("water");
@@ -281,6 +317,19 @@ fn render<C: Canvas>(dir: &Path, make: impl FnOnce(f32, f32) -> Result<C>) -> Re
     let freqs = l("frequencyarea");
     let towers = l("verticalpointstructure");
     let construction = l("constructionarea");
+    // What the moving map draws and the sheet used to leave out. `layer::MAP_PROFILE` is
+    // the list; these are the ones on it that say something about how the ground is used
+    // rather than only what it is made of.
+    let stand_lines = l("standguidanceline");
+    let stand_areas = l("parkingstandarea");
+    let rwy_marking = l("runwaymarking");
+    let rwy_centre = l("paintedcenterline");
+    let exits = l("runwayexitline");
+    let crossings = l("taxiwayintersectionmarking");
+    let shoulders: Vec<Feat> = l("taxiwayshoulder").into_iter().chain(l("runwayshoulder")).collect();
+    let roads = l("serviceroad");
+    let deicing = l("deicingarea");
+    let helipads: Vec<Feat> = l("finalapproachandtakeoffarea").into_iter().chain(l("touchdownliftoffarea")).collect();
 
     // Extent: the movement area, padded.
     let mut ext = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
@@ -351,14 +400,35 @@ fn render<C: Canvas>(dir: &Path, make: impl FnOnce(f32, f32) -> Result<C>) -> Re
     c.rect(x0, y0, w, h);
     c.clip_nonzero();
     c.end_path();
+    // The ground, from what is under everything to what is painted on top of it. The order
+    // is the order it is laid: earth, then pavement, then the lines painted on the pavement,
+    // then what stands on it.
     for f in &water {
         map.fill_geom(c, &f.geom, Some([0.86, 0.91, 0.96]), None);
+    }
+    // Service roads are drawn first and thin. They are on the moving map because a tug
+    // uses them; on a sheet at this scale they are context, and must not read as taxiways.
+    for f in &roads {
+        map.stroke_lines(c, &f.geom, [0.80, 0.80, 0.80], 0.35);
+        map.fill_geom(c, &f.geom, Some([0.80, 0.80, 0.80]), None);
+    }
+    for f in &shoulders {
+        map.fill_geom(c, &f.geom, Some([0.93, 0.93, 0.93]), None);
     }
     for f in &aprons {
         map.fill_geom(c, &f.geom, Some([0.88, 0.88, 0.88]), None);
     }
+    for f in &stand_areas {
+        map.fill_geom(c, &f.geom, Some([0.84, 0.84, 0.84]), None);
+    }
+    for f in &deicing {
+        map.fill_geom(c, &f.geom, Some([0.80, 0.83, 0.80]), Some(([0.45, 0.5, 0.45], 0.4)));
+    }
     for f in &taxiways {
         map.fill_geom(c, &f.geom, Some([0.74, 0.74, 0.74]), None);
+    }
+    for f in &helipads {
+        map.fill_geom(c, &f.geom, Some([0.62, 0.62, 0.62]), Some(([0.15, 0.15, 0.15], 0.5)));
     }
     for f in &construction {
         map.fill_geom(c, &f.geom, Some([0.93, 0.93, 0.93]), Some(([0.4, 0.4, 0.4], 0.5)));
@@ -368,6 +438,25 @@ fn render<C: Canvas>(dir: &Path, make: impl FnOnce(f32, f32) -> Result<C>) -> Re
     }
     for f in &runways {
         map.fill_geom(c, &f.geom, Some([0.08, 0.08, 0.08]), None);
+    }
+    // Painted on the pavement. The stand lead-ins go down before the taxiway centrelines
+    // so that where a stand line meets the taxiway it is the taxiway that reads through.
+    for f in &stand_lines {
+        map.stroke_lines(c, &f.geom, [0.58, 0.58, 0.58], 0.22);
+    }
+    for f in &guidance {
+        map.stroke_lines(c, &f.geom, [0.30, 0.30, 0.30], 0.32);
+    }
+    for f in &exits {
+        map.stroke_lines(c, &f.geom, [0.30, 0.30, 0.30], 0.45);
+    }
+    for f in &crossings {
+        map.stroke_lines(c, &f.geom, [0.35, 0.35, 0.35], 0.5);
+    }
+    // Runway paint is white, because the runway it is on is very nearly black.
+    for f in rwy_marking.iter().chain(&rwy_centre) {
+        map.stroke_lines(c, &f.geom, [1.0, 1.0, 1.0], 0.45);
+        map.fill_geom(c, &f.geom, Some([1.0, 1.0, 1.0]), None);
     }
     for f in &buildings {
         let terminal = prop_f64(&f.props, "plysttyp") == Some(1.0);
@@ -412,24 +501,62 @@ fn render<C: Canvas>(dir: &Path, make: impl FnOnce(f32, f32) -> Result<C>) -> Re
         let (x, y) = (map.ox + q.x as f32 * map.scale, map.oy + q.y as f32 * map.scale);
         taken.boxed(c, BOLD, 11.0, x, y, &id, true);
     }
-    // Taxiway letters: one per designator, on its largest piece.
+    // Taxiway letters: one per designator, halfway along its longest run.
+    //
+    // They used to be taken from the pavement, which cost Heathrow two thirds of them. The
+    // pavement is built by merging what abuts into as few polygons as it can, and a merged
+    // piece is given the one name most of the centrelines crossing it carry -- so a slab
+    // that A3, A4 and N4E all run over comes out called A4 and the other two are never
+    // named anywhere. Heathrow had twenty-nine designators on its pavement and eighty-four
+    // on its centrelines.
+    //
+    // The centrelines are the taxiways themselves, one line per designator per stretch, so
+    // taking the names from them names every taxiway there is. Halfway along the longest
+    // stretch also puts the letter *on* the taxiway rather than at the middle of a slab the
+    // taxiway happens to touch.
     let mut best: BTreeMap<String, (f64, Coord<f64>)> = BTreeMap::new();
-    for f in &taxiways {
+    for f in &guidance {
         let Some(id) = prop_str(&f.props, "idlin") else { continue };
-        let area = match &f.geom {
-            Geometry::Polygon(p) => p.unsigned_area(),
-            Geometry::MultiPolygon(m) => m.unsigned_area(),
-            _ => 0.0,
+        let lines: Vec<&LineString<f64>> = match &f.geom {
+            Geometry::LineString(l) => vec![l],
+            Geometry::MultiLineString(m) => m.0.iter().collect(),
+            _ => continue,
         };
-        let Some(ct) = f.geom.centroid() else { continue };
-        let e = best.entry(id).or_insert((0.0, ct.0));
-        if area > e.0 {
-            *e = (area, ct.0);
+        for l in lines {
+            let Some((len, mid)) = halfway(l) else { continue };
+            let e = best.entry(taxiway_name(&id)).or_insert((0.0, mid));
+            if len > e.0 {
+                *e = (len, mid);
+            }
         }
     }
-    for (id, (_, ct)) in &best {
+    // Nothing on the centrelines: an aerodrome built without them still gets what the
+    // pavement can say.
+    if best.is_empty() {
+        for f in &taxiways {
+            let Some(id) = prop_str(&f.props, "idlin") else { continue };
+            let area = match &f.geom {
+                Geometry::Polygon(p) => p.unsigned_area(),
+                Geometry::MultiPolygon(m) => m.unsigned_area(),
+                _ => 0.0,
+            };
+            let Some(ct) = f.geom.centroid() else { continue };
+            let e = best.entry(taxiway_name(&id)).or_insert((0.0, ct.0));
+            if area > e.0 {
+                *e = (area, ct.0);
+            }
+        }
+    }
+    let (letters, links): (Vec<_>, Vec<_>) = best.iter().partition(|(id, _)| !id.starts_with("LINK"));
+    for (id, (_, ct)) in letters.into_iter().chain(links) {
         let (x, y) = map.pt(*ct);
-        taken.boxed(c, BOLD, 8.5, x, y, id, false);
+        // A link is a named stretch between two taxiways rather than a taxiway in its own
+        // right, and Heathrow has two dozen of them. Set at the same size as the letters
+        // they join, they shout over the names a crew is actually given, so they are set
+        // smaller -- which is what a chart does, and which also leaves the letters the room
+        // to be placed first.
+        let size = if id.starts_with("LINK") { 6.0 } else { 8.5 };
+        taken.boxed(c, BOLD, size, x, y, id, false);
     }
     // Terminal names.
     let mut named: BTreeMap<String, (f64, Coord<f64>)> = BTreeMap::new();
