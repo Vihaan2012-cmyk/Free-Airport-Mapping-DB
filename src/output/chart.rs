@@ -160,14 +160,22 @@ fn text_right(content: &mut dyn Canvas, font: Name, size: f32, x_right: f32, y: 
     text(content, font, size, x_right - text_w(size, s), y, s, grey);
 }
 
-/// Label with a white box behind it, centred on (x, y).
+/// A label cased in white and centred on (x, y).
+///
+/// It used to be a white rectangle with the text on it. A rectangle is the right answer
+/// only where the label has to sit on something dark -- a runway bar, a terminal roof --
+/// and most taxiway idents sit on pale pavement, where it reads as a sticker stuck to the
+/// chart rather than as a name written on it. A casing does the same work without drawing
+/// a shape: the letters are painted in white a fraction of a point out in eight
+/// directions, then in ink on top, so they carry their own clearance and the pavement
+/// still shows between them.
 fn label_boxed(content: &mut dyn Canvas, font: Name, size: f32, x: f32, y: f32, s: &str) {
-    let w = text_w(size, s) + 2.0;
-    let h = size + 1.2;
-    content.set_fill_gray(1.0);
-    content.rect(x - w / 2.0, y - h / 2.0, w, h);
-    content.fill_nonzero();
-    text(content, font, size, x - w / 2.0 + 1.0, y - size * 0.35, s, 0.0);
+    let (left, base) = (x - text_w(size, s) / 2.0, y - size * 0.35);
+    let r = (size * 0.07).clamp(0.35, 0.8);
+    for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (-0.7, -0.7), (0.7, -0.7), (-0.7, 0.7), (0.7, 0.7)] {
+        content.text(font, size, left + dx * r, base + dy * r, s, 1.0);
+    }
+    content.text(font, size, left, base, s, 0.0);
 }
 
 /// What the sheet has already been spent on.

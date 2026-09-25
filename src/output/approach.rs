@@ -167,10 +167,19 @@ fn text_centred(c: &mut dyn Canvas, font: Name, size: f32, centre: f32, y: f32, 
     text(c, font, size, centre - text_width(font, size, s) / 2.0, y, s, grey);
 }
 
+/// A label cased in white, drawn from its baseline at (x, y).
+///
+/// The casing replaces the white rectangle this used to paint behind itself. A rectangle
+/// only earns its place where the label sits on something dark; over terrain bands, water
+/// and the pale ground a chart is mostly made of it reads as a sticker, and on a crowded
+/// page the rectangles rub each other out. Painting the letters in white a fraction of a
+/// point out in eight directions and then in ink on top gives them the same clearance and
+/// lets what is under them show through.
 fn label(c: &mut dyn Canvas, font: Name, size: f32, x: f32, y: f32, s: &str, grey: f32) {
-    c.set_fill_gray(1.0);
-    c.rect(x - 1.0, y - 2.0, text_width(font, size, s) + 2.0, size + 1.0);
-    c.fill_nonzero();
+    let r = (size * 0.07).clamp(0.35, 0.8);
+    for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (-0.7, -0.7), (0.7, -0.7), (-0.7, 0.7), (0.7, 0.7)] {
+        text(c, font, size, x + dx * r, y + dy * r, s, 1.0);
+    }
     text(c, font, size, x, y, s, grey);
 }
 
