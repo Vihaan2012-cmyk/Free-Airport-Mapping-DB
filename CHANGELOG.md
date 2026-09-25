@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.1.2 (2026-09-25)
+
+Taken from [J380-1's iniBuilds A380 work](https://github.com/J380-1/Free-Airport-Mapping-DB),
+which found a real fault the bridge had and nobody had noticed. With thanks.
+
+- **The routing network failed schema validation in newer clients.** A runway or
+  runway-exit node carried `idthr: null`. The SDK declares it a string, so a null takes the
+  whole network down with it — which is why an aircraft that reads ASRN can end up with no
+  surface routing at all rather than with one missing field.
+
+  Filling it in is necessary; the value has to be right as well as present. `idthr` names
+  the threshold the node is measured from, and an exit is only useful to the landing that
+  uses it: an exit two thirds of the way along 09L/27R belongs to 27R, and naming 09L there
+  is a number that passes validation and misleads. Taking the first end of the pair would
+  name the further threshold for 16 of Heathrow's 28 exit nodes, 27 of Changi's 49 and 36 of
+  Kennedy's 61, so the node's own position decides it.
+
+- **The OANS token handler is found by its registration, not by the event's name.**
+  iniBuilds' newer flight bag spells the handoff differently, so the exact string no longer
+  finds it — but matching the name alone is too loose in the other direction: a bundle that
+  both raises the event and answers it names it twice, and the raise may well come first.
+  The name now has to be the argument of an `on` call, in either `.on(` or `['on'](`
+  spelling, and a bundle that registers it twice is left alone rather than guessed at. The
+  file name is no longer the test, only a way to avoid reading every script in the folder.
+
+- A bare `/v1` with nothing after it is answered as the service root; some clients probe
+  with it before asking for anything.
+
+- The A380's OANS gauge is named in the log rather than shown as its User-Agent: it
+  introduces itself as the simulator's own WASM HTTP client, `KittyHawk/0.9`, not by name.
+
 ## 1.1.1 (2026-09-25)
 
 - **Charts on FlyByWire's flight bag.** The A380X and the A32NX are built on the same
