@@ -254,6 +254,32 @@ pub fn read_with(cycle: &str, which: Simulator, enrich: bool) -> Result<NavSet> 
                 acc
             },
         );
+    // One record per aerodrome.
+    //
+    // The simulator carries the same aerodrome in more than one BGL -- a stock file and
+    // the package that revised it -- and reading every file finds it every time. FS2020
+    // gives 31,897 airport records for 22,551 aerodromes: nine thousand of them are the
+    // same aerodrome named twice.
+    //
+    // Nothing downstream wanted them twice. The Fenix database says so outright, since its
+    // `Airports.ICAO` index is unique and the write fails; the Navigraph layout has no such
+    // index and had been quietly taking both, so every duplicated aerodrome was in there
+    // twice. Later wins, which is the simulator's own rule: a package loaded after another
+    // revises what it found.
+    let airports = {
+        let mut seen: HashMap<String, usize> = HashMap::with_capacity(airports.len());
+        let mut kept: Vec<AirportRec> = Vec::with_capacity(airports.len());
+        for a in airports {
+            match seen.get(&a.icao) {
+                Some(&at) => kept[at] = a,
+                None => {
+                    seen.insert(a.icao.clone(), kept.len());
+                    kept.push(a);
+                }
+            }
+        }
+        kept
+    };
     say(2, "airports", format!("{}", airports.len()), t);
     say(3, "beacons", format!("{} VOR and NDB", navaids.len()), t);
     say(4, "fixes", format!("{} before merging", fixes.len()), t);
