@@ -195,6 +195,24 @@ fn parse_query(q: &str) -> Map<String, Value> {
 
 /// Current AIRAC-style cycle (28-day cycles from a known start).
 pub fn cycle_json() -> Value {
+    let (start, end, idx) = cycle_now();
+    json!({
+        "cycle_start_date": start.to_string(),
+        "cycle_end_date": end.to_string(),
+        "import_time": start.to_string(),
+        "airac_cycle": format!("{}{idx:02}", start.format("%y")).parse::<i64>().unwrap_or(0),
+    })
+}
+
+/// The cycle in force today, as a chart and a navigation database both spell it: `2603`
+/// for the third cycle of 2026. Worked out here rather than typed in twice.
+pub fn cycle_code() -> String {
+    let (start, _, idx) = cycle_now();
+    format!("{}{idx:02}", start.format("%y"))
+}
+
+/// When the cycle in force today starts and ends, and which of its year it is.
+fn cycle_now() -> (chrono::NaiveDate, chrono::NaiveDate, i64) {
     let epoch = chrono::NaiveDate::from_ymd_opt(2026, 9, 3).unwrap(); // AIRAC 2609 start
     let today = chrono::Utc::now().date_naive();
     let n = (today - epoch).num_days().div_euclid(28);
@@ -211,12 +229,7 @@ pub fn cycle_json() -> Value {
         s
     };
     let idx = (start - first_in_year).num_days() / 28 + 1;
-    json!({
-        "cycle_start_date": start.to_string(),
-        "cycle_end_date": end.to_string(),
-        "import_time": start.to_string(),
-        "airac_cycle": format!("{}{idx:02}", start.format("%y")).parse::<i64>().unwrap_or(0),
-    })
+    (start, end, idx)
 }
 
 fn snap(c: Coord<f64>, precision: Option<f64>) -> Coord<f64> {
