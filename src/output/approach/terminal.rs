@@ -1535,6 +1535,17 @@ pub fn with_terminal<R>(icao: &str, name: &str, f: impl FnOnce(&Terminal) -> Res
                 };
                 nearby.push((place, shorten(e.name.as_deref().unwrap_or("")), code.clone(), e.lat, e.lon));
             }
+            // The index is a hash map, and Rust seeds its hasher afresh in every process,
+            // so walking it hands the aerodromes over in a different order every run.
+            // Labels are placed first come, first served against what the page has left,
+            // so that order decided which of two crowded neighbours got drawn -- and the
+            // same chart came out differently twice in a row. Nearest first is both an
+            // order and the right one: a neighbour close enough to matter should not lose
+            // its name to one sixty miles further out. The code breaks a tie, so the
+            // answer does not depend on the floating-point comparison either.
+            let cos = found.lat.to_radians().cos().max(0.05);
+            let away = |lat: f64, lon: f64| ((lat - found.lat) * 60.0).hypot((lon - found.lon) * 60.0 * cos);
+            nearby.sort_by(|a, b| away(a.3, a.4).total_cmp(&away(b.3, b.4)).then_with(|| a.2.cmp(&b.2)));
             if let Some(e) = idx.get(&icao) {
                 airport_name = e.name.clone();
                 airport_iata = e.iata.clone().filter(|s| s.len() == 3);
