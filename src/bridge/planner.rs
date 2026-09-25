@@ -192,16 +192,69 @@ fn start(params: &Map<String, Value>) -> Arc<Run> {
                 );
                 let ground = d.route.distance_nm();
                 let direct = crate::dispatch::distance_nm(d.route.origin.pos, d.route.destination.pos);
+                // Everything a briefing puts on its first page. It is all worked out already;
+                // throwing it away and showing four numbers would be a choice, not a limit.
+                let air_min = d.perf.profile.last().map(|p| p.time_min).unwrap_or(0.0);
+                let block_min = air_min + opts.taxi_out_min.max(0.0) + opts.taxi_in_min.max(0.0);
+                let hhmm = |m: f64| format!("{:02}:{:02}", (m / 60.0) as i64, (m.round() as i64).rem_euclid(60));
+                let cruise = d.perf.profile.iter().find(|p| p.kind == crate::dispatch::ProfileKind::TopOfClimb);
+                let off = d.route.off_block + chrono::Duration::minutes(opts.taxi_out_min.max(0.0) as i64);
+                let on = off + chrono::Duration::minutes(air_min.round() as i64);
+                let w = &d.perf.weights;
+                let f = &d.perf.fuel;
                 if let Ok(mut s) = thread_run.summary.lock() {
                     *s = Some(json!({
+                        // Flight info
+                        "flight": opts.flight_number.clone().unwrap_or_default(),
+                        "registration": opts.registration.clone().unwrap_or_default(),
+                        "airframe": opts.airframe.clone().unwrap_or_default(),
                         "origin": d.route.origin.icao,
+                        "origin_name": d.route.origin.name,
                         "destination": d.route.destination.icao,
+                        "destination_name": d.route.destination.name,
+                        "alternate": d.alternate.as_ref().map(|a| a.destination.icao.clone()).unwrap_or_default(),
                         "aircraft": d.spec.icao_type,
+                        "aircraft_name": d.spec.name,
+                        "dep_date": d.route.off_block.format("%d %b %y").to_string(),
+                        "dep_time": d.route.off_block.format("%H:%M").to_string(),
+                        "arr_time": on.format("%H:%M").to_string(),
+                        "air_time": hhmm(air_min),
+                        "block_time": hhmm(block_min),
+
+                        // Flight plan summary
+                        "initial_alt": cruise.map(|p| p.alt_ft).unwrap_or(d.route.cruise_ft).round(),
+                        "cruise_profile": if let Some(m) = opts.cruise_mach { format!("M{:.2}", m) } else { format!("CI {:.0}", opts.cost_index) },
                         "ground_nm": ground.round(),
                         "direct_nm": direct.round(),
                         "over_pct": ((ground / direct.max(1.0) - 1.0) * 100.0).round(),
-                        "block_kg": d.perf.fuel.block_kg.round(),
+                        "avg_wind": format!("{:.0}", d.perf.avg_wind_kt.abs()),
+                        "wind_component": format!("{}{:03.0}", if d.perf.avg_wind_kt < 0.0 { "M" } else { "P" }, d.perf.avg_wind_kt.abs()),
+                        "isa_dev": format!("{}{:02.0}", if d.perf.avg_isa_dev < 0.0 { "M" } else { "P" }, d.perf.avg_isa_dev.abs()),
+                        "airac": d.airac.clone().unwrap_or_default(),
+                        "etops": d.spec.etops_minutes,
+
+                        // Load sheet
+                        "enroute_burn": f.trip_kg.round(),
+                        "block_kg": f.block_kg.round(),
+                        "taxi_kg": f.taxi_kg.round(),
+                        "contingency_kg": f.contingency_kg.round(),
+                        "alternate_kg": f.alternate_kg.round(),
+                        "reserve_kg": f.final_reserve_kg.round(),
+                        "extra_kg": (f.extra_kg + f.tanker_kg).round(),
+                        "pax": opts.passengers,
+                        "oew": w.oew_kg.round(),
+                        "payload": w.payload_kg.round(),
+                        "zfw": w.zfw_kg.round(),
+                        "tow": w.tow_kg.round(),
+                        "lw": w.lw_kg.round(),
+                        "max_zfw": w.max_zfw_kg.round(),
+                        "max_tow": w.max_tow_kg.round(),
+                        "max_lw": w.max_lw_kg.round(),
+
+                        // Route and the filed plan
                         "route": read_back,
+                        "icao_plan": crate::ofp::export::icao_message(&d, opts.flight_number.as_deref(), opts.registration.as_deref(), opts.flight_rules, opts.flight_type),
+                        "remarks": d.perf.warnings.clone(),
                         "fixes": d.route.points.iter().map(|w| json!({ "ident": w.ident, "pos": [w.pos.0, w.pos.1] })).collect::<Vec<_>>(),
                     }));
                 }
