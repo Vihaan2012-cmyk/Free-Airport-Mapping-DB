@@ -16,6 +16,15 @@ pub struct Material {
     pub ca_pem: Vec<u8>,
     pub cert_pem: Vec<u8>,
     pub key_pem: Vec<u8>,
+    /// The authority was made just now rather than read from disk.
+    ///
+    /// It matters because [`trust`] asks the store whether an authority of that name is
+    /// there, and every one of ours has the same name. A new authority beside an old one
+    /// therefore looks installed when it is not, and everything it signs is refused: the
+    /// case is a machine set up before the key was kept, where the first run for a new
+    /// host makes a fresh authority and would leave the previous one in the store
+    /// answering for nothing.
+    pub fresh_ca: bool,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -57,7 +66,7 @@ pub fn ensure_for(file: &str, names: &[&str]) -> Result<Material> {
         names.iter().all(|n| have.contains(n))
     });
     if ca_p.is_file() && cert_p.is_file() && key_p.is_file() && covers.unwrap_or(false) {
-        return Ok(Material { dir, ca_pem: fs::read(ca_p)?, cert_pem: fs::read(cert_p)?, key_pem: fs::read(key_p)? });
+        return Ok(Material { dir, ca_pem: fs::read(ca_p)?, cert_pem: fs::read(cert_p)?, key_pem: fs::read(key_p)?, fresh_ca: false });
     }
     // An authority already on disk is reused, so certificates made later are signed by the
     // one that is already trusted.
@@ -92,7 +101,7 @@ pub fn ensure_for(file: &str, names: &[&str]) -> Result<Material> {
     fs::write(&cert_p, leaf_cert.pem().into_bytes())?;
     fs::write(&key_p, leaf_key.serialize_pem().into_bytes())?;
     fs::write(&names_p, names.join("\n"))?;
-    Ok(Material { dir, ca_pem, cert_pem: fs::read(cert_p)?, key_pem: fs::read(key_p)? })
+    Ok(Material { dir, ca_pem, cert_pem: fs::read(cert_p)?, key_pem: fs::read(key_p)?, fresh_ca: fresh })
 }
 
 /// The authority's own description, the same every time so a reused key keeps its name.
