@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.1 (2026-09-25)
+
+- **Charts on FlyByWire's flight bag.** The A380X and the A32NX are built on the same
+  Navigraph SDK as the iniBuilds A350 and the PMDG tablets, and they sort a chart list into
+  their five tabs by exactly the categories this bridge already sends — STAR is `ARR`, APP
+  is `APP`, TAXI is `APT`, SID is `DEP`. The ground diagram added in 1.1.0 is what fills
+  their TAXI tab, so nothing about the answer had to change.
+
+  What was in the way was the scan, which decided what to even read by file name and knew
+  three of them. FlyByWire builds its flight bag to `efb.js` out of `fbw-common`, for both
+  aeroplanes. That name is general enough to be somebody else's, which is why the name was
+  only ever a way to avoid reading every script in a Community folder: whether a file is
+  really a flight bag is settled by whether the SDK's three address functions are in it.
+
+- **And on TFDi's**, which the same change finds. It is built on the SDK too.
+
+  `amdbgen tablet-charts on` now points nine flight bags at the bridge instead of seven, and
+  `off` still puts every one of them back to the byte.
+
 ## 1.1.0 (2026-09-25)
 
 A flight planner, a navigation-data converter, and the airport diagram on the tablets.
