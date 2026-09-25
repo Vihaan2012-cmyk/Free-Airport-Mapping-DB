@@ -130,6 +130,7 @@ mod win {
         out: nwg::TextInput,
         browse: nwg::Button,
         dialog: nwg::FileDialog,
+        keep: nwg::CheckBox,
         dry_run: nwg::Button,
         convert: nwg::Button,
         log: nwg::TextBox,
@@ -188,7 +189,7 @@ mod win {
         let fleet = installed();
         let rows = fleet.len().div_ceil(3) as i32;
         let under = 92 + rows * 26 + 10;
-        let log_top = under + 202;
+        let log_top = under + 220;
         let bottom = log_top + 168 + 16;
         nwg::Window::builder()
             .flags(nwg::WindowFlags::WINDOW | nwg::WindowFlags::MINIMIZE_BOX)
@@ -265,8 +266,15 @@ mod win {
             .filters("Navigation database(*.db3)|Any(*.*)")
             .build(&mut u.dialog)?;
 
-        nwg::Button::builder().parent(w).text("Dry run").position((330, under + 160)).size((124, 32)).build(&mut u.dry_run)?;
-        nwg::Button::builder().parent(w).text("Convert").position((464, under + 160)).size((132, 32)).build(&mut u.convert)?;
+        nwg::CheckBox::builder()
+            .parent(w)
+            .text("Keep this aircraft's radio frequencies, published holds and grid MORA")
+            .check_state(nwg::CheckBoxState::Checked)
+            .position((116, under + 148))
+            .size((470, 22))
+            .build(&mut u.keep)?;
+        nwg::Button::builder().parent(w).text("Dry run").position((330, under + 178)).size((124, 32)).build(&mut u.dry_run)?;
+        nwg::Button::builder().parent(w).text("Convert").position((464, under + 178)).size((132, 32)).build(&mut u.convert)?;
         nwg::TextBox::builder()
             .parent(w)
             .text("Ready.\r\n")
@@ -456,6 +464,10 @@ mod win {
             out: (!in_place && !out.is_empty()).then(|| PathBuf::from(out)),
             in_place: in_place && !dry_run,
             dry_run,
+            // Only meaningful when the aircraft's own database is the one being replaced:
+            // that is the database the frequencies and holds are in.
+            keep: in_place && !dry_run && u.keep.check_state() == nwg::CheckBoxState::Checked,
+            keep_from: None,
         })
     }
 }

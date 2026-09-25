@@ -313,6 +313,15 @@ pub struct ConvertArgs {
     /// file.
     #[arg(long = "dry-run")]
     pub dry_run: bool,
+    /// Keep the tables this converter leaves empty — radio frequencies, published holds,
+    /// grid MORA — from the database being replaced, so replacing it loses nothing. Needs
+    /// `--in-place`; to take them from somewhere else use `--keep-from`.
+    #[arg(long = "keep", conflicts_with = "keep_from")]
+    pub keep: bool,
+    /// The same, taking them from a database named here rather than the one being
+    /// replaced: the aircraft's own, kept somewhere else, or another aircraft's.
+    #[arg(long = "keep-from", value_name = "FILE")]
+    pub keep_from: Option<PathBuf>,
 }
 
 /// Where the airport index comes from.
@@ -1403,10 +1412,13 @@ pub fn convert_cmd(a: ConvertArgs) -> Result<()> {
         } else {
             a.out.clone().ok_or_else(|| anyhow!("give --out <path>, or --in-place to overwrite the installed database (backed up first)"))?
         };
-        if out.exists() {
+        let backup = if out.exists() {
             let backup = convert::backup(&out)?;
             term::file(None, &backup.display().to_string(), "backup of the database about to be overwritten");
-        }
+            Some(backup)
+        } else {
+            None
+        };
         // Written to a scratch path first and only moved into place once it succeeds, so a
         // failed write never leaves the aircraft's own database half-replaced.
         let scratch = out.with_extension(format!("{}.tmp", out.extension().and_then(|e| e.to_str()).unwrap_or("db")));
@@ -1422,6 +1434,28 @@ pub fn convert_cmd(a: ConvertArgs) -> Result<()> {
                 return Err(e);
             }
         };
+        // Done on the scratch file, before anything is moved into place, so a failure here
+        // leaves the aircraft's own database exactly as it was.
+        if a.keep || a.keep_from.is_some() {
+            let source = a.keep_from.clone().or_else(|| backup.clone());
+            match source {
+                Some(src) if src.is_file() => match convert::carry_over(&scratch, &src, &report) {
+                    Ok(done) if !done.is_empty() => {
+                        let total: usize = done.iter().map(|(_, n)| n).sum();
+                        term::info(&format!("kept {total} rows the simulator does not carry, from {}: {}", src.display(), done.iter().map(|(t, n)| format!("{t} {n}")).collect::<Vec<_>>().join(", ")));
+                    }
+                    Ok(_) => term::warn("nothing to keep: the old database had none of the tables this one leaves empty"),
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&scratch);
+                        return Err(e.context("keeping what the simulator does not carry"));
+                    }
+                },
+                _ => {
+                    let _ = std::fs::remove_file(&scratch);
+                    return Err(anyhow!("--keep needs a database to take them from: use it with --in-place, or name one with --keep-from <FILE>"));
+                }
+            }
+        }
         std::fs::rename(&scratch, &out).or_else(|_| {
             std::fs::copy(&scratch, &out).map(|_| ()).and_then(|_| std::fs::remove_file(&scratch))
         }).with_context(|| format!("move {} into place at {}", scratch.display(), out.display()))?;
