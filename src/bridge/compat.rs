@@ -124,6 +124,57 @@ pub fn client_idrwy(s: &str) -> String {
     s.split('+').map(|pair| pair.split('/').map(pad_designator).collect::<Vec<_>>().join(".")).collect::<Vec<_>>().join("_")
 }
 
+/// The two ends of a runway identifier: `09L/27R` -> `["09L", "27R"]`, each zero-padded
+/// the way the API spells thresholds. An intersection (`09L/27R+18/36`) gives the ends of
+/// the first runway named, which is the one a node on it belongs to.
+fn runway_ends(idrwy: &str) -> Vec<String> {
+    idrwy.split('+').next().unwrap_or("").split(['/', '.']).map(str::trim).filter(|e| !e.is_empty()).map(pad_designator).collect()
+}
+
+/// Where each runway threshold is, so a node on a runway can name the one it is nearest.
+///
+/// The SDK declares `idthr` on a runway node as a string, and a null fails validation in
+/// newer clients, which takes the whole routing network down with it. Filling it in is
+/// therefore necessary -- but the value has to be right as well as present. The field
+/// names the threshold the node is measured from, and a runway exit is only useful to the
+/// landing that uses it: an exit two thirds of the way down 09L/27R belongs to 27R, and
+/// naming 09L there is a number that passes validation and misleads. Taking the first end
+/// of the pair would be the further threshold for well over half of them -- sixteen of
+/// Heathrow's twenty-eight, thirty-six of Kennedy's sixty-one -- so the node's own
+/// position decides it.
+#[derive(Default)]
+pub struct Thresholds(Vec<(String, geo_types::Coord<f64>)>);
+
+impl Thresholds {
+    /// Read them from a built airport, in the same local metre frame the features are put
+    /// into, so a distance is a distance.
+    pub fn read(dir: &std::path::Path, frame: &crate::geom::LocalFrame, is_wgs84: bool) -> Thresholds {
+        let p = dir.join(format!("{}.geojson", Layer::RunwayThreshold.name()));
+        let Ok(text) = std::fs::read_to_string(&p) else { return Thresholds::default() };
+        let Ok((_, feats)) = crate::output::geojson::parse_feature_collection(&text, Layer::RunwayThreshold) else {
+            return Thresholds::default();
+        };
+        let mut out = Vec::new();
+        for f in feats {
+            let Some(id) = s(&f.props, "idthr") else { continue };
+            let geo_types::Geometry::Point(pt) = &f.geom else { continue };
+            let c = if is_wgs84 { frame.forward(pt.0.x, pt.0.y) } else { pt.0 };
+            out.push((pad_designator(&id), c));
+        }
+        Thresholds(out)
+    }
+
+    /// Which of `among` is nearest to `at`. None when none of them is known here, which
+    /// leaves the caller to fall back rather than invent a threshold.
+    fn nearest(&self, at: geo_types::Coord<f64>, among: &[String]) -> Option<String> {
+        among
+            .iter()
+            .filter_map(|e| self.0.iter().find(|(id, _)| id == e).map(|(id, c)| (id.clone(), (c.x - at.x).hypot(c.y - at.y))))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
+    }
+}
+
 // ---- enum translators (amdbgen code -> Navigraph code) ------------------------------
 
 fn surftype(v: Option<i64>) -> i64 {
@@ -301,9 +352,13 @@ fn idthr(p: &Map<String, Value>) -> Value {
 
 /// Convert one feature's properties in place to the Navigraph schema. `seq` is the
 /// running number within the layer. Returns false for layers Navigraph does not serve.
-pub fn convert(feat: &mut AmdbFeature, seq: usize) -> bool {
+pub fn convert(feat: &mut AmdbFeature, seq: usize, thresholds: &Thresholds) -> bool {
     let layer = feat.layer;
     let Some(ft) = feattype(layer) else { return false };
+    let here = match &feat.geom {
+        geo_types::Geometry::Point(pt) => Some(pt.0),
+        _ => None,
+    };
     let p = std::mem::take(&mut feat.props);
     let idarpt = s(&p, "idarpt").unwrap_or_default();
     let mut o = Map::new();
@@ -530,7 +585,14 @@ pub fn convert(feat: &mut AmdbFeature, seq: usize) -> bool {
                     put("catstop", Value::from(UNKNOWN));
                     put("featref", Value::from(UNKNOWN));
                 }
-                3 => put("idthr", Value::Null),
+                // A runway or runway-exit node names the threshold it is measured
+                // from. The SDK wants a string here; see [`Thresholds`] for why it has
+                // to be the near one rather than simply the first.
+                3 => {
+                    let ends = s(&p, "idrwy").map(|r| runway_ends(&r)).unwrap_or_default();
+                    let near = here.and_then(|at| thresholds.nearest(at, &ends));
+                    put("idthr", Value::from(near.or_else(|| ends.first().cloned()).unwrap_or_default()));
+                }
                 5 | 9 => put("termref", Value::Null),
                 _ => {}
             }
@@ -560,6 +622,66 @@ pub fn search_row(idarpt: &str, iata: Option<&str>, name: &str, lat: f64, lon: f
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `idthr` names the near threshold, against the real built airports.
+    ///
+    /// The value has to be present -- a null takes the whole routing network down in
+    /// newer clients -- but it also has to be right: it names the threshold the node is
+    /// measured from, and a runway exit is only useful to the landing that uses it.
+    /// Taking the first end of the pair would name the further threshold for sixteen of
+    /// Heathrow's twenty-eight exit nodes and thirty-six of Kennedy's sixty-one, so this
+    /// checks the answer against the distance rather than against itself.
+    ///
+    /// `cargo test --release -- --ignored idthr_names_the_near_threshold`
+    #[test]
+    #[ignore]
+    fn idthr_names_the_near_threshold() {
+        use crate::model::Layer;
+        for icao in ["EGLL", "WSSS", "KJFK"] {
+            let dir = std::path::PathBuf::from("out").join(icao);
+            if !dir.join("manifest.json").is_file() {
+                continue;
+            }
+            let manifest: crate::output::manifest::Manifest = serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).unwrap()).unwrap();
+            let frame = crate::geom::LocalFrame::new(manifest.arp[0], manifest.arp[1]);
+            let is_wgs84 = manifest.projection.starts_with("EPSG");
+            let thresholds = Thresholds::read(&dir, &frame, is_wgs84);
+            assert!(!thresholds.0.is_empty(), "{icao} has no thresholds to be near");
+
+            let text = std::fs::read_to_string(dir.join(format!("{}.geojson", Layer::AsrnNode.name()))).unwrap();
+            let (_, feats) = crate::output::geojson::parse_feature_collection(&text, Layer::AsrnNode).unwrap();
+            let (mut checked, mut differs) = (0, 0);
+            for (i, mut f) in feats.into_iter().enumerate() {
+                if is_wgs84 {
+                    f.geom = crate::bridge::store::project_to_local(&frame, &f.geom);
+                }
+                let raw = f.props.clone();
+                let at = match &f.geom {
+                    geo_types::Geometry::Point(pt) => pt.0,
+                    _ => continue,
+                };
+                assert!(convert(&mut f, i, &thresholds));
+                if f.props["nodetype"] != 3 {
+                    continue;
+                }
+                let got = f.props["idthr"].as_str().expect("idthr is a string, never null");
+                assert!(!got.is_empty(), "{icao}: a runway node with no threshold at all");
+                let ends = runway_ends(&s(&raw, "idrwy").unwrap_or_default());
+                // Whatever it named must be the nearest of that runway's ends.
+                let dist = |e: &String| thresholds.0.iter().find(|(id, _)| id == e).map(|(_, c)| (c.x - at.x).hypot(c.y - at.y));
+                if let Some(best) = ends.iter().filter_map(dist).min_by(|a, b| a.total_cmp(b)) {
+                    let named = dist(&got.to_string()).expect("the threshold it named is one we know");
+                    assert!((named - best).abs() < 1e-6, "{icao}: named {got} at {named:.0} m when {best:.0} m was nearer");
+                    checked += 1;
+                    if ends.first().map(|e| e != got).unwrap_or(false) {
+                        differs += 1;
+                    }
+                }
+            }
+            assert!(checked > 0, "{icao}: no runway nodes to check");
+            println!("{icao}: {checked} runway nodes, {differs} of them would have been wrong by taking the first end");
+        }
+    }
     use geo_types::Point;
 
     #[test]
@@ -567,7 +689,7 @@ mod tests {
         assert_eq!(client_idrwy("7/25"), "07.25");
         assert_eq!(client_idrwy("07L/25R+18/36"), "07L.25R_18.36");
         let mut t = AmdbFeature::new(Layer::RunwayThreshold, Point::new(0.0, 0.0)).with("idarpt", "KJFK").with("idthr", "4L").with("tora", 3000.0).with("tdze", 13.0).with("thrtype", 2).with("vasis", 1);
-        assert!(convert(&mut t, 0));
+        assert!(convert(&mut t, 0, &Thresholds::default()));
         assert_eq!(t.props["feattype"], 2);
         assert_eq!(t.props["id"], 2_000_001);
         assert_eq!(t.props["idthr"], "04L");
@@ -577,12 +699,12 @@ mod tests {
         assert_eq!(t.props["cat"], UNKNOWN);
         assert!(t.props.get("source").is_none());
         let mut e = AmdbFeature::new(Layer::TaxiwayElement, Point::new(0.0, 0.0)).with("idarpt", "KJFK").with("idlin", "A").with("surftype", 4).with("bridge", true).with("status", 2);
-        assert!(convert(&mut e, 5));
+        assert!(convert(&mut e, 5, &Thresholds::default()));
         assert_eq!(e.props["gsurftyp"], 2);
         assert_eq!(e.props["bridge"], 2);
         assert_eq!(e.props["status"], 0);
         let mut sign = AmdbFeature::new(Layer::AerodromeSign, Point::new(0.0, 0.0));
-        assert!(!convert(&mut sign, 0));
+        assert!(!convert(&mut sign, 0, &Thresholds::default()));
         assert_eq!(NAVIGRAPH_LAYERS.len(), 36);
     }
 }
