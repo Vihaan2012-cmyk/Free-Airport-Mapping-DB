@@ -39,7 +39,51 @@ pub const BACKUP_SUFFIX: &str = ".amdb-bridge.bak";
 /// not check bearer tokens, it only needs the gauge to believe it has one.
 pub const A350_TOKEN: &str = "amdb-bridge-local";
 const A350_MARK: &str = "/*amdb-bridge*/";
-const A350_HANDLER: &str = "'RequestNavigraphAccessToken',()=>{";
+
+/// The comm-bus event the OANS gauge asks the flight bag for a token with.
+const TOKEN_EVENT: &str = "RequestNavigraphAccessToken";
+
+/// Opening `{` of the block that answers the gauge's token request.
+///
+/// The A350 ships `'RequestNavigraphAccessToken',()=>{`, which was matched outright, and
+/// iniBuilds' newer flight bag spells the same handoff with different quoting and
+/// spacing. Matching the event name alone would be too loose: a bundle that both raises
+/// the event and answers it names it twice, and the first is as likely to be the raise --
+/// rewriting that would push a token from the wrong side and leave the handler as it was.
+///
+/// So the anchor is the registration rather than the name: the name has to be the
+/// argument of an `on(` call. What follows is the callback, `=>` or `function`, and then
+/// its block. Found exactly once, or not at all -- if a bundle registers the handler
+/// twice this does not guess which.
+fn token_handler_open(text: &str) -> Option<usize> {
+    let quote = |c: char| c == '\u{27}' || c == '\u{22}' || c == '\u{60}';
+    let mut found = None;
+    let mut from = 0;
+    while let Some(at) = text[from..].find(TOKEN_EVENT) {
+        let at = from + at;
+        from = at + TOKEN_EVENT.len();
+        // The name must be the first argument of an `on` call. Minifiers spell that
+        // either `.on(` or `['on'](`, so the quotes and brackets come off before the
+        // method's name is read, and `on` has to be the whole of it -- `addon(` is not.
+        let before = text[..at].trim_end_matches(quote).trim_end();
+        let Some(before) = before.strip_suffix('(') else { continue };
+        let before = before.trim_end().trim_end_matches(']').trim_end_matches(quote);
+        let Some(head) = before.strip_suffix("on") else { continue };
+        if head.chars().next_back().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$') {
+            continue;
+        }
+        // The callback follows the name, inside the same argument list.
+        let after = &text[from..];
+        let window = &after[..after.len().min(80)];
+        let Some(rel) = window.find("=>").or_else(|| window.find("function")) else { continue };
+        let Some(brace) = after[rel..].find('{') else { continue };
+        if found.is_some() {
+            return None;
+        }
+        found = Some(from + rel + brace);
+    }
+    found
+}
 
 /// Index just past the `}` that closes the block opened at `open` (which must be a `{`),
 /// skipping string literals. None if the text is unbalanced.
@@ -79,8 +123,7 @@ pub fn patch_a350_text(text: &str) -> Option<String> {
     if text.contains(A350_MARK) {
         return None;
     }
-    let start = text.find(A350_HANDLER)?;
-    let open = start + A350_HANDLER.len() - 1;
+    let open = token_handler_open(text)?;
     let end = block_end(text, open)?;
     let push = format!("Coherent.call('COMM_BUS_WASM_CALLBACK','SetNavigraphAccessToken','{A350_TOKEN}')");
     let mut out = String::with_capacity(text.len() + 400);
@@ -106,11 +149,14 @@ pub fn scan_a350(community: &Path) -> Vec<(String, PathBuf, bool)> {
         walk_js(&pdir.join("html_ui"), &mut js);
         for f in js {
             let name = f.file_name().map(|s| s.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-            if !name.starts_with("ini-efb") {
+            // iniBuilds' newer flight bag does not use the A350's `ini-efb*` bundle
+            // names, so the name is only a way to avoid reading every script in the
+            // folder; what settles it is whether the handler is actually in there.
+            if !name.contains("efb") && !name.contains("ois") {
                 continue;
             }
             let Ok(text) = fs::read_to_string(&f) else { continue };
-            if text.contains(A350_HANDLER) || text.contains(A350_MARK) {
+            if token_handler_open(&text).is_some() || text.contains(A350_MARK) {
                 out.push((pkg.file_name().to_string_lossy().to_string(), f, text.contains(A350_MARK)));
             }
         }
@@ -950,6 +996,37 @@ pub fn install_autostart(exe: &Path, args: &str) -> Result<Vec<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The token handler is found by its registration, not by the event's name.
+    ///
+    /// A bundle that both raises the event and answers it names it twice, and the raise
+    /// may well come first; rewriting that would push a token from the wrong side and
+    /// leave the handler untouched. Anchoring on `on(` keeps them apart.
+    #[test]
+    fn token_handler_is_found_by_its_registration() {
+        let a350 = "x['wasmListener']['on']('RequestNavigraphAccessToken',()=>{ return ''; });";
+        assert!(token_handler_open(a350).is_some(), "the A350's own spelling");
+
+        // iniBuilds' newer flight bag: different quoting, spacing and callback form.
+        let newer = "bus.on( \"RequestNavigraphAccessToken\", function () { return null; });";
+        assert!(token_handler_open(newer).is_some(), "a newer spelling of the same handoff");
+
+        // The gauge side raises it; there is no handler here to rewrite.
+        let raise = "this.emit('RequestNavigraphAccessToken');";
+        assert!(token_handler_open(raise).is_none(), "a raise is not a handler");
+
+        // Raised first, answered second: the registration is what must be found.
+        let both = "emit('RequestNavigraphAccessToken');
+bus.on('RequestNavigraphAccessToken',()=>{ return 'tok'; });";
+        let open = token_handler_open(both).expect("the handler, not the raise");
+        assert_eq!(both.as_bytes()[open], b'{', "the index is the opening brace itself");
+        assert!(both[..open].ends_with("()=>"), "landed on {:?}", &both[open.saturating_sub(12)..=open]);
+        assert!(both[..open].contains("bus.on("), "landed on the raise, not the registration");
+
+        // Registered twice: this does not guess which.
+        let twice = "bus.on('RequestNavigraphAccessToken',()=>{1});bus.on('RequestNavigraphAccessToken',()=>{2});";
+        assert!(token_handler_open(twice).is_none(), "two registrations");
+    }
 
     #[test]
     fn a350_handler_is_rewritten() {

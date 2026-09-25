@@ -52,7 +52,7 @@ pub enum XpState {
     Building,
 }
 
-fn project_to_local(frame: &LocalFrame, g: &Geometry<f64>) -> Geometry<f64> {
+pub(crate) fn project_to_local(frame: &LocalFrame, g: &Geometry<f64>) -> Geometry<f64> {
     let f = |c: &Coord<f64>| frame.forward(c.x, c.y);
     let ls = |l: &LineString<f64>| LineString(l.0.iter().map(f).collect());
     let poly = |p: &Polygon<f64>| Polygon::new(ls(p.exterior()), p.interiors().iter().map(ls).collect());
@@ -157,6 +157,9 @@ impl Store {
         let manifest: Manifest = serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).context("manifest")?)?;
         let frame = LocalFrame::new(manifest.arp[0], manifest.arp[1]);
         let is_wgs84 = manifest.projection.starts_with("EPSG");
+        // Read up front rather than relying on the thresholds' layer being walked before
+        // the routing network's: a runway node names the threshold it is nearest.
+        let thresholds = super::compat::Thresholds::read(&dir, &frame, is_wgs84);
         let mut layers = BTreeMap::new();
         for l in ALL_LAYERS {
             let p = dir.join(format!("{}.geojson", l.name()));
@@ -168,7 +171,7 @@ impl Store {
                     f.geom = project_to_local(&frame, &f.geom);
                 }
                 // Layers Navigraph does not serve are dropped here.
-                if super::compat::convert(&mut f, i) {
+                if super::compat::convert(&mut f, i, &thresholds) {
                     kept.push(f);
                 }
             }

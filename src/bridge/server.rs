@@ -293,6 +293,10 @@ fn client_name(agent: &str) -> String {
     let a = agent.to_ascii_lowercase();
     if a.contains("flybywire") || a.contains("fbw") {
         "FlyByWire".to_string()
+    } else if a.contains("kittyhawk") || (a.contains("inibuilds") && a.contains("a380")) {
+        // The iniBuilds A380's OANS gauge introduces itself as the simulator's own WASM
+        // HTTP client, `KittyHawk/0.9 (Windows; Desktop; Client/0.1)`, not by name.
+        "iniBuilds A380".to_string()
     } else if a.contains("inibuilds") || a.contains("a350") {
         "iniBuilds".to_string()
     } else if a.contains("wasm") || a.contains("msfs") || a.contains("flightsimulator") {
@@ -404,12 +408,15 @@ fn handle(store: Arc<Store>, req: Request) {
     let Some(req) = super::planner::handle(req, &path, &params, |r, s, b| respond_json(r, s, b), |r, s, t, b| respond_bytes(r, s, t, b)) else { return };
     let Some(req) = handle_simbrief(req, &path, &params) else { return };
     let Some(req) = handle_charts(&store, req, &path) else { return };
-    let Some(pos) = path.find("/v1/") else {
+    // `/v1/...`, or a bare `/v1` with no trailing slash, which some clients probe with
+    // before asking for anything.
+    // `/v1/<what>`, or a bare `/v1` with nothing after it, which some clients probe with
+    // before they ask for anything.
+    let Some(rest) = path.find("/v1/").map(|pos| path[pos + 4..].trim_matches('/')).or_else(|| path.trim_end_matches('/').ends_with("/v1").then_some("")) else {
         crate::term::warn(&format!("Unrecognised request {} {}", req.method(), url.chars().take(600).collect::<String>()));
         respond_json(req, 404, json!({"error":"not found","hint":"expected /v1/..."}).to_string());
         return;
     };
-    let rest = path[pos + 4..].trim_matches('/');
     let agent = req.headers().iter().find(|h| h.field.equiv("User-Agent")).map(|h| h.value.as_str().to_string()).unwrap_or_default();
     let auth = req.headers().iter().any(|h| h.field.equiv("Authorization"));
     crate::term::step(None, &format!("{} /v1/{}{}  from {}{}", req.method(), rest, if query.is_empty() { String::new() } else { format!("?{}", if query.len() > 90 { format!("{}…", &query[..90]) } else { query.to_string() }) }, client_name(&agent), if auth { " (with token)" } else { "" }));
@@ -579,6 +586,18 @@ pub fn start(store: Arc<Store>, listen: Listen) -> Result<ServerHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_the_a380s_own_client() {
+        // The A380's OANS gauge introduces itself as the simulator's WASM HTTP client.
+        assert_eq!(client_name("KittyHawk/0.9 (Windows; Desktop; Client/0.1)"), "iniBuilds A380");
+        assert_eq!(client_name("iniBuilds-A380-OANS/1.0"), "iniBuilds A380");
+        // The A350 is still the A350, and FlyByWire is still FlyByWire.
+        assert_eq!(client_name("iniBuilds A350 OANS"), "iniBuilds");
+        assert_eq!(client_name("FlyByWire A380X"), "FlyByWire");
+        assert_eq!(client_name(""), "unknown client");
+    }
+
 
     #[test]
     fn decodes_query_and_snaps() {
