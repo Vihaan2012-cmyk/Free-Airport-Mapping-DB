@@ -280,11 +280,24 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
     let pad = 0.05 * (ext[2] - ext[0]).max(ext[3] - ext[1]).max(200.0);
     ext = [ext[0] - pad, ext[1] - pad, ext[2] + pad, ext[3] + pad];
 
-    let landscape = (ext[2] - ext[0]) > 1.15 * (ext[3] - ext[1]);
+    // Which way round the page goes is decided by measuring, not by a rule of thumb about the
+    // aerodrome's own shape. The box the map gets is not the page: the header takes 132 points
+    // off the top of it, so landscape leaves a box near twice as wide as it is tall while
+    // portrait leaves one slightly taller than wide. An aerodrome a little wider than tall --
+    // Kennedy, at about four to three -- passed a "wider than tall, so landscape" test and then
+    // sat in the middle of that very wide box with a third of the sheet blank on either side.
+    // Trying both and keeping whichever draws the aerodrome larger cannot pick the worse one.
+    let fit = |page_w: f32, page_h: f32| {
+        let (x0, y0, x1, y1) = (MARGIN, MARGIN + FOOTER_H, page_w - MARGIN, page_h - MARGIN - HEADER_H);
+        let (w, h) = (x1 - x0, y1 - y0);
+        let scale = (w / (ext[2] - ext[0]) as f32).min(h / (ext[3] - ext[1]) as f32);
+        (scale, x0, y0, x1, y1, w, h)
+    };
+    let wide = fit(A4_LONG, A4_SHORT);
+    let tall = fit(A4_SHORT, A4_LONG);
+    let landscape = wide.0 >= tall.0;
     let (page_w, page_h) = if landscape { (A4_LONG, A4_SHORT) } else { (A4_SHORT, A4_LONG) };
-    let (x0, y0, x1, y1) = (MARGIN, MARGIN + FOOTER_H, page_w - MARGIN, page_h - MARGIN - HEADER_H);
-    let (w, h) = (x1 - x0, y1 - y0);
-    let scale = (w / (ext[2] - ext[0]) as f32).min(h / (ext[3] - ext[1]) as f32);
+    let (scale, x0, y0, x1, y1, w, h) = if landscape { wide } else { tall };
     let ox = x0 + (w - (ext[2] - ext[0]) as f32 * scale) / 2.0 - ext[0] as f32 * scale;
     let oy = y0 + (h - (ext[3] - ext[1]) as f32 * scale) / 2.0 - ext[1] as f32 * scale;
     let map = MapArea { frame, scale, ox, oy };
