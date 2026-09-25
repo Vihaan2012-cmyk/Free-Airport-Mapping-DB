@@ -496,6 +496,50 @@ mod tests {
         std::fs::write(std::env::temp_dir().join(format!("efb-{id}.png")), &png).unwrap();
     }
 
+    /// The chart list, read the way FlyByWire's flight bag reads it.
+    ///
+    /// Its A380X and A32NX sort the list into their five tabs by one field and nothing
+    /// else -- `fbw-common`'s NavigraphChartUI does
+    ///
+    /// ```text
+    /// STAR: category === "ARR"   APP: "APP"   TAXI: "APT"   SID: "DEP"   REF: "REF"
+    /// ```
+    ///
+    /// so a category it does not know puts a chart in no tab at all and it simply is not
+    /// there. It then reads `id`, `name`, `index_number`, the two image addresses and
+    /// `bounding_boxes` off whatever it shows, and groups the approach tab by walking
+    /// `chart.runways`, which it indexes without checking -- a chart without that array
+    /// would throw rather than come out unsorted. This holds the answer to that shape.
+    ///
+    /// `cargo test --release -- --ignored answers_what_flybywire_reads`
+    #[test]
+    #[ignore]
+    fn answers_what_flybywire_reads() {
+        let list = index_json("WSSS", "http://127.0.0.1:8770").unwrap();
+        let charts = list["charts"].as_array().unwrap();
+        assert!(!charts.is_empty());
+        for c in charts {
+            let cat = c["category"].as_str().unwrap_or("");
+            assert!(matches!(cat, "ARR" | "APP" | "APT" | "DEP" | "REF"), "{cat} is in none of the five tabs: {c}");
+            for f in ["id", "name", "index_number", "image_day_url", "image_night_url"] {
+                assert!(c[f].as_str().is_some_and(|v| !v.is_empty()), "{f} missing from {c}");
+            }
+            assert!(c["runways"].is_array(), "runways is indexed without checking: {c}");
+            assert!(c["bounding_boxes"].is_object() || c["bounding_boxes"].is_null());
+            for f in ["image_day_url", "image_night_url"] {
+                assert!(c[f].as_str().unwrap().starts_with("http://127.0.0.1:8770/v2/charts/WSSS/"), "{f} is not fetchable: {c}");
+            }
+        }
+        let tab = |cat: &str| charts.iter().filter(|c| c["category"] == cat).count();
+        // Every tab a crew would look in has something in it, the ground diagram included:
+        // it is the one that fills FlyByWire's TAXI tab.
+        assert!(tab("APT") >= 1, "nothing in TAXI");
+        assert!(tab("DEP") >= 1, "nothing in SID");
+        assert!(tab("ARR") >= 1, "nothing in STAR");
+        assert!(tab("APP") >= 1, "nothing in APP");
+        println!("WSSS: STAR {}, APP {}, TAXI {}, SID {}", tab("ARR"), tab("APP"), tab("APT"), tab("DEP"));
+    }
+
     /// A real airport through the whole of it: the list, one chart drawn by day and by
     /// night, and the list again carrying where that chart's plan lies. Needs the
     /// simulator's navigation data and the network, so it is run by hand:
