@@ -302,6 +302,13 @@ pub fn setup_navigraph_with(on: bool, with_efb: bool) -> Result<()> {
     let domains = super::navigraph_domains(with_efb);
     if on {
         let m = super::tls::ensure_for(super::NAVIGRAPH_AMDB_DOMAIN, &domains)?;
+        // A newly made authority has the same name as the one it replaces, so the store
+        // would report it installed and refuse everything it signs. The old one goes
+        // first. This is the ordinary case on a machine set up before the authority's key
+        // was kept, where there is no key to reuse and a new one has to be made.
+        if m.fresh_ca {
+            let _ = super::tls::untrust();
+        }
         super::tls::trust(&m)?;
         super::hosts::install_all(&domains)?;
         allow_port_443();
