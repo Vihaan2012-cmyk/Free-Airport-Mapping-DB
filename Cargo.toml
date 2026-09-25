@@ -17,6 +17,12 @@ path = "src/bin/amdb-bridge.rs"
 name = "amdb-bridge-gui"
 path = "src/bin/amdb-bridge-gui/main.rs"
 
+# The navigation-data converter on its own, for people who want that and not the rest.
+# It is the same code `amdbgen navdata` runs, not a copy, and `amdbgen` keeps the command.
+[[bin]]
+name = "amdb-navdata"
+path = "src/bin/amdb-navdata.rs"
+
 [dependencies]
 tiny_http = { version = "0.12", features = ["ssl-rustls"] }
 rcgen = "0.14"

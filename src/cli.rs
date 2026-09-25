@@ -1358,7 +1358,12 @@ pub fn run() -> Result<()> {
 
 /// Write an aircraft's navigation database from a `NavSet`. See `convert::mod` for the
 /// backup rule and `convert::fenix`/`convert::dfd` for what each target actually writes.
-fn convert_cmd(a: ConvertArgs) -> Result<()> {
+/// Write an aircraft's own navigation database from the simulator's.
+///
+/// Public because `amdb-navdata` is the same converter behind its own front door: one
+/// implementation, two ways in, so the standalone download and the `amdbgen navdata`
+/// subcommand cannot drift apart.
+pub fn convert_cmd(a: ConvertArgs) -> Result<()> {
     use crate::convert::{self, Target};
     let target: Target = a.to.parse()?;
     if a.out.is_some() && a.in_place {

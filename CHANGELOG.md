@@ -25,6 +25,12 @@ which found a real fault the bridge had and nobody had noticed. With thanks.
   spelling, and a bundle that registers it twice is left alone rather than guessed at. The
   file name is no longer the test, only a way to avoid reading every script in the folder.
 
+- **The navigation-data converter is a download on its own**, `AMDB-Navdata-<version>.zip`,
+  for people who want that and not the rest of it. It is the same converter, not a copy:
+  `amdb-navdata` and `amdbgen navdata` both call one implementation, so the two cannot
+  drift apart, and nothing has been taken out of the full installer to make the separate
+  one exist.
+
 - A bare `/v1` with nothing after it is answered as the service root; some clients probe
   with it before asking for anything.
 
