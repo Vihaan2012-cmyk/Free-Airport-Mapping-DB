@@ -55,6 +55,37 @@ A flight planner, a navigation-data converter, and the airport diagram on the ta
   the three of them read as one taxiway called PCP. And each runway's length and width came
   out twice, up the runway and in the table. All three are fixed.
 
+- **Two thirds of Heathrow's taxiways had no name on the diagram.** The names were read off
+  the pavement, and the pavement is built by merging what abuts into as few polygons as it
+  can; a merged slab keeps the one name most of the centrelines crossing it carry, so a slab
+  that A3, A4 and N4E all run over comes out called A4 and the other two are never named
+  anywhere. They now come from the centrelines, which are the taxiways themselves, and the
+  letter goes halfway along the longest stretch. Heathrow 29 designators to 84, Changi to
+  149, Kennedy to 76.
+
+- **The diagram shows what the moving map shows.** It was drawing about half of
+  `layer::MAP_PROFILE`; it now draws the rest of what says how the ground is used rather
+  than only what it is made of — taxiway centrelines, stand lead-ins, runway paint,
+  rapid-exit and intersection markings, stand areas, shoulders, de-icing pads, helipads, and
+  service roads thin enough not to read as taxiways.
+
+- **The same chart came out differently twice in a row.** The neighbouring aerodromes a
+  terminal page names were gathered by walking a hash map, and Rust seeds its hasher afresh
+  in every process, so the order — and therefore which of two crowded neighbours got its
+  name — changed every run. The bridge draws a chart once and keeps it, so whichever draw a
+  flight bag happened to trigger was that airport's chart from then on. They are sorted
+  nearest first.
+
+- **Labels are cased in white rather than stuck on a white rectangle.** A rectangle is right
+  only where a label sits on something dark; over pavement, terrain and water it reads as a
+  sticker, and on a crowded page the rectangles rubbed each other out.
+
+- **The fixes get the page before the scenery does.** A terminal page placed the
+  neighbouring aerodromes and the beacon boxes first and let them keep the room, so the
+  procedure's own fixes were left with nowhere to go and printed on top of them anyway —
+  BRASO, WESUL and LAM came out one on top of another on Heathrow's BARMI 1H. The fixes are
+  placed first now and the country round them gives way or is left off.
+
 - On landscape paper a terminal page lays its routing panel over the corner of the map. The
   degree-and-minute ticks were ruled on the paper's edge rather than the map's, which put
   them under the panel and printed their labels across it.
