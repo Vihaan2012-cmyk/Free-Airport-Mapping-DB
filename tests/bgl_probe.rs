@@ -1048,3 +1048,188 @@ fn which_shift_decodes_fs2024_idents() {
         println!("  shifting {shift} bits decodes {c} of {checked}");
     }
 }
+
+/// Is the localiser in an airport's children? A localiser record should carry a frequency in
+/// the 108.10-111.95 MHz band and a course, so those are what to look for.
+#[test]
+#[ignore]
+fn find_the_localiser_record() {
+    use amdbgen::sources::msfs::{fsarchive::FsArchive, nav_archives};
+    let mut hits: BTreeMap<u16, (usize, usize, Vec<String>)> = BTreeMap::new();
+    let mut n = 0usize;
+    for path in nav_archives() {
+        let a = FsArchive::open(&path).unwrap();
+        a.for_each_with_prefix(&[""], |_x, data| {
+            if n >= 400 {
+                return;
+            }
+            for r in bgl::section_records(&data, 0x03) {
+                if r.id != 275 || r.end - r.start < 0x200 || n >= 400 {
+                    continue;
+                }
+                let d = &data[r.start..r.end];
+                let icao: String = d[0x6f..].iter().take(5).take_while(|&&b| b.is_ascii_alphanumeric()).map(|&b| b as char).collect();
+                for c in bgl::records(d, 0x5c, d.len()) {
+                    if matches!(c.id, 0x19 | 0x42 | 0x48 | 0x111) {
+                        continue;
+                    }
+                    n += 1;
+                    let body = &d[c.start..c.end];
+                    // A localiser frequency as the format stores one: hertz, or hundredths.
+                    let mut found = Vec::new();
+                    for off in (0..body.len().saturating_sub(4)).step_by(1) {
+                        let v = bgl::u32le(body, off) as f64;
+                        for (scale, unit) in [(1.0e6, "MHz-Hz"), (1.0e5, "x100k"), (1.0e3, "kHz")] {
+                            let mhz = v / scale;
+                            if (108.0..=112.0).contains(&mhz) {
+                                found.push(format!("+{off}={mhz:.2}{unit}"));
+                            }
+                        }
+                    }
+                    let e = hits.entry(c.id).or_insert((0, 0, Vec::new()));
+                    e.0 += 1;
+                    if !found.is_empty() {
+                        e.1 += 1;
+                        if e.2.len() < 3 {
+                            e.2.push(format!("{icao}: {}", found.join(" ")));
+                        }
+                    }
+                }
+            }
+        })
+        .unwrap();
+    }
+    for (id, (total, with_freq, samples)) in &hits {
+        println!("child 0x{id:03x}: {total} seen, {with_freq} carry a localiser frequency");
+        for s in samples {
+            println!("     {s}");
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn what_the_airport_scenery_holds() {
+    use std::collections::BTreeMap as Map;
+    let dir = std::path::Path::new(r"D:\Microsoft Flight Simulator 2020\Microsoft Flight Simulator 2020 Packages\Official\OneStore\fs-base-genericairports\scenery");
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(p) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&p) else { continue };
+        for e in rd.flatten() {
+            let q = e.path();
+            if q.is_dir() {
+                stack.push(q);
+            } else if q.extension().map(|x| x.eq_ignore_ascii_case("bgl")).unwrap_or(false) {
+                files.push(q);
+            }
+        }
+    }
+    println!("{} scenery files", files.len());
+    let mut ids: Map<u16, (usize, usize)> = Map::new();
+    let mut sample = true;
+    for f in files.iter().take(40) {
+        let Ok(data) = std::fs::read(f) else { continue };
+        for r in bgl::section_records(&data, 0x03) {
+            if r.id != 0x56 || r.end - r.start < 0x44 {
+                continue;
+            }
+            let icao = bgl::ident(bgl::u32le(&data, r.start + 0x28));
+            for c in bgl::records(&data, r.start + 0x44, r.end) {
+                let e = ids.entry(c.id).or_insert((0, 0));
+                e.0 += 1;
+                e.1 = e.1.max(c.end - c.start);
+            }
+            if sample && r.end - r.start > 6000 {
+                sample = false;
+                println!("sample {icao}, {} bytes:", r.end - r.start);
+                for c in bgl::records(&data, r.start + 0x44, r.end) {
+                    println!("   0x{:02x} len {}", c.id, c.end - c.start);
+                }
+            }
+        }
+    }
+    println!("airport children across 40 files: {ids:?}");
+}
+
+#[test]
+#[ignore]
+fn inside_a_scenery_runway() {
+    let dir = std::path::Path::new(r"D:\Microsoft Flight Simulator 2020\Microsoft Flight Simulator 2020 Packages\Official\OneStore\fs-base-genericairports\scenery");
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(p) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&p) else { continue };
+        for e in rd.flatten() {
+            let q = e.path();
+            if q.is_dir() {
+                stack.push(q);
+            } else if q.extension().map(|x| x.eq_ignore_ascii_case("bgl")).unwrap_or(false) {
+                files.push(q);
+            }
+        }
+    }
+    files.sort();
+    let mut shown = 0usize;
+    let mut with_ils = 0usize;
+    let mut total = 0usize;
+    for f in files.iter().take(200) {
+        let Ok(data) = std::fs::read(f) else { continue };
+        for r in bgl::section_records(&data, 0x03) {
+            if r.id != 0x56 || r.end - r.start < 0x44 {
+                continue;
+            }
+            let icao = bgl::ident(bgl::u32le(&data, r.start + 0x28));
+            for c in bgl::records(&data, r.start + 0x44, r.end) {
+                if c.id != 0xce {
+                    continue;
+                }
+                total += 1;
+                let d = &data[c.start..c.end];
+                // Any 108-112 MHz frequency in the record.
+                let freqs: Vec<String> = (0..d.len().saturating_sub(4))
+                    .filter_map(|o| {
+                        let mhz = bgl::u32le(d, o) as f64 / 1.0e6;
+                        (108.0..=112.0).contains(&mhz).then(|| format!("+{o}={mhz:.2}"))
+                    })
+                    .collect();
+                if !freqs.is_empty() {
+                    with_ils += 1;
+                }
+                if shown < 2 && !freqs.is_empty() {
+                    shown += 1;
+                    println!("{icao} runway record, {} bytes, frequencies {}", d.len(), freqs.join(" "));
+                    println!("   number@+6={} side@+7={} designator@+8={}", d[6], d[7], d[8]);
+                    println!("   {:02x?}", &d[..64.min(d.len())]);
+                    let kids: Vec<String> = bgl::records(d, 0x20, d.len()).iter().map(|k| format!("0x{:02x}/{}", k.id, k.end - k.start)).collect();
+                    println!("   children from +0x20: {}", kids.join(" "));
+                }
+            }
+        }
+    }
+    println!("runway records seen {total}, of which {with_ils} carry a localiser frequency");
+}
+
+/// Printed, not asserted: what a departure procedure actually carries once read out of the
+/// simulator's own data — how many transitions, how many legs, and how many of those legs have
+/// a position to draw at. A chart with no tracks on it is one of these three being zero.
+#[test]
+#[ignore]
+fn report_what_a_departure_carries() {
+    for icao in ["EGLL", "WSSS"] {
+        let Ok(Some(ap)) = amdbgen::sources::msfs::procedures::find(icao) else {
+            println!("{icao}: no procedures found at all");
+            continue;
+        };
+        let sids: Vec<_> = ap.procedures.iter().filter(|p| p.kind == amdbgen::sources::msfs::procedures::Kind::Sid).collect();
+        println!("{icao}: {} departures", sids.len());
+        for p in sids.iter().take(3) {
+            let legs: usize = p.transitions.iter().map(|t| t.legs.len()).sum();
+            let placed: usize = p.transitions.iter().flat_map(|t| &t.legs).filter(|l| l.lat.is_some() && l.lon.is_some()).count();
+            println!("   {:<8} runway {:<5} {} transition(s), {legs} leg(s), {placed} with a position", p.name, if p.runway.is_empty() { "-" } else { &p.runway }, p.transitions.len());
+            for t in p.transitions.iter().take(4) {
+                println!("        transition name {:<8} part {:<8} {} legs", if t.name.is_empty() { "-" } else { &t.name }, if t.part.is_empty() { "-" } else { &t.part }, t.legs.len());
+            }
+        }
+    }
+}
