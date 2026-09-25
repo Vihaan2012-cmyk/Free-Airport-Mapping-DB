@@ -70,6 +70,19 @@ pub fn token_json() -> Value {
     })
 }
 
+/// Who the stand-in sign-in says is signed in.
+///
+/// The other flight bags read the user out of the token themselves; the Fenix A320's asks
+/// for it, so it is answered in the shape OpenID Connect defines.
+pub fn userinfo_json() -> Value {
+    json!({
+        "sub": "amdb-bridge-local",
+        "preferred_username": USER_NAME,
+        "subscriptions": ["charts"],
+        "email_verified": true,
+    })
+}
+
 /// The answer to the device-authorization endpoint.
 pub fn device_json(port: u16) -> Value {
     let uri = format!("http://127.0.0.1:{port}/identity/device");
@@ -269,7 +282,10 @@ pub fn index_json(icao: &str, base: &str) -> Result<Value> {
             "revision_date": date,
             "width": width,
             "height": height,
-            "procedures": e.procedures,
+            // Objects, not strings. The Fenix A320's flight bag reads `p.ident` off each
+            // one; given a string it would get `undefined` and name every procedure that.
+            // The others do not read this field at all, so the shape is free to be right.
+            "procedures": e.procedures.iter().map(|p| json!({ "ident": p })).collect::<Vec<_>>(),
             "runways": e.runways,
             "image_day_url": url(".png", "day"),
             "image_night_url": url(".png", "night"),

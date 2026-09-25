@@ -65,13 +65,25 @@ fn strip_ours(text: &str) -> String {
 
 /// Point `domain` at 127.0.0.1 (replacing any earlier entry of ours).
 pub fn install(domain: &str) -> Result<()> {
+    install_all(&[domain])
+}
+
+/// The same for several hosts at once, written as one block.
+///
+/// The map lives on one host; the Fenix A320's flight bag wants three more -- the
+/// sign-in, the charts API and the chart cycle -- and they have to go in together or the
+/// next `install` strips the ones before it, since cleanup keys on the marker rather than
+/// on the name.
+pub fn install_all(domains: &[&str]) -> Result<()> {
     let original = read()?;
     let nl = eol(&original);
     let mut text = strip_ours(&original);
     if !text.is_empty() && !text.ends_with(nl) {
         text.push_str(nl);
     }
-    text.push_str(&format!("127.0.0.1 {domain} {MARKER}{nl}"));
+    for domain in domains {
+        text.push_str(&format!("127.0.0.1 {domain} {MARKER}{nl}"));
+    }
     write(&text)?;
     flush_dns();
     Ok(())

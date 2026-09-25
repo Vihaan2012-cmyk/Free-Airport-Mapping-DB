@@ -64,8 +64,16 @@ fn handle_charts(store: &Store, req: Request, path: &str) -> Option<Request> {
         crate::term::warn(&format!("Charts: {e:#}"));
         respond_json(req, status, json!({ "error": format!("{e:#}") }).to_string());
     };
-    if let Some(p) = path.find("/identity/") {
-        let what = path[p + "/identity/".len()..].trim_matches('/').to_string();
+    // `charts.api.navigraph.com/1/cycles/current`: the cycle the charts are in force for.
+    if path.contains("/1/cycles/current") {
+        respond_json(req, 200, cycle_json().to_string());
+        return None;
+    }
+    // The sign-in, under `/identity/...` for a patched flight bag and bare for one reached
+    // by redirecting its host, which cannot be given a prefix.
+    let identity = path.find("/identity/").map(|p| p + "/identity/".len()).or_else(|| path.find("/connect/").map(|p| p + 1));
+    if let Some(p) = identity {
+        let what = path[p..].trim_matches('/').to_string();
         let port = req.headers().iter().find(|h| h.field.equiv("Host")).and_then(|h| h.value.as_str().rsplit_once(':').and_then(|(_, p)| p.parse().ok())).unwrap_or(super::DEFAULT_PORT);
         match what.as_str() {
             "connect/deviceauthorization" => {
@@ -74,6 +82,9 @@ fn handle_charts(store: &Store, req: Request, path: &str) -> Option<Request> {
             }
             "connect/token" => respond_json(req, 200, super::charts::token_json().to_string()),
             "connect/revocation" => respond_json(req, 200, "{}".to_string()),
+            // Who the token says is signed in. The flight bags read the name out of the
+            // token themselves; the Fenix asks.
+            "connect/userinfo" => respond_json(req, 200, super::charts::userinfo_json().to_string()),
             _ => respond_json(req, 404, json!({ "error": "not found" }).to_string()),
         }
         return None;
