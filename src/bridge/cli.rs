@@ -339,6 +339,12 @@ enum Cmd {
     Navigraph {
         /// on or off
         state: String,
+        /// Also cover the Fenix A320's flight bag: its sign-in, its charts and its chart
+        /// cycle. It is the one bag that cannot be patched, so being the address it calls
+        /// is the only way to answer it — but the redirect is machine-wide, so while this
+        /// is on the Navigraph apps reach this bridge too. Off unless asked for.
+        #[arg(long)]
+        efb: bool,
     },
     /// Add the server to the simulator's exe.xml so it starts with the sim.
     Autostart(ServeArgs),
@@ -690,13 +696,23 @@ pub fn run() -> Result<()> {
             crate::term::success(&format!("Saved: {}  ({})", s.describe(), Settings::path().display()));
             Ok(())
         }
-        Cmd::Navigraph { state } => {
+        Cmd::Navigraph { state, efb } => {
             let on = !matches!(state.to_ascii_lowercase().as_str(), "off" | "remove" | "0" | "false");
             if !hosts::writable() {
                 relaunch_elevated()?;
             }
-            super::desktop::setup_navigraph(on)?;
-            crate::term::success(if on { "A350/A380X set up: run `amdb-bridge serve` as your normal user" } else { "A350/A380X setup removed" });
+            if on && efb {
+                // Said plainly, because it is wider than the rest of what this program
+                // does: while it is on, anything on this computer that asks for these
+                // hosts reaches the bridge, not only the aeroplane.
+                crate::term::warn(&format!(
+                    "--efb also redirects {} for every program on this computer, the Navigraph apps included. `navigraph off` puts them back.",
+                    super::NAVIGRAPH_EFB_DOMAINS.join(", ")
+                ));
+            }
+            super::desktop::setup_navigraph_with(on, efb)?;
+            let what = if efb { "A350/A380X and the Fenix A320 flight bag" } else { "A350/A380X" };
+            crate::term::success(&if on { format!("{what} set up: run `amdb-bridge serve` as your normal user") } else { format!("{what} setup removed") });
             Ok(())
         }
         Cmd::Cleanup => {

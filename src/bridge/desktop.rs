@@ -280,11 +280,30 @@ pub fn navigraph_ready() -> bool {
 /// once rather than every time serving starts: the address stays pointed here while
 /// the option is on, and the app then serves those aircraft as a normal user.
 pub fn setup_navigraph(on: bool) -> Result<()> {
-    let domain = super::NAVIGRAPH_AMDB_DOMAIN;
+    setup_navigraph_with(on, false)
+}
+
+/// The same, optionally covering the hosts the Fenix A320's flight bag calls as well.
+///
+/// It is the one flight bag that cannot be patched -- its web app is served out of an
+/// encrypted bundle by its own local gateway and exists nowhere on disk -- so the only
+/// way to answer it is to be the address it calls.
+///
+/// This is deliberately not what `navigraph on` does by default. The map's own host
+/// serves one aircraft feature; these three include the sign-in, and while they are
+/// redirected every program on the machine that resolves them reaches this bridge, not
+/// only the aeroplane. That is a bigger thing to switch on than a moving map, so it is
+/// asked for separately and says so.
+///
+/// One certificate carries every name, because a server presents one certificate per
+/// connection whichever host was asked for, and it is signed by the authority already in
+/// the store rather than by a new one each time.
+pub fn setup_navigraph_with(on: bool, with_efb: bool) -> Result<()> {
+    let domains = super::navigraph_domains(with_efb);
     if on {
-        let m = super::tls::ensure(domain)?;
+        let m = super::tls::ensure_for(super::NAVIGRAPH_AMDB_DOMAIN, &domains)?;
         super::tls::trust(&m)?;
-        super::hosts::install(domain)?;
+        super::hosts::install_all(&domains)?;
         allow_port_443();
     } else {
         super::hosts::remove()?;
