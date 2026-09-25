@@ -169,27 +169,6 @@ fn text_right(content: &mut Content, font: Name, size: f32, x_right: f32, y: f32
     text(content, font, size, x_right - text_w(size, s), y, s, grey);
 }
 
-/// Centred text rotated by `angle` degrees (counter-clockwise), kept upright.
-fn text_rot(content: &mut Content, font: Name, size: f32, x: f32, y: f32, angle: f32, s: &str, grey: f32) {
-    let mut a = angle % 360.0;
-    if a > 180.0 {
-        a -= 360.0;
-    }
-    if a > 90.0 {
-        a -= 180.0;
-    } else if a < -90.0 {
-        a += 180.0;
-    }
-    let (sn, cs) = a.to_radians().sin_cos();
-    content.set_fill_gray(grey);
-    content.begin_text();
-    content.set_font(font, size);
-    content.set_text_matrix([cs, sn, -sn, cs, x, y]);
-    content.next_line(-text_w(size, s) / 2.0, -size * 0.35);
-    content.show(Str(&ascii(s)));
-    content.end_text();
-}
-
 /// Label with a white box behind it, centred on (x, y).
 fn label_boxed(content: &mut Content, font: Name, size: f32, x: f32, y: f32, s: &str) {
     let w = text_w(size, s) + 2.0;
@@ -198,6 +177,51 @@ fn label_boxed(content: &mut Content, font: Name, size: f32, x: f32, y: f32, s: 
     content.rect(x - w / 2.0, y - h / 2.0, w, h);
     content.fill_nonzero();
     text(content, font, size, x - w / 2.0 + 1.0, y - size * 0.35, s, 0.0);
+}
+
+/// What the sheet has already been spent on.
+///
+/// Every boxed label paints white behind itself, so without this the last one drawn simply
+/// rubs out whatever it lands on: at Kennedy the taxiway letters are placed after the runway
+/// designators, and PCP sat squarely across 13R. Nothing here moves a label far -- a taxiway
+/// letter a hundred points from its taxiway is worse than none -- so a label that cannot find
+/// room within a box or two of where it belongs is left off instead.
+#[derive(Default)]
+struct Taken {
+    boxes: Vec<(f32, f32, f32, f32)>,
+}
+
+impl Taken {
+    /// Keep a piece of the sheet clear: the frame's furniture, or a label already placed.
+    fn reserve(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        self.boxes.push((x, y, w, h));
+    }
+
+    fn free(&self, x: f32, y: f32, w: f32, h: f32) -> bool {
+        !self.boxes.iter().any(|(ox, oy, ow, oh)| x < ox + ow && *ox < x + w && y < oy + oh && *oy < y + h)
+    }
+
+    /// A boxed label that gives way. `must` places it wherever it asked to go and keeps the
+    /// room -- for the things a ground chart exists to show, the runway designators, which are
+    /// never worth dropping to make space for a taxiway letter.
+    fn boxed(&mut self, c: &mut Content, font: Name, size: f32, x: f32, y: f32, s: &str, must: bool) -> bool {
+        let (w, h) = (text_w(size, s) + 2.0, size + 1.2);
+        let step = h + 1.5;
+        let places: &[(f32, f32)] = if must {
+            &[(0.0, 0.0)]
+        } else {
+            &[(0.0, 0.0), (0.0, -1.0), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0), (0.0, -2.0), (0.0, 2.0), (-1.5, -1.0), (1.5, -1.0), (-1.5, 1.0), (1.5, 1.0)]
+        };
+        for (dx, dy) in places {
+            let (px, py) = (x + dx * (w / 2.0 + 2.0), y + dy * step);
+            if must || self.free(px - w / 2.0, py - h / 2.0, w, h) {
+                label_boxed(c, font, size, px, py, s);
+                self.reserve(px - w / 2.0, py - h / 2.0, w, h);
+                return true;
+            }
+        }
+        false
+    }
 }
 
 fn circle(content: &mut Content, x: f32, y: f32, r: f32) {
@@ -351,17 +375,15 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
             }
         }
     }
-    // Runway dimensions on the runway, designators at the ends.
-    for f in &runways {
-        let (Some(ct), Some(len)) = (f.geom.centroid(), prop_f64(&f.props, "length")) else { continue };
-        let width = prop_f64(&f.props, "width").unwrap_or(0.0);
-        let brg = prop_f64(&f.props, "brngtrue").unwrap_or(0.0) as f32;
-        let (x, y) = map.pt(ct.0);
-        let label = format!("{:.0} x {:.0} m", len, width);
-        if len as f32 * scale > text_w(7.0, &label) + 40.0 {
-            text_rot(&mut c, FONT, 7.0, x, y, 90.0 - brg, &label, 1.0);
-        }
-    }
+    // Runway designators at the ends. The length and width of each runway are in the table at
+    // the head of the sheet, which is where a chart puts them; writing them a second time up
+    // the runway itself only crowded the middle of the map with what the reader has already
+    // been told.
+    //
+    // The designators go down first and keep their room: everything after them gives way.
+    let mut taken = Taken::default();
+    taken.reserve(x1 - 34.0, y1 - 34.0, 34.0, 34.0); // north arrow
+    taken.reserve(x0 + 4.0, y0 + 4.0, 130.0, 26.0); // scale bar
     for f in &thresholds {
         let (Geometry::Point(p), Some(id)) = (&f.geom, prop_str(&f.props, "idthr")) else { continue };
         let brg = prop_f64(&f.props, "brngtrue").unwrap_or(0.0);
@@ -370,7 +392,7 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
         let l = map.frame.forward(p.0.x, p.0.y);
         let q = Coord { x: l.x - sn * back, y: l.y - cs * back };
         let (x, y) = (map.ox + q.x as f32 * map.scale, map.oy + q.y as f32 * map.scale);
-        label_boxed(&mut c, BOLD, 11.0, x, y, &id);
+        taken.boxed(&mut c, BOLD, 11.0, x, y, &id, true);
     }
     // Taxiway letters: one per designator, on its largest piece.
     let mut best: BTreeMap<String, (f64, Coord<f64>)> = BTreeMap::new();
@@ -389,7 +411,7 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
     }
     for (id, (_, ct)) in &best {
         let (x, y) = map.pt(*ct);
-        label_boxed(&mut c, BOLD, 8.5, x, y, id);
+        taken.boxed(&mut c, BOLD, 8.5, x, y, id, false);
     }
     // Terminal names.
     let mut named: BTreeMap<String, (f64, Coord<f64>)> = BTreeMap::new();
@@ -416,7 +438,7 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
         }
         let (x, y) = map.pt(*ct);
         let short: String = name.chars().take(26).collect::<String>().to_uppercase();
-        label_boxed(&mut c, FONT, 6.5, x, y, &short);
+        taken.boxed(&mut c, FONT, 6.5, x, y, &short, false);
     }
     // Tower and ARP symbols.
     for f in &towers {
