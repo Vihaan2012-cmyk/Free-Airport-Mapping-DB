@@ -56,7 +56,31 @@ pub fn detect_sims() -> Vec<Sim> {
             }
         }
     }
+    // And any Community folder chosen by hand.
+    for c in super::settings::Settings::load().map(|s| s.community_folders).unwrap_or_default() {
+        if c.is_dir() && !out.iter().any(|s| same_folder(&s.community, &c)) {
+            out.push(Sim { name: "Chosen Community folder".to_string(), community: c });
+        }
+    }
     out
+}
+
+/// The same folder, however it is spelled.
+fn same_folder(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// Remember a Community folder chosen by hand, so it is looked in from now on.
+pub fn remember_community_folder(community: &Path) -> Result<()> {
+    let mut s = super::settings::Settings::load().unwrap_or_default();
+    if !s.community_folders.iter().any(|c| same_folder(c, community)) {
+        s.community_folders.push(community.to_path_buf());
+        s.save()?;
+    }
+    Ok(())
 }
 
 /// The A220 map shipped with this program: next to the executable once installed, or

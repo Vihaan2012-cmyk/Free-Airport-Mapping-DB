@@ -28,6 +28,10 @@ pub struct Settings {
     /// Install the X-Plane 12 moving map and serve its route when X-Plane is found.
     #[serde(default = "yes")]
     pub xplane: bool,
+    /// Community folders chosen by hand, for a simulator whose settings file does not say
+    /// where its Community folder is. Looked in as well as the ones found.
+    #[serde(default)]
+    pub community_folders: Vec<PathBuf>,
 }
 
 fn yes() -> bool {
@@ -40,7 +44,7 @@ pub fn app_dir() -> PathBuf {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { version: 1, cache: true, cache_dir: app_dir().join("cache"), limit_mb: 2048, start_on_open: true, navigraph_redirect: false, xplane: true }
+        Settings { version: 1, cache: true, cache_dir: app_dir().join("cache"), limit_mb: 2048, start_on_open: true, navigraph_redirect: false, xplane: true, community_folders: Vec::new() }
     }
 }
 
