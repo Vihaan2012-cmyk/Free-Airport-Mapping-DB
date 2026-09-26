@@ -1,53 +1,36 @@
 # Changelog
 
-## 1.3.2 (2026-09-26)
+## 1.2.5 (2026-09-26) · A320 OANS 1.0.0
 
-**A sharper captain ND.** The Fenix draws each display into a texture of fixed pixels, and
-the captain ND's was 768 x 768: at that size the OANS's small print, runway designators and
-stand numbers were soft. Adding the A320 OANS now also draws that one display at 1536 x
-1536, twice the pixels in each direction, laid out as before. Fenix's own ND scales itself
-to it, and the OANS scales its layout (and the positions of clicks on it) to match; the
-other displays are left as they are. Turning the OANS off puts Fenix's own panel.cfg
-back, 768 and all. A Fenix already patched by 1.3.0 or 1.3.1 gets the sharper ND the next
-time the bridge starts.
-
-## 1.3.1 (2026-09-26)
-
-**Brake to vacate is armed from the OANS**, and has now run from inside it.
-
-- **ARM BTV** on the MAP DATA page of the OANS control panel, in the place of the
-  landing-shift button, arms BTV once an exit is picked (also `L:AMDB_BTV_ARM`). 1.3.0
-  armed it with the autobrake at LO or MED, but the Fenix does not let those arm on the
-  ground, so it could not be armed there at all. The autobrake need not be armed now; any
-  mode that is, MAX included, is pressed off at touchdown, as a finger would, and BTV
-  disarms after each rollout.
-- Tested as a rejected takeoff on JFK 04L: from idle at 105 kt with the exit 1,510 m
-  ahead, it rolled without braking to 196 m out, braked at the 2.0 m/s2 it asked for
-  (1.94-2.09 measured), and let go at 9.9 kt 11 m before the exit.
-- The package build now stops if one of its changes to FlyByWire's code finds nothing to
-  change, instead of leaving it out without a word.
-
-## 1.3.0 (2026-09-26)
-
-**A320 OANS**: an airport moving map on the Fenix A320's captain ND, with brake to
+**A320 OANS 1.0.0**: an airport moving map on the Fenix A320's captain ND, with brake to
 vacate, as Airbus retrofits them to the A320ceo and neo. MSFS 2020 and 2024. Unofficial:
 not made or supported by Fenix Simulations.
 
-  A320-OANS-Setup-<version>.exe     the A320 OANS on its own, with its own small bridge
-  AMDB-Bridge-Setup-<version>.exe   everything, the A320 OANS as a tick box and an option
+  A320-OANS-Setup-1.0.0.exe     the A320 OANS on its own, with its own small bridge
+  AMDB-Bridge-Setup-1.2.5.exe   everything, the A320 OANS as a tick box and an option
 
 - **The display is FlyByWire's A380X OANS**, built from their source at a pinned commit
   (`tools/fenix-oans`): map data panel, context menu, flags and crosses, runway and exit
   selection. The package is GPL-3.0 like FlyByWire's code and credits them; it carries
   none of their fonts or images (the font is Airbus's B612, under the SIL Open Font
   License). Turn the ND range knob anticlockwise past 10 for it, down to 0.2 NM.
-- **Brake to vacate, experimental.** Pick an exit on the OANS and arm autobrake LO or MED:
-  at touchdown BTV presses the autobrake off and brakes itself, no more than the exit
-  needs, reaching it at 10 kt. It lets go at 10 kt, past the exit, or on the parking
-  brake, thrust, the autobrake armed again or the exit cleared.
-- **Nothing of the Fenix's is shipped.** Two gauge lines in its `panel.cfg` and the range
-  knob's OANS positions are added on your own computer, with a backup of each file; off
-  or uninstalled puts them back, and after a Fenix update they are added again.
+- **Brake to vacate, experimental.** Pick an exit on the OANS and press **ARM BTV** on the
+  MAP DATA page of the OANS control panel (also `L:AMDB_BTV_ARM`); the autobrake need not
+  be armed, and the Fenix does not let LO or MED arm on the ground anyway. At touchdown BTV
+  presses any armed autobrake off, as a finger would, and brakes itself, no more than the
+  exit needs, reaching it at 10 kt. It lets go at 10 kt, past the exit, or on the parking
+  brake, thrust, the autobrake or the exit cleared, and disarms after each rollout.
+  Tested as a rejected takeoff on JFK 04L: from idle at 105 kt with the exit 1,510 m
+  ahead, it rolled without braking to 196 m out, braked at the 2.0 m/s2 it asked for
+  (1.94-2.09 measured), and let go at 9.9 kt 11 m before the exit.
+- **A sharp captain ND.** The Fenix draws each display into a texture of fixed pixels,
+  and the captain ND's is 768 x 768, which leaves small print soft. With the A320 OANS
+  that one display is drawn at 1536 x 1536, laid out as before: Fenix's own ND scales
+  itself to it, and the OANS scales its layout, and where clicks land, to match.
+- **Nothing of the Fenix's is shipped.** Two gauge lines and the sharper ND in its
+  `panel.cfg`, and the range knob's OANS positions, are added on your own computer with a
+  backup of each file; off or uninstalled puts them back, and after a Fenix update they
+  are added again.
 - **The standalone download** is a program in the notification area that starts with the
   simulator and serves airports to the OANS only: no other aircraft, no hosts-file
   redirect, no administrator rights. If AMDB Bridge is already serving, it leaves the job
@@ -62,7 +45,7 @@ Airport data:
   runway is an exit to each side, and an exit painted twice (a lead-off and a straight
   line) is offered once. Each is tagged with the runway ends whose landings can take it,
   and the A320 OANS shows only those once a runway is picked.
-- Airports kept on disk from before 1.3.0 are built again the next time they are asked
+- Airports kept on disk from before 1.2.5 are built again the next time they are asked
   for, so they get the new exits too; the first visit takes its 20-40 seconds again.
 
 Also:
@@ -70,6 +53,8 @@ Also:
 - The bridge no longer starts Windows command-line tools to trust its certificate, edit
   the start-up entry, flush DNS or check whether the simulator runs. It asks Windows
   directly, which antivirus behaviour scans had flagged as suspicious.
+- The A320 OANS build stops if one of its changes to FlyByWire's code finds nothing to
+  change, instead of leaving it out without a word.
 
 ## 1.2.1 (2026-09-25)
 
