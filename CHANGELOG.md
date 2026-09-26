@@ -1,5 +1,13 @@
 # Changelog
 
+## A320 OANS 1.0.3 (2026-09-26, installer only)
+
+- **Choose Community folder...** in the A320 OANS menu picks the folder the Fenix A320 is
+  in, for a simulator whose settings file does not lead to it, adds the OANS there, and
+  remembers it: that folder is looked in from then on, by AMDB Bridge too. When the A320
+  OANS starts and finds no Fenix, it asks for the folder straight away (not when the
+  simulator starts it). Choosing the folder above Community works as well.
+
 ## A320 OANS 1.0.2 (2026-09-26, installer only)
 
 - When the installer finds no Fenix it can add the OANS to, its log (`a320-oans.log` in

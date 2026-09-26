@@ -12,6 +12,10 @@
 //!                               `--community PATH` (more than once if wanted) names the
 //!                               Community folder instead of finding it
 //! * `--start-with-sim on|off`   start (or stop starting) with Microsoft Flight Simulator
+//!
+//! Its menu also has "Choose Community folder...", for a simulator whose Community folder
+//! is not where its settings file says; it is offered on start when no Fenix is found.
+//! The simulator starts it with `--from-sim`, and then it does not ask.
 //! * `--quit`                    ask a running copy to exit, and wait for it
 //! * `--uninstall`               remove the package, put the Fenix's files back, and the
 //!                               simulator start-up entry
@@ -97,7 +101,7 @@ mod app {
         if let Some(i) = args.iter().position(|a| a == "--start-with-sim") {
             return start_with_sim(args.get(i + 1).map_or(true, |v| v != "off"));
         }
-        serve()
+        serve(has("--from-sim"))
     }
 
     fn install(named: Vec<PathBuf>) -> i32 {
@@ -148,7 +152,7 @@ mod app {
 
     fn start_with_sim(on: bool) -> i32 {
         let Ok(exe) = std::env::current_exe() else { return 1 };
-        let result = patcher::remove_autostart_as(AUTOSTART).and_then(|_| if on { patcher::install_autostart_as(AUTOSTART, &exe, "") } else { Ok(Vec::new()) });
+        let result = patcher::remove_autostart_as(AUTOSTART).and_then(|_| if on { patcher::install_autostart_as(AUTOSTART, &exe, "--from-sim") } else { Ok(Vec::new()) });
         match result {
             Ok(_) => 0,
             Err(e) => {
@@ -187,13 +191,61 @@ mod app {
         menu: nwg::Menu,
         status: nwg::MenuItem,
         sep: nwg::MenuSeparator,
+        choose: nwg::MenuItem,
         with_sim: nwg::MenuItem,
         open_log: nwg::MenuItem,
         exit: nwg::MenuItem,
         notice: nwg::Notice,
+        folder_dialog: nwg::FileDialog,
     }
 
-    fn serve() -> i32 {
+    fn tell(title: &str, content: &str, icon: nwg::MessageIcons) {
+        nwg::message(&nwg::MessageParams { title, content, buttons: nwg::MessageButtons::Ok, icons: icon });
+    }
+
+    /// Pick a Community folder and add the A320 OANS to the Fenix in it, remembering the
+    /// folder so it is looked in from now on.
+    fn choose_community(ui: &Ui) {
+        if !ui.folder_dialog.run(None::<&nwg::Window>) {
+            return;
+        }
+        let Ok(chosen) = ui.folder_dialog.get_selected_item() else { return };
+        let mut community = PathBuf::from(chosen);
+        // The folder above it (where MSFS keeps Community and Official) will do too.
+        if !desktop::a320_oans_fits(&community) && community.join("Community").is_dir() {
+            community = community.join("Community");
+        }
+        amdbgen::term::info(&format!("Community folder chosen: {}", community.display()));
+        if !desktop::a320_oans_fits(&community) {
+            let why = desktop::fenix_diagnosis(&community);
+            why.iter().for_each(|l| amdbgen::term::info(&format!("  {l}")));
+            tell(
+                "A320 OANS",
+                &format!("There is no Fenix A320 in\n{}\nthat the A320 OANS can be added to.\n\n{}\n\nChoose the Community folder the Fenix A320 is installed in.", community.display(), why.join("\n")),
+                nwg::MessageIcons::Warning,
+            );
+            return;
+        }
+        match desktop::install_a320_oans(&community) {
+            Ok(notes) => {
+                notes.iter().for_each(|n| amdbgen::term::success(n));
+                if let Err(e) = desktop::remember_community_folder(&community) {
+                    amdbgen::term::warn(&format!("could not remember the folder: {e:#}"));
+                }
+                tell(
+                    "A320 OANS",
+                    &format!("The A320 OANS is added to the Fenix A320 in\n{}\n\nRestart Microsoft Flight Simulator, then turn the captain's ND range knob anticlockwise past 10.", community.display()),
+                    nwg::MessageIcons::Info,
+                );
+            }
+            Err(e) => {
+                amdbgen::term::error(&format!("{e:#}"));
+                tell("A320 OANS", &format!("The A320 OANS could not be added:\n\n{e:#}\n\nIs the simulator running? Close it and try again."), nwg::MessageIcons::Error);
+            }
+        }
+    }
+
+    fn serve(from_sim: bool) -> i32 {
         let mutex = unsafe { CreateMutexW(ptr::null_mut(), FALSE, wide(MUTEX).as_ptr()) };
         if mutex.is_null() || unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
             return 0; // already running
@@ -226,10 +278,12 @@ mod app {
             menu: Default::default(),
             status: Default::default(),
             sep: Default::default(),
+            choose: Default::default(),
             with_sim: Default::default(),
             open_log: Default::default(),
             exit: Default::default(),
             notice: Default::default(),
+            folder_dialog: Default::default(),
         };
         let built = (|| -> Result<(), nwg::NwgError> {
             nwg::MessageWindow::builder().build(&mut ui.window)?;
@@ -239,10 +293,12 @@ mod app {
             nwg::Menu::builder().popup(true).parent(&ui.window).build(&mut ui.menu)?;
             nwg::MenuItem::builder().text("A320 OANS is serving airports").disabled(true).parent(&ui.menu).build(&mut ui.status)?;
             nwg::MenuSeparator::builder().parent(&ui.menu).build(&mut ui.sep)?;
+            nwg::MenuItem::builder().text("Choose Community folder...").parent(&ui.menu).build(&mut ui.choose)?;
             nwg::MenuItem::builder().text("Start with Microsoft Flight Simulator").check(patcher::autostart_installed_as(AUTOSTART)).parent(&ui.menu).build(&mut ui.with_sim)?;
             nwg::MenuItem::builder().text("Open log").parent(&ui.menu).build(&mut ui.open_log)?;
             nwg::MenuItem::builder().text("Exit").parent(&ui.menu).build(&mut ui.exit)?;
             nwg::Notice::builder().parent(&ui.window).build(&mut ui.notice)?;
+            nwg::FileDialog::builder().title("The Community folder the Fenix A320 is installed in").action(nwg::FileDialogAction::OpenDirectory).build(&mut ui.folder_dialog)?;
             Ok(())
         })();
         if built.is_err() {
@@ -270,6 +326,7 @@ mod app {
                     unsafe { winapi::um::winuser::GetCursorPos(&mut p) };
                     ui.menu.popup(p.x, p.y);
                 }
+                nwg::Event::OnMenuItemSelected if h == ui.choose.handle => choose_community(&ui),
                 nwg::Event::OnMenuItemSelected if h == ui.with_sim.handle => {
                     let on = !ui.with_sim.checked();
                     if start_with_sim(on) == 0 {
@@ -285,6 +342,24 @@ mod app {
             }
         });
         amdbgen::term::success(&format!("A320 OANS serving on http://127.0.0.1:{}", running.http_port));
+        // No Fenix it can use anywhere it looked: offer to choose the folder, unless the
+        // simulator started it (a question box in the middle of loading would only annoy).
+        let sims = desktop::detect_sims();
+        if !from_sim && !sims.iter().any(|s| desktop::a320_oans_fits(&s.community)) {
+            for sim in &sims {
+                amdbgen::term::info(&format!("{}: looking in {}", sim.name, sim.community.display()));
+                desktop::fenix_diagnosis(&sim.community).iter().for_each(|l| amdbgen::term::info(&format!("{}:   {l}", sim.name)));
+            }
+            let ask = nwg::message(&nwg::MessageParams {
+                title: "A320 OANS",
+                content: "No Fenix A320 was found in your simulator's Community folder.\n\nChoose the Community folder the Fenix A320 is installed in?",
+                buttons: nwg::MessageButtons::YesNo,
+                icons: nwg::MessageIcons::Question,
+            });
+            if ask == nwg::MessageChoice::Yes {
+                choose_community(&ui.borrow());
+            }
+        }
         nwg::dispatch_thread_events();
         nwg::unbind_event_handler(&handler);
         drop(running);
