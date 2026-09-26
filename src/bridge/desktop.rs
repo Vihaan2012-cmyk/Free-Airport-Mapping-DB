@@ -125,6 +125,41 @@ pub fn a320_oans_fits(community: &Path) -> bool {
     !patcher::scan_fenix_oans(community).is_empty()
 }
 
+/// Why the A320 OANS does not fit a Community folder, for the log: each Fenix-looking
+/// folder in it and which of the files the OANS changes it has.
+pub fn fenix_diagnosis(community: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let Ok(rd) = fs::read_dir(community) else {
+        return vec![format!("cannot read {}", community.display())];
+    };
+    let mut fenix: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.file_name().map_or(false, |n| n.to_string_lossy().to_ascii_lowercase().starts_with("fnx"))).collect();
+    fenix.sort();
+    if fenix.is_empty() {
+        out.push("no fnx* folder in it".to_string());
+    }
+    for pkg in fenix {
+        let fnx = pkg.join("SimObjects/Airplanes/FNX_32X");
+        let files = [
+            "Panel/panel.cfg",
+            "model/FNX32X_Interior.xml",
+            "attachments/fnx/Part_Interior_Cockpit/panel/panel.cfg",
+            "attachments/fnx/Part_Interior_Cockpit/model/Cockpit_Behavior.xml",
+        ];
+        let have: Vec<&str> = files.iter().copied().filter(|f| fnx.join(f).is_file()).collect();
+        let name = pkg.file_name().unwrap_or_default().to_string_lossy().to_string();
+        if !fnx.is_dir() {
+            continue; // a livery or another variant
+        }
+        let parts: Vec<String> = fs::read_dir(fnx.join("attachments/fnx")).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect()).unwrap_or_default();
+        out.push(format!(
+            "{name}: FNX_32X has {}; attachments/fnx: {}",
+            if have.is_empty() { "none of the files the OANS changes".to_string() } else { have.join(", ") },
+            if parts.is_empty() { "-".to_string() } else { parts.join(", ") }
+        ));
+    }
+    out
+}
+
 /// The A320 OANS shipped with this program: next to the executable once installed, or
 /// the package in the source tree when run from a build folder.
 pub fn bundled_a320_oans() -> Option<PathBuf> {
