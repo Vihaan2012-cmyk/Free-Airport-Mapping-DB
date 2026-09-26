@@ -52,6 +52,20 @@ pub enum XpState {
     Building,
 }
 
+/// The first generator whose airports are current. Raise it when a change to what is
+/// built should reach airports already kept on disk: older ones are built again the next
+/// time they are asked for. 1.3.0: one runway exit line per exit and landing direction.
+const CURRENT_DATA_FROM: [u64; 3] = [1, 3, 0];
+
+/// The generator an airport kept on disk was built by, when that is older than
+/// `CURRENT_DATA_FROM`.
+fn built_before_current_data(dir: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join("manifest.json")).ok()?;
+    let generator = serde_json::from_str::<Value>(&text).ok()?.get("generator")?.as_str()?.to_string();
+    let version: Vec<u64> = generator.strip_prefix("amdbgen ")?.split('.').map(|p| p.trim().parse().unwrap_or(0)).collect();
+    (version.as_slice() < CURRENT_DATA_FROM.as_slice()).then_some(generator)
+}
+
 pub(crate) fn project_to_local(frame: &LocalFrame, g: &Geometry<f64>) -> Geometry<f64> {
     let f = |c: &Coord<f64>| frame.forward(c.x, c.y);
     let ls = |l: &LineString<f64>| LineString(l.0.iter().map(f).collect());
@@ -127,6 +141,10 @@ impl Store {
             while pipeline::is_building(&icao) && t0.elapsed().as_secs() < 900 {
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
+        }
+        if let Some(old) = built_before_current_data(&dir) {
+            crate::term::start(&format!("[{icao}] Built by {old}, before the current airport data: building it again"));
+            let _ = std::fs::remove_dir_all(&dir);
         }
         if !dir.join("manifest.json").is_file() {
             crate::term::start(&format!("[{icao}] First request for {icao}: building it now"));
@@ -230,5 +248,26 @@ impl Store {
             });
         }
         XpState::Building
+    }
+}
+
+#[cfg(test)]
+mod data_version_tests {
+    use super::*;
+
+    #[test]
+    fn airports_from_before_the_current_data_are_built_again() {
+        let dir = std::env::temp_dir().join(format!("amdb-store-version-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let with = |g: &str| {
+            std::fs::write(dir.join("manifest.json"), format!(r#"{{"generator": "{g}"}}"#)).unwrap();
+            built_before_current_data(&dir)
+        };
+        assert_eq!(with("amdbgen 1.2.1").as_deref(), Some("amdbgen 1.2.1"));
+        assert_eq!(with("amdbgen 0.1.0").as_deref(), Some("amdbgen 0.1.0"));
+        assert_eq!(with("amdbgen 1.3.0"), None);
+        assert_eq!(with("amdbgen 1.10.2"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(built_before_current_data(&dir), None, "nothing built yet is not an old build");
     }
 }

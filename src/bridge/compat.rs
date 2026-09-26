@@ -475,6 +475,9 @@ pub fn convert(feat: &mut AmdbFeature, seq: usize, thresholds: &Thresholds) -> b
         }
         Layer::RunwayExitLine => {
             put("idlin", opt_str(s(&p, "idlin")));
+            // The runway ends whose landings can take it, dot-joined: our own addition, which
+            // the A320 OANS reads to offer only the exits for the runway picked for BTV.
+            put("idthr", opt_str(s(&p, "idthr")));
             put("status", Value::from(1));
             put("color", Value::from(0));
             put("style", Value::from(0));

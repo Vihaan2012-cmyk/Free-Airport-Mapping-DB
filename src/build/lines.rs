@@ -202,6 +202,7 @@ pub fn build(ctx: &mut Ctx) {
             emit_centerline(ctx, ls, false, false, false, name, source::OSM, &edges, &stands, &runway_mp, &runways, &[]);
         }
     }
+    merge_repeated_exits(ctx);
     // OSM holding-position nodes -> short lines perpendicular to the nearest centreline.
     let centerlines: Vec<LineString<f64>> = ctx.layer(Layer::TaxiwayGuidanceLine).iter().filter_map(|f| if let geo_types::Geometry::LineString(l) = &f.geom { Some(l.clone()) } else { None }).collect();
     let holds: Vec<(Coord<f64>, LineKind, Option<String>)> = ctx.src.semantic_lines.iter().filter(|l| matches!(l.kind, LineKind::RunwayHold | LineKind::IlsHold | LineKind::IntersectionHold) && l.pts.len() == 1).map(|l| (ctx.p(l.pts[0]), l.kind, l.name.clone())).collect();
@@ -250,6 +251,149 @@ fn nearest_direction(p: Coord<f64>, lines: &[LineString<f64>]) -> Option<Coord<f
     best.filter(|(d, _)| *d < 60.0).map(|(_, u)| u)
 }
 
+/// How far either side of a runway centreline a painted line counts as on it, in metres.
+const CENTRELINE_BAND_M: f64 = 5.0;
+/// An end this close to the centreline starts an exit, though it stops short of the band.
+const CENTRELINE_REACH_M: f64 = 8.0;
+/// FlyByWire's BTV takes no exit that turns more than this from the landing direction
+/// (OansBrakeToVacateSelection.selectExitFromOans), nor one starting nearer the threshold
+/// than the touchdown zone (BTV_MIN_TOUCHDOWN_ZONE_DISTANCE).
+const EXIT_MAX_TURN_DEG: f64 = 120.0;
+const TOUCHDOWN_ZONE_M: f64 = 400.0;
+
+/// The parts of a line inside a runway that are off its centreline, each with whether it
+/// leaves from the centreline (an exit, returned centreline end first) or not.
+fn off_centreline(seg: &LineString<f64>, rw: &super::RwyGeom) -> Vec<(Vec<Coord<f64>>, bool)> {
+    let (e0, e1) = (rw.ends[0], rw.ends[1]);
+    let len = ops::dist(e0, e1);
+    if len < 1.0 || seg.0.len() < 2 {
+        return Vec::new();
+    }
+    let u = Coord { x: (e1.x - e0.x) / len, y: (e1.y - e0.y) / len };
+    // Signed distance from the centreline.
+    let side = |p: Coord<f64>| (p.x - e0.x) * u.y - (p.y - e0.y) * u.x;
+    let lerp = |a: Coord<f64>, b: Coord<f64>, t: f64| Coord { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) };
+    let mut pieces: Vec<Vec<Coord<f64>>> = Vec::new();
+    let mut cur: Vec<Coord<f64>> = Vec::new();
+    for w in seg.0.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let (da, db) = (side(a), side(b));
+        // Where this step crosses the edges of the band.
+        let mut ts = vec![0.0, 1.0];
+        for level in [CENTRELINE_BAND_M, -CENTRELINE_BAND_M] {
+            if (da - level) * (db - level) < 0.0 {
+                ts.push((level - da) / (db - da));
+            }
+        }
+        ts.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        for t in ts.windows(2) {
+            if t[1] - t[0] < 1e-9 {
+                continue;
+            }
+            let dm = da + (t[0] + t[1]) / 2.0 * (db - da);
+            if dm.abs() > CENTRELINE_BAND_M {
+                if cur.is_empty() {
+                    cur.push(lerp(a, b, t[0]));
+                }
+                cur.push(lerp(a, b, t[1]));
+            } else if !cur.is_empty() {
+                pieces.push(std::mem::take(&mut cur));
+            }
+        }
+    }
+    if !cur.is_empty() {
+        pieces.push(cur);
+    }
+    let reaches = |p: Coord<f64>| side(p).abs() <= CENTRELINE_REACH_M;
+    pieces
+        .into_iter()
+        .filter(|p| p.len() >= 2 && ops::length(&LineString(p.clone())) > 1.0)
+        .filter_map(|mut p| match (reaches(p[0]), reaches(*p.last().unwrap())) {
+            // Leaves the centreline and comes back to it: along the runway, not off it.
+            (true, true) => None,
+            (true, false) => Some((p, true)),
+            (false, true) => {
+                p.reverse();
+                Some((p, true))
+            }
+            (false, false) => Some((p, false)),
+        })
+        .collect()
+}
+
+/// Exits closer than this along the runway, off the same side onto the same taxiway for the
+/// same landings, are one exit painted twice (a lead-off and a right-angle line, say).
+const SAME_EXIT_M: f64 = 60.0;
+
+/// Keep one exit of each repeat -- the longest, which reaches furthest towards the hold
+/// line -- and turn the others into the taxi lines they also are, so the map still draws
+/// them but offers the exit once.
+fn merge_repeated_exits(ctx: &mut Ctx) {
+    let Some(mut exits) = ctx.out.remove(&Layer::RunwayExitLine) else { return };
+    let line = |f: &AmdbFeature| if let geo_types::Geometry::LineString(l) = &f.geom { Some(l.clone()) } else { None };
+    // (taxiway, runway, landings, side, distance along) of each exit.
+    let place = |f: &AmdbFeature| -> Option<(String, String, String, bool, f64)> {
+        let l = line(f)?;
+        let rw = ctx.runways.iter().find(|r| Some(r.idrwy.as_str()) == f.get_str("idrwy"))?;
+        let u = ops::unit_from_heading(rw.heading);
+        let (s, e) = (l.0[0], *l.0.last()?);
+        let along = (s.x - rw.ends[0].x) * u.x + (s.y - rw.ends[0].y) * u.y;
+        let right = (e.x - rw.ends[0].x) * u.y - (e.y - rw.ends[0].y) * u.x > 0.0;
+        Some((f.get_str("idlin").unwrap_or("").to_string(), rw.idrwy.clone(), f.get_str("idthr").unwrap_or("").to_string(), right, along))
+    };
+    exits.sort_by(|a, b| line(b).map_or(0.0, |l| ops::length(&l)).partial_cmp(&line(a).map_or(0.0, |l| ops::length(&l))).unwrap());
+    let mut kept: Vec<(AmdbFeature, Option<(String, String, String, bool, f64)>)> = Vec::new();
+    let mut demoted = Vec::new();
+    for f in exits {
+        let at = place(&f);
+        let repeat = at.as_ref().is_some_and(|(n, r, t, side, along)| {
+            kept.iter().any(|(_, k)| k.as_ref().is_some_and(|(kn, kr, kt, kside, kalong)| kn == n && kr == r && kt == t && kside == side && (kalong - along).abs() < SAME_EXIT_M))
+        });
+        if repeat {
+            demoted.push(f);
+        } else {
+            kept.push((f, at));
+        }
+    }
+    ctx.out.insert(Layer::RunwayExitLine, kept.into_iter().map(|(f, _)| f).collect());
+    for f in demoted {
+        let Some(l) = line(&f) else { continue };
+        let len = ops::length(&l);
+        ctx.push(
+            AmdbFeature::new(Layer::TaxiwayGuidanceLine, l)
+                .with("idlin", f.props.get("idlin").cloned().unwrap_or(serde_json::Value::Null))
+                .with("color", 1)
+                .with("style", 1)
+                .with("direc", 1)
+                .with("lighting", f.props.get("lighting").cloned().unwrap_or(false.into()))
+                .with("ilscrit", false)
+                .with("wingspan", serde_json::Value::Null)
+                .with("length", super::runway::round1(len))
+                .with("source", f.get_str("source").unwrap_or(source::DERIVED).to_string()),
+        );
+    }
+}
+
+/// The runway ends whose landings can take an exit (centreline end first), as FlyByWire's
+/// BTV would accept it: turning off no more than `EXIT_MAX_TURN_DEG` from the landing
+/// direction, and starting beyond the touchdown zone -- measured along the landing, so an
+/// exit behind a displaced threshold is not one.
+fn exit_thresholds(exit: &LineString<f64>, rw: &super::RwyGeom) -> Vec<String> {
+    let start = exit.0[0];
+    let len = ops::length(exit);
+    let lead = ops::heading_deg(start, ops::point_at(exit, len.min(20.0)));
+    (0..2)
+        .filter(|&i| {
+            let landing = if i == 0 { rw.heading } else { rw.heading + 180.0 };
+            let turn = ((lead - landing).rem_euclid(360.0) + 180.0).rem_euclid(360.0) - 180.0;
+            let u = ops::unit_from_heading(landing);
+            let ahead = (start.x - rw.thresholds[i].x) * u.x + (start.y - rw.thresholds[i].y) * u.y;
+            turn.abs() <= EXIT_MAX_TURN_DEG && ahead >= TOUCHDOWN_ZONE_M
+        })
+        .map(|i| rw.idents[i].clone())
+        .collect()
+}
+
 fn nearest_runway(line: &LineString<f64>, runways: &[super::RwyGeom], max_d: f64) -> Option<String> {
     let mid = ops::point_at(line, ops::length(line) / 2.0);
     runways
@@ -275,22 +419,29 @@ fn emit_centerline(
     runways: &[super::RwyGeom],
     holds: &[LineString<f64>],
 ) {
-    // Portions inside a runway are exit lines; a true exit (one end on the runway
-    // centreline) is extended along the same painted line beyond the runway edge up to
-    // the first holding position, or 300 m, as Navigraph captures it.
+    // A painted line inside a runway is an exit where it leaves the runway centreline. The
+    // stretch along the centreline is the runway's own and is dropped, a line across the
+    // runway is an exit to each side, and one that never reaches the centreline stays a
+    // taxi line. Each exit is extended along the same painted line beyond the runway edge
+    // up to the first holding position, or 300 m, as Navigraph captures it.
     let (inside, mut outside) = if runway_mp.0.is_empty() { (vec![], vec![pts]) } else { ops::split_by(runway_mp, &pts) };
-    let mut extended: Vec<LineString<f64>> = Vec::new();
+    let mut exits: Vec<(Vec<Coord<f64>>, &super::RwyGeom)> = Vec::new();
     for seg in inside {
         let rw = nearest_runway(&seg, runways, 200.0).and_then(|id| runways.iter().find(|r| r.idrwy == id));
-        let Some(rw) = rw else { extended.push(seg); continue };
-        let d0 = ops::point_seg_dist(seg.0[0], rw.ends[0], rw.ends[1]);
-        let d1 = ops::point_seg_dist(*seg.0.last().unwrap(), rw.ends[0], rw.ends[1]);
-        if d0.min(d1) > 5.0 || (d0 - d1).abs() < 5.0 {
-            extended.push(seg); // runway crossing or not on the centreline: keep as is
+        let Some(rw) = rw else {
+            outside.push(seg);
             continue;
+        };
+        for (piece, from_centreline) in off_centreline(&seg, rw) {
+            if from_centreline {
+                exits.push((piece, rw));
+            } else {
+                outside.push(LineString(piece));
+            }
         }
-        // Orient centreline end first.
-        let mut exit: Vec<Coord<f64>> = if d0 <= d1 { seg.0.clone() } else { seg.0.iter().rev().copied().collect() };
+    }
+    let mut extended: Vec<(LineString<f64>, &super::RwyGeom)> = Vec::new();
+    for (mut exit, rw) in exits {
         let edge_pt = *exit.last().unwrap();
         // Find the outside piece continuing from the runway edge.
         let idx = outside.iter().position(|o| ops::dist(o.0[0], edge_pt) < 1.0 || ops::dist(*o.0.last().unwrap(), edge_pt) < 1.0);
@@ -331,24 +482,36 @@ fn emit_centerline(
                 outside.push(LineString(remainder));
             }
         }
-        extended.push(LineString(exit));
+        // FlyByWire reads an exit's direction off its first two points, so no repeats.
+        exit.dedup_by(|a, b| ops::dist(*a, *b) < 0.5);
+        if exit.len() >= 2 {
+            extended.push((LineString(exit), rw));
+        }
     }
-    for seg in extended {
-        let idrwy = nearest_runway(&seg, runways, 200.0);
+    for (seg, rw) in extended {
+        let idthr = exit_thresholds(&seg, rw);
+        if idthr.is_empty() {
+            // No landing can take it (it points back up the runway, or starts inside the
+            // touchdown zone): a runway entry, which is a taxi line.
+            outside.push(seg);
+            continue;
+        }
         let (idlin, _) = nearest_edge_name(&seg, edges, 60.0);
-        let exittype = runways
-            .iter()
-            .find(|r| Some(&r.idrwy) == idrwy.as_ref())
-            .map(|r| {
-                let a = ops::heading_deg(seg.0[0], *seg.0.last().unwrap());
-                let mut diff = (a - r.heading).abs() % 180.0;
-                if diff > 90.0 {
-                    diff = 180.0 - diff;
-                }
-                if (20.0..=50.0).contains(&diff) { 2 } else { 1 }
-            })
-            .unwrap_or(1);
-        ctx.push(AmdbFeature::new(Layer::RunwayExitLine, seg).with("idlin", opt(idlin)).with("idrwy", opt(idrwy)).with("exittype", exittype).with("lighting", lighting).with("source", src));
+        let a = ops::heading_deg(seg.0[0], *seg.0.last().unwrap());
+        let mut diff = (a - rw.heading).abs() % 180.0;
+        if diff > 90.0 {
+            diff = 180.0 - diff;
+        }
+        let exittype = if (20.0..=50.0).contains(&diff) { 2 } else { 1 };
+        ctx.push(
+            AmdbFeature::new(Layer::RunwayExitLine, seg)
+                .with("idlin", opt(idlin))
+                .with("idrwy", rw.idrwy.clone())
+                .with("idthr", idthr.join("."))
+                .with("exittype", exittype)
+                .with("lighting", lighting)
+                .with("source", src),
+        );
     }
     for seg in outside {
         let len = ops::length(&seg);
@@ -374,5 +537,78 @@ fn emit_centerline(
                 .with("length", super::runway::round1(len))
                 .with("source", src),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::build::RwyGeom;
+
+    /// A 3 km runway 45 m wide along the y axis: 36 at y=0 (landing north), 18 at y=3000.
+    fn runway() -> RwyGeom {
+        let (e0, e1) = (Coord { x: 0.0, y: 0.0 }, Coord { x: 0.0, y: 3000.0 });
+        RwyGeom {
+            idrwy: "36.18".into(),
+            idents: ["36".into(), "18".into()],
+            ends: [e0, e1],
+            thresholds: [e0, e1],
+            width: 45.0,
+            length: 3000.0,
+            heading: 0.0,
+            poly: ops::rect_between(e0, e1, 45.0),
+            surface: 1,
+            src_index: 0,
+        }
+    }
+
+    fn line(pts: &[(f64, f64)]) -> LineString<f64> {
+        LineString(pts.iter().map(|&(x, y)| Coord { x, y }).collect())
+    }
+
+    #[test]
+    fn a_taxi_route_along_the_centreline_is_not_an_exit() {
+        assert!(off_centreline(&line(&[(0.5, 1000.0), (-0.5, 1120.0)]), &runway()).is_empty());
+    }
+
+    #[test]
+    fn a_lead_off_is_one_exit_starting_where_it_leaves_the_centreline() {
+        // Along the centreline for 100 m, then off to the east.
+        let got = off_centreline(&line(&[(0.0, 900.0), (0.0, 1000.0), (10.0, 1030.0), (22.0, 1050.0)]), &runway());
+        assert_eq!(got.len(), 1);
+        let (p, exit) = &got[0];
+        assert!(*exit);
+        assert!((p[0].x - 5.0).abs() < 1e-6 && p[0].y > 1000.0, "starts at the band edge, beyond the along-runway part: {:?}", p[0]);
+        assert_eq!(*p.last().unwrap(), Coord { x: 22.0, y: 1050.0 });
+    }
+
+    #[test]
+    fn a_crossing_is_an_exit_to_each_side() {
+        let got = off_centreline(&line(&[(-22.0, 1500.0), (22.0, 1500.0)]), &runway());
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|(p, exit)| *exit && p[0].x.abs() == CENTRELINE_BAND_M && p.last().unwrap().x.abs() == 22.0));
+    }
+
+    #[test]
+    fn a_line_that_never_reaches_the_centreline_is_a_taxi_line() {
+        let got = off_centreline(&line(&[(15.0, 10.0), (22.0, 40.0)]), &runway());
+        assert_eq!(got, vec![(vec![Coord { x: 15.0, y: 10.0 }, Coord { x: 22.0, y: 40.0 }], false)]);
+    }
+
+    #[test]
+    fn exits_belong_to_the_landings_that_can_take_them() {
+        let rw = runway();
+        // Right-angle exit mid-runway: either direction.
+        assert_eq!(exit_thresholds(&line(&[(5.0, 1500.0), (80.0, 1500.0)]), &rw), vec!["36", "18"]);
+        // High-speed exit angled north-east: landing north only.
+        assert_eq!(exit_thresholds(&line(&[(5.0, 1500.0), (40.0, 1560.0)]), &rw), vec!["36"]);
+        // The same, but angled back south-east: landing south only.
+        assert_eq!(exit_thresholds(&line(&[(5.0, 1500.0), (40.0, 1440.0)]), &rw), vec!["18"]);
+        // Inside 36's touchdown zone: only 18's landings, 2.8 km on.
+        assert_eq!(exit_thresholds(&line(&[(5.0, 200.0), (80.0, 200.0)]), &rw), vec!["18"]);
+        // Behind a threshold displaced 1 km: not that runway end's, however far from it.
+        let mut displaced = runway();
+        displaced.thresholds[0] = Coord { x: 0.0, y: 1000.0 };
+        assert_eq!(exit_thresholds(&line(&[(5.0, 100.0), (80.0, 100.0)]), &displaced), vec!["18"]);
     }
 }
