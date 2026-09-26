@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.6 (2026-09-26) · A320 OANS 1.0.4
+
+**Community folders, for a simulator whose settings do not lead to its own.** AMDB Bridge
+finds each simulator's Community folder from that simulator's settings file; a user with
+MSFS 2024's packages on another drive got "No Fenix A320 found" and nothing installed.
+
+- **Community folders…** in AMDB Bridge's simulators section shows MSFS 2020's and MSFS
+  2024's Community folder, found or chosen, and changes either. A chosen folder is used in
+  place of the one found, and everything switched on for the other simulator is set up in
+  it straight away: the A220 map, the A320 OANS, the A350 patch and the tablet charts.
+  **Use found** goes back to the one found.
+- The A320 OANS's **Choose Community folder…** does the same for its own simulator, which
+  it tells from the Fenix in the folder chosen (the MSFS 2024 Fenix keeps its cockpit as
+  an attachment). Choosing the folder above Community works as well.
+
 ## A320 OANS 1.0.3 (2026-09-26, installer only)
 
 - **Choose Community folder...** in the A320 OANS menu picks the folder the Fenix A320 is

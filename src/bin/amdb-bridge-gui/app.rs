@@ -3,7 +3,7 @@
 //! closing the window does not stop the maps a flight is using.
 
 use crate::instance::{self, Instance};
-use amdbgen::bridge::desktop::{self, A350State, MapState, XPlaneState};
+use amdbgen::bridge::desktop::{self, A350State, MapState, Sim, SimVersion, XPlaneState};
 use amdbgen::bridge::service::{self, Running};
 use amdbgen::bridge::settings::{dir_size, Settings};
 use native_windows_gui as nwg;
@@ -439,6 +439,17 @@ struct Ui {
 
     sims_header: nwg::Label,
     sims: nwg::ListView,
+    /// Each simulator's Community folder, found or chosen: for a simulator whose settings
+    /// file does not lead to the right one.
+    community_button: nwg::Button,
+    community_dialog: nwg::FileDialog,
+    comm_window: nwg::Window,
+    comm_intro: nwg::Label,
+    comm_label: [nwg::Label; 2],
+    comm_path: [nwg::TextInput; 2],
+    comm_change: [nwg::Button; 2],
+    comm_reset: [nwg::Button; 2],
+    comm_close: nwg::Button,
     install: nwg::Button,
     remove: nwg::Button,
     refresh: nwg::Button,
@@ -561,7 +572,8 @@ impl App {
         nwg::Label::builder().parent(w).text("").position((20, 116)).size((600, 20)).build(&mut ui.detail)?;
 
         // Simulators and aircraft
-        nwg::Label::builder().parent(w).text("Simulators and aircraft").font(Some(&ui.font_header)).position((20, 148)).size((600, 22)).build(&mut ui.sims_header)?;
+        nwg::Label::builder().parent(w).text("Simulators and aircraft").font(Some(&ui.font_header)).position((20, 148)).size((400, 22)).build(&mut ui.sims_header)?;
+        nwg::Button::builder().parent(w).text("Community folders…").font(Some(&ui.font_small)).position((440, 144)).size((180, 26)).build(&mut ui.community_button)?;
         nwg::ListView::builder()
             .parent(w)
             .list_style(nwg::ListViewStyle::Detailed)
@@ -657,6 +669,32 @@ impl App {
         nwg::AnimationTimer::builder().parent(w).interval(Duration::from_millis(400)).active(true).build(&mut ui.timer)?;
         nwg::Notice::builder().parent(w).build(&mut ui.notice)?;
         nwg::FileDialog::builder().title("Where should built airports be kept?").action(nwg::FileDialogAction::OpenDirectory).build(&mut ui.folder_dialog)?;
+        nwg::FileDialog::builder().title("A simulator's Community folder").action(nwg::FileDialogAction::OpenDirectory).build(&mut ui.community_dialog)?;
+
+        // The Community folders window, opened from the simulators' header.
+        nwg::Window::builder()
+            .flags(nwg::WindowFlags::WINDOW)
+            .size((600, 196))
+            .center(true)
+            .title("Community folders")
+            .icon(Some(&ui.icon))
+            .parent(Some(&ui.window))
+            .build(&mut ui.comm_window)?;
+        let cw = &ui.comm_window;
+        nwg::Label::builder()
+            .parent(cw)
+            .text("AMDB Bridge installs into each simulator's Community folder, which it finds from the simulator's own settings. If yours is somewhere else, choose it here: everything switched on is then set up in it.")
+            .position((16, 12))
+            .size((568, 40))
+            .build(&mut ui.comm_intro)?;
+        for (i, version) in SimVersion::ALL.iter().enumerate() {
+            let y = 62 + 42 * i as i32;
+            nwg::Label::builder().parent(cw).text(version.label()).position((16, y + 3)).size((86, 22)).build(&mut ui.comm_label[i])?;
+            nwg::TextInput::builder().parent(cw).readonly(true).position((104, y)).size((290, 25)).build(&mut ui.comm_path[i])?;
+            nwg::Button::builder().parent(cw).text("Change…").position((400, y - 2)).size((88, 29)).build(&mut ui.comm_change[i])?;
+            nwg::Button::builder().parent(cw).text("Use found").position((494, y - 2)).size((90, 29)).build(&mut ui.comm_reset[i])?;
+        }
+        nwg::Button::builder().parent(cw).text("Close").position((494, 152)).size((90, 29)).build(&mut ui.comm_close)?;
 
         *shared.notice.lock().unwrap() = Some(ui.notice.sender());
 
@@ -694,12 +732,14 @@ impl App {
     }
 
     fn bind(self: &Rc<Self>) {
-        let weak = Rc::downgrade(self);
-        let handler = nwg::full_bind_event_handler(&self.ui.window.handle, move |evt, data, handle| {
-            let Some(app) = weak.upgrade() else { return };
-            app.on_event(evt, &data, handle);
-        });
-        self.handlers.borrow_mut().push(handler);
+        for window in [self.ui.window.handle, self.ui.comm_window.handle] {
+            let weak = Rc::downgrade(self);
+            let handler = nwg::full_bind_event_handler(&window, move |evt, data, handle| {
+                let Some(app) = weak.upgrade() else { return };
+                app.on_event(evt, &data, handle);
+            });
+            self.handlers.borrow_mut().push(handler);
+        }
 
         // Colour the status line. Static controls ask their parent for colours, and the
         // library offers no text colour for labels, so answer that question directly.
@@ -728,6 +768,12 @@ impl App {
         use nwg::Event as E;
         let ui = &self.ui;
         match evt {
+            E::OnWindowClose if handle == ui.comm_window.handle => {
+                if let nwg::EventData::OnWindowClose(close) = data {
+                    close.close(false);
+                }
+                ui.comm_window.set_visible(false);
+            }
             E::OnWindowClose if handle == ui.window.handle => {
                 if !self.state.borrow().exiting {
                     if let nwg::EventData::OnWindowClose(close) = data {
@@ -748,6 +794,15 @@ impl App {
 
                 } else if handle == ui.refresh.handle {
                     self.refresh_inventory();
+                } else if handle == ui.community_button.handle {
+                    self.fill_community_window();
+                    ui.comm_window.set_visible(true);
+                } else if handle == ui.comm_close.handle {
+                    ui.comm_window.set_visible(false);
+                } else if let Some(i) = ui.comm_change.iter().position(|b| handle == b.handle) {
+                    self.change_community(SimVersion::ALL[i]);
+                } else if let Some(i) = ui.comm_reset.iter().position(|b| handle == b.handle) {
+                    self.set_community(SimVersion::ALL[i], None);
                 } else if handle == ui.chart_find.handle {
                     self.find_procedures();
                 } else if handle == ui.chart_draw.handle {
@@ -1553,6 +1608,99 @@ impl App {
         self.applies_next_start();
         self.scan_cache();
         self.show_phase();
+    }
+
+    /// Each simulator's Community folder in the window, and whether it was found or chosen.
+    fn fill_community_window(&self) {
+        let sims = desktop::detect_sims();
+        let st = self.state.borrow();
+        for (i, version) in SimVersion::ALL.iter().enumerate() {
+            let chosen = version.chosen(&st.settings).cloned();
+            let text = match (&chosen, sims.iter().find(|s| s.version == *version)) {
+                (Some(c), _) if c.is_dir() => format!("{}  (chosen)", c.display()),
+                (Some(c), _) => format!("{}  (chosen, but not there)", c.display()),
+                (None, Some(found)) => format!("{}  (found)", found.community.display()),
+                (None, None) => "Not found".to_string(),
+            };
+            self.ui.comm_path[i].set_text(&text);
+            self.ui.comm_reset[i].set_enabled(chosen.is_some());
+        }
+    }
+
+    fn change_community(&self, version: SimVersion) {
+        if !self.ui.community_dialog.run(Some(&self.ui.comm_window)) {
+            return;
+        }
+        let Ok(chosen) = self.ui.community_dialog.get_selected_item() else { return };
+        let community = desktop::community_from_pick(&PathBuf::from(chosen));
+        if !community.is_dir() {
+            return;
+        }
+        if let Some(other) = desktop::sim_of_fenix(&community).filter(|v| *v != version) {
+            let go_on = nwg::modal_message(
+                &self.ui.comm_window,
+                &nwg::MessageParams {
+                    title: "Community folders",
+                    content: &format!("The Fenix A320 in\n{}\nis the {} one. Use this folder for {} all the same?", community.display(), other.label(), version.label()),
+                    buttons: nwg::MessageButtons::YesNo,
+                    icons: nwg::MessageIcons::Question,
+                },
+            );
+            if go_on != nwg::MessageChoice::Yes {
+                return;
+            }
+        }
+        self.set_community(version, Some(community));
+    }
+
+    /// Use a chosen Community folder for one simulator (None: the one found), and set up
+    /// everything switched on in a folder that is new to it.
+    fn set_community(&self, version: SimVersion, folder: Option<PathBuf>) {
+        let before: Vec<PathBuf> = desktop::detect_sims().into_iter().map(|s| s.community).collect();
+        version.set_chosen(&mut self.state.borrow_mut().settings, folder);
+        self.save();
+        match desktop::detect_sims().into_iter().find(|s| s.version == version) {
+            Some(sim) => {
+                amdbgen::term::success(&format!("{} Community folder: {}", version.label(), sim.community.display()));
+                if !before.iter().any(|c| desktop::same_folder(c, &sim.community)) {
+                    self.set_up_community(&sim);
+                }
+            }
+            None => amdbgen::term::warn(&format!("{}: no Community folder found; choose it in Community folders", version.label())),
+        }
+        self.drain_lines_only();
+        self.fill_community_window();
+        self.load_options();
+        self.refresh_inventory();
+    }
+
+    /// Everything that is switched on for the other simulators, in a Community folder new
+    /// to AMDB Bridge: the A220 map, the A320 OANS, the A350 patch and the tablet charts.
+    fn set_up_community(&self, sim: &Sim) {
+        let others: Vec<Sim> = desktop::detect_sims().into_iter().filter(|s| !desktop::same_folder(&s.community, &sim.community)).collect();
+        let note = |what: &str, r: anyhow::Result<Vec<String>>| match r {
+            Ok(notes) => notes.iter().for_each(|n| amdbgen::term::success(&format!("{}: {n}", sim.name))),
+            Err(e) => amdbgen::term::error(&format!("{}: {what}: {e:#}", sim.name)),
+        };
+        if others.iter().any(|s| desktop::a220_map_state(&s.community) != MapState::NotInstalled) {
+            note("A220 map", desktop::install_a220_map(&sim.community));
+        }
+        if is_checked(&self.ui.opt_a320_oans) && desktop::a320_oans_fits(&sim.community) {
+            note("A320 OANS", desktop::install_a320_oans(&sim.community));
+        }
+        if self.state.borrow().settings.navigraph_redirect && desktop::navigraph_ready() {
+            desktop::patch_a350_everywhere().iter().for_each(|n| amdbgen::term::success(n));
+        }
+        if others.iter().any(|s| amdbgen::bridge::patcher::scan_charts(&s.community).iter().any(|(_, _, on)| *on)) {
+            let r = amdbgen::bridge::patcher::patch_charts(&sim.community, amdbgen::bridge::DEFAULT_PORT).map(|files| files.iter().map(|f| format!("tablet charts from the bridge: {}", f.display())).collect());
+            note("tablet charts", r);
+        }
+        if desktop::fenix_in_community(&sim.community) && !desktop::a320_oans_fits(&sim.community) {
+            desktop::fenix_diagnosis(&sim.community).iter().for_each(|l| amdbgen::term::info(&format!("{}: Fenix A320 not recognised: {l}", sim.name)));
+        }
+        if desktop::sim_running() {
+            amdbgen::term::info("Restart the simulator to load what was set up");
+        }
     }
 
     fn change_folder(&self) {
