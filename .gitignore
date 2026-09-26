@@ -10,3 +10,7 @@
 # Downloaded indexes and caches: rebuilt on demand, never committed.
 /amdbgen/
 /lists/build-*.csv
+
+# Fenix OANS build: FlyByWire checkout and npm packages are fetched by tools/fenix-oans/build.mjs
+tools/fenix-oans/.fbw/
+tools/fenix-oans/node_modules/

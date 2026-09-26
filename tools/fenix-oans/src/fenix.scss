@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: GPL-3.0
+//
+// The overlay sits on top of Fenix's own ND gauge: transparent while OANS is off, a full
+// black display while it is on.
+amdb-oans-nd-element,
+#OANS_CONTENT {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 768px;
+  height: 768px;
+  background: transparent;
+}
+
+.amdb-oans-root {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 768px;
+  height: 768px;
+  overflow: hidden;
+  background-color: black;
+}
+
+// The A380X ND is 768x1024 with the control panel in a permanent black strip below the map;
+// Fenix's ND is 768x768, so the panel overlays the lower third of the map instead. The strip
+// itself is see-through and lets the mouse through, and only the panel, while it is open,
+// is black -- otherwise the strip would black out the lower third all the time.
+.amdb-oans-root .oans-control-panel-background {
+  top: 512px !important;
+  z-index: 150;
+  background-color: transparent !important;
+  pointer-events: none;
+}
+
+.amdb-oans-root .oans-control-panel {
+  background-color: #000000;
+  pointer-events: auto;
+}
+
+// The open / close button sits on the strip's top edge, which here is 512, not 768 (the
+// bottom edge of the display, where it could never be seen), and above the open panel.
+.amdb-oans-root [style*="top: 768px"] {
+  top: 512px !important;
+  z-index: 160 !important;
+}
+
+// GS / TAS, wind and range numbers: over the map and its compass (which sits at z-index
+// 99), letting the mouse through to the map.
+.amdb-oans-frame {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 768px;
+  height: 768px;
+  pointer-events: none;
+  z-index: 100;
+}
+
+// FlyByWire slides the map between ND modes and zoom levels with 1 s CSS transitions, set
+// while the OANS may still be hidden. On Fenix the map was then found drawn out of place or
+// not at all; the map moves and zooms at once instead.
+.amdb-oans-root .oanc-container [style*="transition"] {
+  transition: none !important;
+}
+
+// The context menu opens above everything else on the display.
+.amdb-oans-root .mfd-context-menu {
+  z-index: 200;
+}
+
+// BTV's state line, over Fenix's ND and the OANS alike, letting the mouse through.
+.amdb-btv {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 768px;
+  height: 768px;
+  pointer-events: none;
+  z-index: 170;
+}

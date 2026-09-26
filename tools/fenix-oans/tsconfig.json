@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "esnext",
+    "moduleResolution": "node",
+    "jsx": "react",
+    "jsxFactory": "FSComponent.buildComponent",
+    "jsxFragmentFactory": "FSComponent.Fragment",
+    "strict": false,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@flybywiresim/fbw-sdk": [".fbw/fbw-common/src/systems/index.ts"],
+      "@flybywiresim/oanc": [".fbw/fbw-common/src/systems/instruments/src/OANC/index.ts"],
+      "@flybywiresim/msfs-avionics-common": [".fbw/fbw-common/src/systems/instruments/src/MsfsAvionicsCommon/index.ts"],
+      "@a380x/*": [".fbw/fbw-a380x/src/systems/instruments/src/*"],
+      "@fbw-nd/*": [".fbw/fbw-common/src/systems/instruments/src/ND/*"]
+    }
+  },
+  "include": ["src"]
+}

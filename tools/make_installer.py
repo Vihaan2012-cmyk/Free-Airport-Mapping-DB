@@ -3,6 +3,7 @@
   dist/AMDB-Bridge-Setup-<version>.exe   everything, as an installer
   dist/AMDB-Navdata-Setup-<version>.exe  the converter on its own, as an installer
   dist/AMDB-Navdata-<version>.zip        the same, as a zip to unpack anywhere
+  dist/A320-OANS-Setup-<version>.exe     the Fenix A320 OANS on its own, with its own bridge
 
 Compiles the release binaries, refreshes the A220 map package's layout.json, runs Inno
 Setup's compiler on installer/amdb-bridge.iss, and packs the converter separately.
@@ -87,10 +88,16 @@ def main():
 
     # layout.json lists every file with its size, so it has to be rebuilt after any change.
     run([sys.executable, os.path.join("tools", "build_a220_amm.py"), "--dry-run"], stdout=subprocess.DEVNULL)
-    run(["cargo", "build", "--release", "--locked", "--bin", "amdb-bridge-gui", "--bin", "amdb-bridge", "--bin", "amdbgen", "--bin", "amdb-navdata", "--bin", "amdb-navdata-gui"])
+    # The A320 OANS is built from FlyByWire's source by its own script, which also writes
+    # its layout.json; the installer ships whatever that last built.
+    if not os.path.isfile(os.path.join(ROOT, "packages", "msfs-a320-oans", "html_ui", "Pages", "VCockpit", "Instruments", "amdb-oans", "oans-nd.js")):
+        print("The A320 OANS is not built. Build it with:  cd tools/fenix-oans && npm install && node build.mjs")
+        return 1
+    run(["cargo", "build", "--release", "--locked", "--bin", "amdb-bridge-gui", "--bin", "amdb-bridge", "--bin", "amdbgen", "--bin", "amdb-navdata", "--bin", "amdb-navdata-gui", "--bin", "a320-oans"])
     stage_webview2_loader()
     run([compiler, f"/DAppVersion={v}", "/Q", os.path.join("installer", "amdb-bridge.iss")])
     run([compiler, f"/DAppVersion={v}", "/Q", os.path.join("installer", "amdb-navdata.iss")])
+    run([compiler, f"/DAppVersion={v}", "/Q", os.path.join("installer", "a320-oans.iss")])
 
     out = os.path.join(ROOT, "dist", f"AMDB-Bridge-Setup-{v}.exe")
     print(f"\nBuilt {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
@@ -98,6 +105,8 @@ def main():
     print(f"Built {z} ({os.path.getsize(z) / 1e6:.1f} MB)")
     n = os.path.join(ROOT, "dist", f"AMDB-Navdata-Setup-{v}.exe")
     print(f"Built {n} ({os.path.getsize(n) / 1e6:.1f} MB)")
+    a = os.path.join(ROOT, "dist", f"A320-OANS-Setup-{v}.exe")
+    print(f"Built {a} ({os.path.getsize(a) / 1e6:.1f} MB)")
     return 0
 
 NAVDATA_README = "AMDB Navdata {v}\n\nThe navigation-data converter on its own.\n\n  AMDB Navdata.exe   a window: tick the aeroplane, press Convert\n  amdb-navdata.exe   the same converter on the command line\n\nIt reads the navigation data Microsoft Flight Simulator already has on this computer\nand writes it into the database an add-on aircraft reads, so the aeroplane flies on\ncurrent data instead of whatever AIRAC cycle it shipped with.\n\nNothing is downloaded and nothing licensed is redistributed: the data is the\nsimulator's own, and it stays on this machine. The aircraft's database is never\noverwritten without a backup being kept beside it first.\n\n  See what would be written, touching nothing:\n    amdb-navdata --to dfd --from-sim --cycle 2609 --dry-run\n\n  Write a Navigraph-layout database (iniBuilds A350, Synaptic A220, PMDG 737 and 777):\n    amdb-navdata --to dfd --from-sim --cycle 2609 --out navdata.db3\n\n  Replace the Fenix A320's own, keeping a backup beside it:\n    amdb-navdata --to fenix --from-sim --cycle 2609 --in-place\n\n  amdb-navdata --help  for the rest.\n\nThe window reads FS2024. FS2020 gives more procedures, and the command line will\nread it: add --sim fs2020.\n\nThis is the same converter as `amdbgen navdata`, which the full AMDB Bridge installer\nstill carries. Take this one if the converter is all you want.\n\nNOT FOR REAL-WORLD NAVIGATION.\n"

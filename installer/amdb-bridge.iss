@@ -48,6 +48,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "a220map"; Description: "Install the airport moving map for the Synaptic A220 into Microsoft Flight Simulator 2020 and 2024"; GroupDescription: "Simulators:"
+Name: "a320oans"; Description: "Add the A320 OANS airport moving map to the Fenix A320's captain navigation display"; GroupDescription: "Simulators:"
 Name: "a350"; Description: "Set up the iniBuilds A350 and FlyByWire A380X airport maps (Windows asks for administrator permission)"; GroupDescription: "Simulators:"
 Name: "startup"; Description: "Open AMDB Bridge in the notification area when Windows starts"; GroupDescription: "Starting up:"; Flags: unchecked
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -58,6 +59,7 @@ Source: "{#Root}\target\release\WebView2Loader.dll"; DestDir: "{app}"; Flags: ig
 Source: "{#Root}\target\release\amdb-bridge.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\target\release\amdbgen.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\packages\msfs-a220-amm\*"; DestDir: "{app}\msfs\zzz-amdb-a220-amm"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#Root}\packages\msfs-a320-oans\*"; DestDir: "{app}\msfs\amdb-a320-oans"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#Root}\tools\xplane\amdb_oans.lua"; DestDir: "{app}\xplane"; Flags: ignoreversion
 Source: "{#Root}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -69,6 +71,9 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 
 [Run]
 Filename: "{app}\{#AppExe}"; Parameters: "--install-a220"; StatusMsg: "Installing the A220 moving map..."; Tasks: a220map; Flags: runhidden waituntilterminated
+Filename: "{app}\{#AppExe}"; Parameters: "--install-a320-oans"; StatusMsg: "Adding the A320 OANS to the Fenix A320..."; Tasks: a320oans; Flags: runhidden waituntilterminated
+; Unticked, a copy already in the simulator is still brought up to this version.
+Filename: "{app}\{#AppExe}"; Parameters: "--update-a320-oans"; StatusMsg: "Updating the A320 OANS..."; Tasks: not a320oans; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Parameters: "--setup-navigraph on"; StatusMsg: "Setting up the A350 and A380X..."; Tasks: a350; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Parameters: "--run-at-login on"; Tasks: startup; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Description: "Open AMDB Bridge now"; Flags: postinstall nowait skipifsilent

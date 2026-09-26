@@ -1,5 +1,49 @@
 # Changelog
 
+## 1.3.0 (2026-09-26)
+
+**A320 OANS**: an airport moving map on the Fenix A320's captain ND, with brake to
+vacate, as Airbus retrofits them to the A320ceo and neo. MSFS 2020 and 2024. Unofficial:
+not made or supported by Fenix Simulations.
+
+  A320-OANS-Setup-<version>.exe     the A320 OANS on its own, with its own small bridge
+  AMDB-Bridge-Setup-<version>.exe   everything, the A320 OANS as a tick box and an option
+
+- **The display is FlyByWire's A380X OANS**, built from their source at a pinned commit
+  (`tools/fenix-oans`): map data panel, context menu, flags and crosses, runway and exit
+  selection. The package is GPL-3.0 like FlyByWire's code and credits them; it carries
+  none of their fonts or images (the font is Airbus's B612, under the SIL Open Font
+  License). Turn the ND range knob anticlockwise past 10 for it, down to 0.2 NM.
+- **Brake to vacate, experimental.** Pick an exit on the OANS and arm autobrake LO or MED:
+  at touchdown BTV presses the autobrake off and brakes itself, no more than the exit
+  needs, reaching it at 10 kt. It lets go at 10 kt, past the exit, or on the parking
+  brake, thrust, the autobrake armed again or the exit cleared.
+- **Nothing of the Fenix's is shipped.** Two gauge lines in its `panel.cfg` and the range
+  knob's OANS positions are added on your own computer, with a backup of each file; off
+  or uninstalled puts them back, and after a Fenix update they are added again.
+- **The standalone download** is a program in the notification area that starts with the
+  simulator and serves airports to the OANS only: no other aircraft, no hosts-file
+  redirect, no administrator rights. If AMDB Bridge is already serving, it leaves the job
+  to it.
+
+Airport data:
+
+- **One exit per exit.** Runway exit lines were served in pieces as X-Plane paints them,
+  so an exit could be offered two or three times, and the taxi route painted along the
+  runway centreline came out as exits too. Each exit is now one line from the centreline
+  to the hold line, the stretch along the centreline is left out, a taxiway crossing the
+  runway is an exit to each side, and an exit painted twice (a lead-off and a straight
+  line) is offered once. Each is tagged with the runway ends whose landings can take it,
+  and the A320 OANS shows only those once a runway is picked.
+- Airports kept on disk from before 1.3.0 are built again the next time they are asked
+  for, so they get the new exits too; the first visit takes its 20-40 seconds again.
+
+Also:
+
+- The bridge no longer starts Windows command-line tools to trust its certificate, edit
+  the start-up entry, flush DNS or check whether the simulator runs. It asks Windows
+  directly, which antivirus behaviour scans had flagged as suspicious.
+
 ## 1.2.1 (2026-09-25)
 
 Emergency fix: **AMDB Bridge.exe could not start.**

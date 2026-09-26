@@ -107,6 +107,107 @@ pub fn a220_in_community(community: &Path) -> bool {
     fs::read_dir(community).map_or(false, |rd| rd.flatten().any(|e| e.file_name().to_string_lossy().to_ascii_lowercase().starts_with("synaptic-aircraft-a220")))
 }
 
+/// Folder name of the A320 OANS in a Community folder.
+pub const A320_OANS_FOLDER: &str = "amdb-a320-oans";
+
+/// Earlier names of the A320 OANS package, removed when it is installed or removed so that
+/// two copies never load at once.
+const A320_OANS_OLD_FOLDERS: [&str; 1] = ["zzz-amdb-fenix-oans"];
+
+/// The Fenix A320 is in this Community folder.
+pub fn fenix_in_community(community: &Path) -> bool {
+    fs::read_dir(community).map_or(false, |rd| rd.flatten().any(|e| e.file_name().to_string_lossy().to_ascii_lowercase().starts_with("fnx-aircraft-320")))
+}
+
+/// The Fenix in this Community folder is one the A320 OANS can be added to: one whose
+/// panel.cfg and cockpit behaviours are where the MSFS 2020 or MSFS 2024 Fenix keeps them.
+pub fn a320_oans_fits(community: &Path) -> bool {
+    !patcher::scan_fenix_oans(community).is_empty()
+}
+
+/// The A320 OANS shipped with this program: next to the executable once installed, or
+/// the package in the source tree when run from a build folder.
+pub fn bundled_a320_oans() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let installed = dir.join("msfs").join(A320_OANS_FOLDER);
+    if installed.join("manifest.json").is_file() {
+        return Some(installed);
+    }
+    dir.ancestors().map(|a| a.join("packages").join("msfs-a320-oans")).find(|p| p.join("manifest.json").is_file())
+}
+
+/// Whether the A320 OANS is in one Community folder, and at which version.
+pub fn a320_oans_state(community: &Path) -> MapState {
+    let dest = community.join(A320_OANS_FOLDER);
+    let Some(installed) = package_version(&dest) else { return MapState::NotInstalled };
+    match bundled_a320_oans().and_then(|b| package_version(&b)) {
+        Some(available) if newer(&available, &installed) => MapState::Outdated { installed, available },
+        _ => MapState::Installed(installed),
+    }
+}
+
+/// The Fenix in this Community folder still has the lines that load the A320 OANS. A
+/// Fenix update replaces the files they were added to, so they can go missing.
+pub fn fenix_loads_a320_oans(community: &Path) -> bool {
+    let files = patcher::scan_fenix_oans(community);
+    !files.is_empty() && files.iter().all(|(_, _, patched)| *patched)
+}
+
+/// Install (or update) the A320 OANS into one Community folder and add it to the Fenix
+/// there. Returns what was done, one line per step, for the activity log.
+pub fn install_a320_oans(community: &Path) -> Result<Vec<String>> {
+    let src = bundled_a320_oans().ok_or_else(|| anyhow!("the A320 OANS files are missing from this installation - reinstall AMDB Bridge"))?;
+    if !a320_oans_fits(community) {
+        return Err(anyhow!("no Fenix A320 in {} that the A320 OANS can be added to (its cockpit files are not where the MSFS 2020 or 2024 Fenix keeps them)", community.display()));
+    }
+    let mut notes = Vec::new();
+    for old in A320_OANS_OLD_FOLDERS {
+        let old = community.join(old);
+        if old.exists() {
+            fs::remove_dir_all(&old).with_context(|| format!("remove the earlier OANS package {} (is the simulator running?)", old.display()))?;
+        }
+    }
+    let dest = community.join(A320_OANS_FOLDER);
+    if dest.exists() {
+        fs::remove_dir_all(&dest).with_context(|| format!("remove the old A320 OANS in {} (is the simulator running?)", dest.display()))?;
+    }
+    copy_dir(&src, &dest)?;
+    notes.push(format!("A320 OANS {} installed in {}", package_version(&dest).unwrap_or_default(), community.display()));
+    // The package adds its own files and replaces nothing. What makes the Fenix load them
+    // is two gauge lines in its panel.cfg and the range knob's OANS positions, in the
+    // aircraft's own files: a backup of each is kept beside it and removing the OANS puts
+    // them back.
+    for f in patcher::patch_fenix_oans(community, false)? {
+        notes.push(format!("OANS added to the Fenix (backup kept): {}", f.path.display()));
+    }
+    Ok(notes)
+}
+
+/// Add the A320 OANS to the Fenix again where it is installed but a Fenix update has
+/// replaced the files it was added to. Returns the files patched.
+pub fn repatch_a320_oans(community: &Path) -> Result<Vec<PathBuf>> {
+    if !community.join(A320_OANS_FOLDER).join("manifest.json").is_file() {
+        return Ok(Vec::new());
+    }
+    Ok(patcher::patch_fenix_oans(community, false)?.into_iter().map(|f| f.path).collect())
+}
+
+/// Remove the A320 OANS from one Community folder and put the Fenix's files back.
+/// Returns false when it was not installed there.
+pub fn remove_a320_oans(community: &Path) -> Result<bool> {
+    patcher::unpatch_fenix_oans(community)?;
+    let mut was = false;
+    for folder in std::iter::once(A320_OANS_FOLDER).chain(A320_OANS_OLD_FOLDERS) {
+        let dest = community.join(folder);
+        if dest.exists() {
+            fs::remove_dir_all(&dest).with_context(|| format!("remove {} (is the simulator running?)", dest.display()))?;
+            was = true;
+        }
+    }
+    Ok(was)
+}
+
 fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst).with_context(|| format!("create {}", dst.display()))?;
     for entry in fs::read_dir(src).with_context(|| format!("read {}", src.display()))? {
@@ -216,19 +317,106 @@ pub fn xplane_state() -> Option<(PathBuf, XPlaneState)> {
     Some((root, state))
 }
 
+#[cfg(not(windows))]
 fn quiet(program: &str) -> Command {
     super::quiet_command(program)
 }
 
+/// A NUL-terminated UTF-16 string for the Win32 wide-character APIs.
+#[cfg(windows)]
+fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(not(windows))]
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+#[cfg(windows)]
+const RUN_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_VALUE: &str = "AMDB Bridge";
 
+/// The standalone A320 OANS download is installed, for this user or for everyone: its
+/// installer's uninstall entry (the AppId in installer/a320-oans.iss) is there.
+#[cfg(windows)]
+pub fn standalone_a320_oans_installed() -> bool {
+    use winapi::shared::winerror::ERROR_SUCCESS;
+    use winapi::um::winnt::KEY_READ;
+    use winapi::um::winreg::{RegCloseKey, RegOpenKeyExW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    let sub = wide(r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{8C3E51A7-4F2B-4D9A-B6E0-71A5D2C9F413}_is1");
+    [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE].into_iter().any(|root| unsafe {
+        let mut hkey = std::ptr::null_mut();
+        let found = RegOpenKeyExW(root, sub.as_ptr(), 0, KEY_READ, &mut hkey) == ERROR_SUCCESS as i32;
+        if found {
+            RegCloseKey(hkey);
+        }
+        found
+    })
+}
+
+#[cfg(not(windows))]
+pub fn standalone_a320_oans_installed() -> bool {
+    false
+}
+
 /// AMDB Bridge opens when Windows starts.
+#[cfg(windows)]
+pub fn run_at_login() -> bool {
+    use winapi::shared::winerror::ERROR_SUCCESS;
+    use winapi::um::winnt::KEY_READ;
+    use winapi::um::winreg::{RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER};
+    let sub = wide(RUN_SUBKEY);
+    let value = wide(RUN_VALUE);
+    unsafe {
+        let mut hkey = std::ptr::null_mut();
+        if RegOpenKeyExW(HKEY_CURRENT_USER, sub.as_ptr(), 0, KEY_READ, &mut hkey) != ERROR_SUCCESS as i32 {
+            return false;
+        }
+        let status = RegQueryValueExW(hkey, value.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
+        RegCloseKey(hkey);
+        status == ERROR_SUCCESS as i32
+    }
+}
+
+/// AMDB Bridge opens when Windows starts.
+#[cfg(not(windows))]
 pub fn run_at_login() -> bool {
     quiet("reg").args(["query", RUN_KEY, "/v", RUN_VALUE]).output().map_or(false, |o| o.status.success())
 }
 
 /// Open (or stop opening) `exe --tray` when Windows starts, for this user only.
+#[cfg(windows)]
+pub fn set_run_at_login(on: bool, exe: &Path) -> Result<()> {
+    use winapi::shared::winerror::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+    use winapi::um::winnt::{KEY_SET_VALUE, REG_SZ};
+    use winapi::um::winreg::{RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY_CURRENT_USER};
+    let sub = wide(RUN_SUBKEY);
+    let value = wide(RUN_VALUE);
+    unsafe {
+        let mut hkey = std::ptr::null_mut();
+        if RegOpenKeyExW(HKEY_CURRENT_USER, sub.as_ptr(), 0, KEY_SET_VALUE, &mut hkey) != ERROR_SUCCESS as i32 {
+            // No key means nothing to remove; only being asked to add is then a failure.
+            return if on { Err(anyhow!("could not open the Windows start-up registry key")) } else { Ok(()) };
+        }
+        let status = if on {
+            // REG_SZ data carries its own terminating NUL, so the whole wide string counts.
+            let data = wide(&format!("\"{}\" --tray", exe.display()));
+            RegSetValueExW(hkey, value.as_ptr(), 0, REG_SZ, data.as_ptr() as *const u8, (data.len() * 2) as u32)
+        } else {
+            match RegDeleteValueW(hkey, value.as_ptr()) {
+                // Absent already is the state asked for, not a failure.
+                s if s == ERROR_FILE_NOT_FOUND as i32 => ERROR_SUCCESS as i32,
+                s => s,
+            }
+        };
+        RegCloseKey(hkey);
+        if status != ERROR_SUCCESS as i32 {
+            return Err(anyhow!("could not change the Windows start-up entry (registry error {status})"));
+        }
+    }
+    Ok(())
+}
+
+/// Open (or stop opening) `exe --tray` when Windows starts, for this user only.
+#[cfg(not(windows))]
 pub fn set_run_at_login(on: bool, exe: &Path) -> Result<()> {
     let out = if on {
         let command = format!("\"{}\" --tray", exe.display());
@@ -354,6 +542,39 @@ pub fn a380x_in_community(community: &Path) -> bool {
 
 /// A Microsoft Flight Simulator is running. It reads Community packages only at start,
 /// so a map installed now appears after the next restart.
+#[cfg(windows)]
+pub fn sim_running() -> bool {
+    use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
+    use winapi::um::tlhelp32::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == INVALID_HANDLE_VALUE {
+            return false;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut found = false;
+        if Process32FirstW(snap, &mut entry) != 0 {
+            loop {
+                let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
+                let name = String::from_utf16_lossy(&entry.szExeFile[..len]).to_ascii_lowercase();
+                if name == "flightsimulator.exe" || name == "flightsimulator2024.exe" {
+                    found = true;
+                    break;
+                }
+                if Process32NextW(snap, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snap);
+        found
+    }
+}
+
+/// A Microsoft Flight Simulator is running. It reads Community packages only at start,
+/// so a map installed now appears after the next restart.
+#[cfg(not(windows))]
 pub fn sim_running() -> bool {
     quiet("tasklist").args(["/NH", "/FO", "CSV"]).output().map_or(false, |o| {
         let list = String::from_utf8_lossy(&o.stdout).to_ascii_lowercase();
@@ -391,7 +612,7 @@ pub fn reveal(path: &Path) {
 }
 
 /// Undo everything the app may have changed outside its own folder, for the uninstaller:
-/// the A220 map in every simulator (putting back what it displaced), the start-up
+/// the A220 map and the A320 OANS in every simulator (putting back what they changed), the start-up
 /// entries, the A350 patch, the hosts-file redirect and the certificate. Each step runs
 /// even if an earlier one fails; the failures come back as text.
 pub fn uninstall_cleanup() -> Vec<String> {
@@ -403,6 +624,10 @@ pub fn uninstall_cleanup() -> Vec<String> {
     };
     for sim in detect_sims() {
         note(remove_a220_map(&sim.community).map(|_| ()), &format!("remove the A220 map from {}", sim.name));
+        // The standalone A320 OANS download uses the same package; it stays while that is installed.
+        if !standalone_a320_oans_installed() {
+            note(remove_a320_oans(&sim.community).map(|_| ()), &format!("remove the A320 OANS from {}", sim.name));
+        }
         note(patcher::unpatch(&sim.community).map(|_| ()), &format!("restore patched aircraft in {}", sim.name));
     }
     note(patcher::remove_autostart().map(|_| ()), "remove the simulator start-up entry");
@@ -453,6 +678,45 @@ mod tests {
         assert!(remove_a220_map(&community).unwrap());
         assert!(gm5.join("manifest.json").is_file());
         assert_eq!(a220_map_state(&community), MapState::NotInstalled);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a320_oans_goes_into_the_fenix_and_comes_out_cleanly() {
+        if bundled_a320_oans().is_none() {
+            // Only meaningful where the package sits in the source tree above the test binary.
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("amdb-a320-oans-{}", std::process::id()));
+        let community = root.join("Community");
+        let fenix = community.join("fnx-aircraft-320").join("SimObjects/Airplanes/FNX_32X");
+        let (panel, model) = (fenix.join("Panel/panel.cfg"), fenix.join("model/FNX32X_Interior.xml"));
+        let panel_text = "[VCockpit02]\nsize_mm=768,768\npixel_size=768,768\ntexture=$A320_ND_Captain\nhtmlgauge00=B, 0,0,768,768\n\n[VPainting01]\nsize_mm=605,128\n";
+        let model_text = "\t<UseTemplate Name=\"FNX32X_Interact_Knob_Increment_Template\">\n\t\t<ANIM_NAME>EFIS_1_Range_Selector_Knob</ANIM_NAME>\n\t</UseTemplate>\n";
+        for (path, text) in [(&panel, panel_text), (&model, model_text)] {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        let old = community.join("zzz-amdb-fenix-oans");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("manifest.json"), "{}").unwrap();
+
+        install_a320_oans(&community).unwrap();
+        assert!(matches!(a320_oans_state(&community), MapState::Installed(_)));
+        assert!(fenix_loads_a320_oans(&community));
+        assert!(!old.exists(), "the earlier package would load alongside");
+        assert!(fs::read_to_string(&panel).unwrap().contains("amdb-oans/oans-nd.html"));
+
+        // A Fenix update puts its own files back; serving adds the OANS again.
+        fs::write(&panel, panel_text).unwrap();
+        assert!(!fenix_loads_a320_oans(&community));
+        assert_eq!(repatch_a320_oans(&community).unwrap(), vec![panel.clone()]);
+        assert!(fenix_loads_a320_oans(&community));
+
+        assert!(remove_a320_oans(&community).unwrap());
+        assert_eq!(a320_oans_state(&community), MapState::NotInstalled);
+        assert_eq!(fs::read_to_string(&panel).unwrap(), panel_text);
+        assert_eq!(fs::read_to_string(&model).unwrap(), model_text);
         let _ = fs::remove_dir_all(&root);
     }
 }

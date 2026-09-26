@@ -1,0 +1,22 @@
+{
+  "private": true,
+  "name": "a320-oans-build",
+  "license": "GPL-3.0",
+  "dependencies": {
+    "@flybywiresim/api-client": "0.16.2",
+    "@microsoft/msfs-sdk": "2.3.3",
+    "@sentry/browser": "6.19.7",
+    "@sentry/integrations": "6.19.7",
+    "@sentry/tracing": "6.19.7",
+    "@turf/turf": "7.2.0",
+    "json5": "2.2.3",
+    "msfs-geo": "0.1.0-alpha5",
+    "navigraph": "1.4.3",
+    "semver": "7.5.4",
+    "uuid": "9.0.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.19.9",
+    "sass": "1.69.5"
+  }
+}

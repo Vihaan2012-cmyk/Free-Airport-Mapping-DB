@@ -114,22 +114,75 @@ fn ca_params_for() -> CertificateParams {
     ca_params
 }
 
+/// A NUL-terminated UTF-16 string for the Win32 wide-character APIs.
+#[cfg(windows)]
+fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// The DER bytes of the first certificate block in a PEM document. There is no `pem`
+/// crate in the tree, so the single block is decoded by hand with the base64 dependency.
+#[cfg(windows)]
+fn pem_to_der(pem: &[u8]) -> Result<Vec<u8>> {
+    use base64::Engine;
+    let text = std::str::from_utf8(pem).context("certificate is not UTF-8")?;
+    let b64: String = text
+        .lines()
+        .skip_while(|l| !l.contains("BEGIN CERTIFICATE"))
+        .skip(1)
+        .take_while(|l| !l.contains("END CERTIFICATE"))
+        .flat_map(|l| l.trim().chars())
+        .collect();
+    base64::engine::general_purpose::STANDARD.decode(b64.as_bytes()).context("decode the certificate")
+}
+
 /// Is our CA in the machine trusted-root store?
 #[cfg(windows)]
 pub fn is_trusted() -> bool {
-    super::quiet_command("certutil").args(["-store", "Root"]).output().map(|o| String::from_utf8_lossy(&o.stdout).contains(CA_NAME)).unwrap_or(false)
+    use winapi::um::wincrypt::{
+        CertCloseStore, CertFindCertificateInStore, CertFreeCertificateContext, CertOpenStore, CERT_FIND_SUBJECT_STR_W, CERT_STORE_PROV_SYSTEM_W, CERT_STORE_READONLY_FLAG,
+        CERT_SYSTEM_STORE_LOCAL_MACHINE, PKCS_7_ASN_ENCODING, X509_ASN_ENCODING,
+    };
+    let root = wide("ROOT");
+    let name = wide(CA_NAME);
+    unsafe {
+        let store = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, CERT_SYSTEM_STORE_LOCAL_MACHINE | CERT_STORE_READONLY_FLAG, root.as_ptr() as *const _);
+        if store.is_null() {
+            return false;
+        }
+        let ctx = CertFindCertificateInStore(store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0, CERT_FIND_SUBJECT_STR_W, name.as_ptr() as *const _, std::ptr::null_mut());
+        let found = !ctx.is_null();
+        if found {
+            CertFreeCertificateContext(ctx);
+        }
+        CertCloseStore(store, 0);
+        found
+    }
 }
 
 /// Install the CA into the LocalMachine Root store (needs elevation).
 #[cfg(windows)]
 pub fn trust(m: &Material) -> Result<()> {
+    use winapi::um::wincrypt::{
+        CertAddEncodedCertificateToStore, CertCloseStore, CertOpenStore, CERT_STORE_ADD_REPLACE_EXISTING, CERT_STORE_PROV_SYSTEM_W, CERT_SYSTEM_STORE_LOCAL_MACHINE, PKCS_7_ASN_ENCODING,
+        X509_ASN_ENCODING,
+    };
     if is_trusted() {
         return Ok(());
     }
-    let ca_path = m.dir.join("ca.pem");
-    let out = super::quiet_command("certutil").args(["-addstore", "-f", "Root"]).arg(&ca_path).output().context("run certutil")?;
-    if !out.status.success() {
-        return Err(anyhow!("certutil failed: {}", String::from_utf8_lossy(&out.stdout).trim()));
+    let der = pem_to_der(&m.ca_pem)?;
+    let root = wide("ROOT");
+    unsafe {
+        let store = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, CERT_SYSTEM_STORE_LOCAL_MACHINE, root.as_ptr() as *const _);
+        if store.is_null() {
+            return Err(anyhow!("could not open the Windows trusted root store: {}", std::io::Error::last_os_error()));
+        }
+        let ok = CertAddEncodedCertificateToStore(store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, der.as_ptr(), der.len() as u32, CERT_STORE_ADD_REPLACE_EXISTING, std::ptr::null_mut());
+        let err = std::io::Error::last_os_error();
+        CertCloseStore(store, 0);
+        if ok == 0 {
+            return Err(anyhow!("could not install the certificate into the Windows trusted root store: {err}"));
+        }
     }
     log::info!("installed {CA_NAME} into the Windows trusted root store");
     Ok(())
@@ -138,14 +191,44 @@ pub fn trust(m: &Material) -> Result<()> {
 /// Remove the CA from the store.
 #[cfg(windows)]
 pub fn untrust() -> Result<bool> {
+    use winapi::um::wincrypt::{
+        CertCloseStore, CertDeleteCertificateFromStore, CertDuplicateCertificateContext, CertFindCertificateInStore, CertFreeCertificateContext, CertOpenStore, CERT_FIND_SUBJECT_STR_W,
+        CERT_STORE_PROV_SYSTEM_W, CERT_SYSTEM_STORE_LOCAL_MACHINE, PKCS_7_ASN_ENCODING, X509_ASN_ENCODING,
+    };
+    // Checked read-only first: opening the machine store for writing needs administrator
+    // rights, and the per-user uninstaller runs without them when there is nothing to do.
     if !is_trusted() {
         return Ok(false);
     }
-    let out = super::quiet_command("certutil").args(["-delstore", "Root", CA_NAME]).output().context("run certutil")?;
-    if !out.status.success() {
-        return Err(anyhow!("certutil failed: {}", String::from_utf8_lossy(&out.stdout).trim()));
+    let root = wide("ROOT");
+    let name = wide(CA_NAME);
+    unsafe {
+        let store = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, CERT_SYSTEM_STORE_LOCAL_MACHINE, root.as_ptr() as *const _);
+        if store.is_null() {
+            return Err(anyhow!("could not open the Windows trusted root store: {}", std::io::Error::last_os_error()));
+        }
+        // Every certificate of our name goes, not only the first, matching what
+        // `certutil -delstore` did: a machine may carry more than one from earlier runs.
+        let mut removed = false;
+        loop {
+            let ctx = CertFindCertificateInStore(store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0, CERT_FIND_SUBJECT_STR_W, name.as_ptr() as *const _, std::ptr::null_mut());
+            if ctx.is_null() {
+                break;
+            }
+            // The delete frees the context it is handed, so it takes a duplicate; the one
+            // the search returned is freed on its own.
+            let ok = CertDeleteCertificateFromStore(CertDuplicateCertificateContext(ctx));
+            let err = std::io::Error::last_os_error();
+            CertFreeCertificateContext(ctx);
+            if ok == 0 {
+                CertCloseStore(store, 0);
+                return Err(anyhow!("could not remove the certificate from the Windows trusted root store: {err}"));
+            }
+            removed = true;
+        }
+        CertCloseStore(store, 0);
+        Ok(removed)
     }
-    Ok(true)
 }
 
 // Linux: the CA goes into the system store. Wine, and so Proton, builds its Windows

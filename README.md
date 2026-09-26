@@ -30,6 +30,8 @@ Three programs:
 2. Leave the setup options ticked:
    - **A220 moving map** copies the map into every Microsoft Flight Simulator 2020 and
      2024 it finds. If you had the GM5 A220 map, it is set aside and put back on uninstall.
+   - **A320 OANS** adds an airport moving map to the Fenix A320's captain navigation
+     display, if the Fenix is installed (see [below](#a320-oans-for-the-fenix-a320-msfs)).
    - **A350 and A380X** points Navigraph's map server address at your computer and
      trusts a local certificate, so those aircraft load maps from AMDB Bridge. Windows
      asks for administrator permission once.
@@ -231,6 +233,53 @@ Another A220 moving map that replaces that page would drop those two lines again
 such package is set aside in `_disabled` while ours is installed and put back when it is
 removed.
 
+## A320 OANS for the Fenix A320 (MSFS)
+
+An airport moving map on the Fenix A320's captain ND (MSFS 2020 and 2024): FlyByWire's
+A380X OANS, run as it is, with its map data panel, context menu, flags and crosses, and
+brake to vacate. Airbus retrofits OANS and BTV to the A320ceo and neo. Unofficial: not
+made or supported by Fenix Simulations.
+
+Two ways to get it, from the [releases](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB/releases/latest):
+
+- **`A320-OANS-Setup-<version>.exe`**, the A320 OANS on its own. It installs a small
+  program that sits in the notification area, starts with the simulator, and serves
+  airports to the OANS only: no other aircraft, no redirect, no administrator rights.
+- **`AMDB-Bridge-Setup-<version>.exe`**, everything, with the A320 OANS as a tick box in
+  the installer and an option in the app.
+
+Either way it is its own Community package, `amdb-a320-oans`. With AMDB Bridge it is also
+switched on the command line:
+
+```
+amdb-bridge a320-oans on       # install it and add it to the Fenix, then restart the sim
+amdb-bridge a320-oans status
+amdb-bridge a320-oans off      # remove it and put the Fenix's files back
+```
+
+Turn the captain's ND range knob anticlockwise past 10 for the OANS, and on through 5,
+2, 1, 0.5 and 0.2 NM; clockwise goes back to the ND. It follows the ND mode (ARC, NAV,
+PLAN). Click the map for the context menu, drag to pan. `H:AMDB_OANS_TOGGLE`,
+`H:AMDB_OANS_RANGE_DEC` and `H:AMDB_OANS_RANGE_INC` are there to bind to hardware.
+
+**Brake to vacate** (experimental): pick a runway end and then an exit on the OANS (ND in
+PLAN or NAV) and arm autobrake LO or MED; `BTV <exit>` shows at the top of the ND. At
+touchdown it presses the autobrake off and brakes itself, following FlyByWire's A380X
+BTV law adjusted to the Fenix as measured: no braking while the exit is further than the
+aircraft would roll, then enough to reach the exit at 10 kt. It lets go at 10 kt, past the
+exit, or on the parking brake, thrust, the autobrake armed again or the exit cleared.
+
+Nothing of the Fenix's is replaced or redistributed. Two gauge lines go into its
+`panel.cfg`, and the range knob gets its OANS positions in `FNX32X_Interior.xml`
+(`Cockpit_Behavior.xml` in MSFS 2024), each with a backup beside it. A Fenix update puts
+both files back to its own; the bridge adds the lines again the next time it starts.
+
+The package is built from FlyByWire's source at a pinned commit by
+`tools/fenix-oans/build.mjs` (`npm install && node build.mjs`), and so it is licensed
+under the GPL-3.0, like FlyByWire's aircraft, and credits them in its `README.txt`. It
+carries none of FlyByWire's fonts or images: the font is Airbus's B612 (SIL Open Font
+License) and the flag and cross symbols are its own.
+
 ## X-Plane 12
 
 An A380-style airport moving map in a floating window, drawn by a FlyWithLua script
@@ -419,5 +468,7 @@ charts you already have.
 
 ## Licence
 
-MIT. Generated data derives from OpenStreetMap (ODbL) and the X-Plane Scenery
-Gateway; it is for simulation only and not for real-world navigation.
+MIT, except the A320 OANS (`packages/msfs-a320-oans` and `tools/fenix-oans`), which
+contains FlyByWire Simulations' code and is GPL-3.0. Generated data derives from
+OpenStreetMap (ODbL) and the X-Plane Scenery Gateway; it is for simulation only and not
+for real-world navigation.
