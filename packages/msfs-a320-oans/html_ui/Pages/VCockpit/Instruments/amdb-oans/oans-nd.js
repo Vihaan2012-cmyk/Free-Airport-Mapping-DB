@@ -80719,6 +80719,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.trueAirSpeed = Subject.create("");
       this.halfRange = Subject.create("");
       this.arcView = Subject.create(false);
+      /**
+       * Display pixels per layout pixel. The display is laid out at 768 x 768, as Fenix's ND
+       * is; a panel.cfg that renders the ND texture larger (pixel_size 1536 for sharper text)
+       * gives a bigger page, which this fills by scaling the layout up to it.
+       */
+      this.scale = 1;
     }
     get templateID() {
       return "AmdbOansNd";
@@ -80827,11 +80833,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         if (e.button === 2) {
           press = null;
           if (!onActiveLabel(e)) {
-            this.openContextMenu(e.clientX, e.clientY);
+            this.openContextMenu(e.clientX / this.scale, e.clientY / this.scale);
           }
           return;
         }
-        press = { x: e.clientX, y: e.clientY, sx: e.screenX, sy: e.screenY, onLabel: onActiveLabel(e), moved: false };
+        press = { x: e.clientX / this.scale, y: e.clientY / this.scale, sx: e.screenX, sy: e.screenY, onLabel: onActiveLabel(e), moved: false };
       });
       labels.addEventListener("mousemove", (e) => {
         if (press && Math.hypot(e.screenX - press.sx, e.screenY - press.sy) > 10) {
@@ -80982,8 +80988,24 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     Update() {
       var _a7;
       super.Update();
+      this.fitToDisplay();
       this.backplane.onUpdate();
       (_a7 = this.oansRef.getOrDefault()) == null ? void 0 : _a7.Update();
+    }
+    /** Scale the 768 x 768 layout to the page the display gives this gauge. */
+    fitToDisplay() {
+      const width = window.innerWidth;
+      const scale3 = width > 0 ? width / 768 : 1;
+      if (Math.abs(scale3 - this.scale) < 0.01) {
+        return;
+      }
+      this.scale = scale3;
+      const content = document.getElementById("OANS_CONTENT");
+      if (content) {
+        content.style.transformOrigin = "0 0";
+        content.style.transform = scale3 === 1 ? "" : "scale(".concat(scale3, ")");
+      }
+      reportOnce("display-".concat(width, "px-scale-").concat(scale3.toFixed(2)));
     }
   };
   registerInstrument("amdb-oans-nd-element", AmdbFenixOans);

@@ -94,6 +94,13 @@ class AmdbFenixOans extends BaseInstrument {
 
   private readonly arcView = Subject.create(false);
 
+  /**
+   * Display pixels per layout pixel. The display is laid out at 768 x 768, as Fenix's ND
+   * is; a panel.cfg that renders the ND texture larger (pixel_size 1536 for sharper text)
+   * gives a bigger page, which this fills by scaling the layout up to it.
+   */
+  private scale = 1;
+
   get templateID(): string {
     return 'AmdbOansNd';
   }
@@ -243,11 +250,11 @@ class AmdbFenixOans extends BaseInstrument {
       if (e.button === 2) {
         press = null;
         if (!onActiveLabel(e)) {
-          this.openContextMenu(e.clientX, e.clientY);
+          this.openContextMenu(e.clientX / this.scale, e.clientY / this.scale);
         }
         return;
       }
-      press = { x: e.clientX, y: e.clientY, sx: e.screenX, sy: e.screenY, onLabel: onActiveLabel(e), moved: false };
+      press = { x: e.clientX / this.scale, y: e.clientY / this.scale, sx: e.screenX, sy: e.screenY, onLabel: onActiveLabel(e), moved: false };
     });
     labels.addEventListener('mousemove', (e) => {
       if (press && Math.hypot(e.screenX - press.sx, e.screenY - press.sy) > 10) {
@@ -405,8 +412,25 @@ class AmdbFenixOans extends BaseInstrument {
 
   public Update(): void {
     super.Update();
+    this.fitToDisplay();
     this.backplane.onUpdate();
     this.oansRef.getOrDefault()?.Update();
+  }
+
+  /** Scale the 768 x 768 layout to the page the display gives this gauge. */
+  private fitToDisplay(): void {
+    const width = window.innerWidth;
+    const scale = width > 0 ? width / 768 : 1;
+    if (Math.abs(scale - this.scale) < 0.01) {
+      return;
+    }
+    this.scale = scale;
+    const content = document.getElementById('OANS_CONTENT');
+    if (content) {
+      content.style.transformOrigin = '0 0';
+      content.style.transform = scale === 1 ? '' : `scale(${scale})`;
+    }
+    reportOnce(`display-${width}px-scale-${scale.toFixed(2)}`);
   }
 }
 

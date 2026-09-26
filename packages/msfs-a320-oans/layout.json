@@ -18,7 +18,7 @@
     {
       "path": "html_ui/pages/vcockpit/instruments/amdb-oans/oans-nd.css",
       "size": 33323,
-      "date": 134348927521455398
+      "date": 134348944482616949
     },
     {
       "path": "html_ui/pages/vcockpit/instruments/amdb-oans/oans-nd.html",
@@ -27,8 +27,8 @@
     },
     {
       "path": "html_ui/pages/vcockpit/instruments/amdb-oans/oans-nd.js",
-      "size": 3575591,
-      "date": 134348927521445398
+      "size": 3576583,
+      "date": 134348944482606948
     },
     {
       "path": "html_ui/pages/vcockpit/instruments/amdb-oans/oans-shell.html",
@@ -53,12 +53,12 @@
     {
       "path": "manifest.json",
       "size": 665,
-      "date": 134348927524628697
+      "date": 134348944485639485
     },
     {
       "path": "readme.txt",
-      "size": 3450,
-      "date": 134348927370727033
+      "size": 3560,
+      "date": 134348944415860031
     }
   ]
 }

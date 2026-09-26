@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.2 (2026-09-26)
+
+**A sharper captain ND.** The Fenix draws each display into a texture of fixed pixels, and
+the captain ND's was 768 x 768: at that size the OANS's small print, runway designators and
+stand numbers were soft. Adding the A320 OANS now also draws that one display at 1536 x
+1536, twice the pixels in each direction, laid out as before. Fenix's own ND scales itself
+to it, and the OANS scales its layout (and the positions of clicks on it) to match; the
+other displays are left as they are. Turning the OANS off puts Fenix's own panel.cfg
+back, 768 and all. A Fenix already patched by 1.3.0 or 1.3.1 gets the sharper ND the next
+time the bridge starts.
+
 ## 1.3.1 (2026-09-26)
 
 **Brake to vacate is armed from the OANS**, and has now run from inside it.
