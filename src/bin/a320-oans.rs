@@ -110,7 +110,14 @@ mod app {
         let sims: Vec<desktop::Sim> = if named.is_empty() {
             desktop::detect_sims()
         } else {
-            named.into_iter().map(|community| desktop::Sim { name: "Community".to_string(), community }).collect()
+            named
+                .into_iter()
+                .map(|c| {
+                    let community = desktop::community_from_pick(&c);
+                    let version = desktop::sim_of_fenix(&community).unwrap_or(desktop::SimVersion::Fs2024);
+                    desktop::Sim { name: "Community".to_string(), community, version }
+                })
+                .collect()
         };
         if sims.is_empty() {
             amdbgen::term::warn("No simulator settings (UserCfg.opt) found for MSFS 2020 or 2024; name the Community folder with --community");
@@ -210,11 +217,7 @@ mod app {
             return;
         }
         let Ok(chosen) = ui.folder_dialog.get_selected_item() else { return };
-        let mut community = PathBuf::from(chosen);
-        // The folder above it (where MSFS keeps Community and Official) will do too.
-        if !desktop::a320_oans_fits(&community) && community.join("Community").is_dir() {
-            community = community.join("Community");
-        }
+        let community = desktop::community_from_pick(&PathBuf::from(chosen));
         amdbgen::term::info(&format!("Community folder chosen: {}", community.display()));
         if !desktop::a320_oans_fits(&community) {
             let why = desktop::fenix_diagnosis(&community);
@@ -229,8 +232,12 @@ mod app {
         match desktop::install_a320_oans(&community) {
             Ok(notes) => {
                 notes.iter().for_each(|n| amdbgen::term::success(n));
-                if let Err(e) = desktop::remember_community_folder(&community) {
-                    amdbgen::term::warn(&format!("could not remember the folder: {e:#}"));
+                // Filed under the simulator whose Fenix is in it, in place of the folder found.
+                if let Some(version) = desktop::sim_of_fenix(&community) {
+                    match desktop::choose_community(version, Some(community.clone())) {
+                        Ok(()) => amdbgen::term::info(&format!("{} Community folder set to {}", version.label(), community.display())),
+                        Err(e) => amdbgen::term::warn(&format!("could not remember the folder: {e:#}")),
+                    }
                 }
                 tell(
                     "A320 OANS",

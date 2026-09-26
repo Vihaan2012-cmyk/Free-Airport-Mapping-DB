@@ -18,12 +18,46 @@ const A220_MAP_CONFLICTS: [&str; 2] = ["zzz-gm5-a220-amm", "gm5-a220-amm"];
 /// Where set-aside packages wait, next to the Community folder.
 const PARKED: &str = "_disabled";
 
+/// Which Microsoft Flight Simulator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimVersion {
+    Fs2020,
+    Fs2024,
+}
+
+impl SimVersion {
+    pub const ALL: [SimVersion; 2] = [SimVersion::Fs2020, SimVersion::Fs2024];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SimVersion::Fs2020 => "MSFS 2020",
+            SimVersion::Fs2024 => "MSFS 2024",
+        }
+    }
+
+    /// The Community folder chosen by hand for it, if any.
+    pub fn chosen(self, s: &super::settings::Settings) -> Option<&PathBuf> {
+        match self {
+            SimVersion::Fs2020 => s.community_2020.as_ref(),
+            SimVersion::Fs2024 => s.community_2024.as_ref(),
+        }
+    }
+
+    pub fn set_chosen(self, s: &mut super::settings::Settings, folder: Option<PathBuf>) {
+        match self {
+            SimVersion::Fs2020 => s.community_2020 = folder,
+            SimVersion::Fs2024 => s.community_2024 = folder,
+        }
+    }
+}
+
 /// One simulator's Community folder.
 #[derive(Debug, Clone)]
 pub struct Sim {
     /// "MSFS 2020", "MSFS 2024 (Steam)" and so on.
     pub name: String,
     pub community: PathBuf,
+    pub version: SimVersion,
 }
 
 /// Every Microsoft Flight Simulator on this machine, from each one's `UserCfg.opt`.
@@ -31,18 +65,34 @@ pub struct Sim {
 /// a moved package library does not also list the stale folder it left behind.
 pub fn detect_sims() -> Vec<Sim> {
     if !cfg!(windows) {
-        return super::platform::proton_sims().into_iter().map(|(name, community)| Sim { name, community }).collect();
+        return super::platform::proton_sims()
+            .into_iter()
+            .map(|(name, community)| {
+                let version = if name.contains("2024") { SimVersion::Fs2024 } else { SimVersion::Fs2020 };
+                Sim { name, community, version }
+            })
+            .collect();
     }
     let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
     let roaming = std::env::var("APPDATA").unwrap_or_default();
     let installs = [
-        ("MSFS 2020", format!("{local}/Packages/Microsoft.FlightSimulator_8wekyb3d8bbwe/LocalCache")),
-        ("MSFS 2024", format!("{local}/Packages/Microsoft.Limitless_8wekyb3d8bbwe/LocalCache")),
-        ("MSFS 2020 (Steam)", format!("{roaming}/Microsoft Flight Simulator")),
-        ("MSFS 2024 (Steam)", format!("{roaming}/Microsoft Flight Simulator 2024")),
+        (SimVersion::Fs2020, "MSFS 2020", format!("{local}/Packages/Microsoft.FlightSimulator_8wekyb3d8bbwe/LocalCache")),
+        (SimVersion::Fs2024, "MSFS 2024", format!("{local}/Packages/Microsoft.Limitless_8wekyb3d8bbwe/LocalCache")),
+        (SimVersion::Fs2020, "MSFS 2020 (Steam)", format!("{roaming}/Microsoft Flight Simulator")),
+        (SimVersion::Fs2024, "MSFS 2024 (Steam)", format!("{roaming}/Microsoft Flight Simulator 2024")),
     ];
+    let settings = super::settings::Settings::load().unwrap_or_default();
     let mut out: Vec<Sim> = Vec::new();
-    for (name, base) in installs {
+    // A folder chosen by hand stands for that simulator, in place of what is found.
+    for version in SimVersion::ALL {
+        if let Some(c) = version.chosen(&settings).filter(|c| c.is_dir()) {
+            out.push(Sim { name: version.label().to_string(), community: c.clone(), version });
+        }
+    }
+    for (version, name, base) in installs {
+        if version.chosen(&settings).is_some_and(|c| c.is_dir()) {
+            continue;
+        }
         let base = PathBuf::from(base);
         let mut community = fs::read_to_string(base.join("UserCfg.opt")).ok().and_then(|text| {
             text.lines().find_map(|l| l.trim().strip_prefix("InstalledPackagesPath").map(|p| PathBuf::from(p.trim().trim_matches('"')).join("Community")))
@@ -51,36 +101,52 @@ pub fn detect_sims() -> Vec<Sim> {
             community = Some(base.join("Packages").join("Community")).filter(|c| c.is_dir());
         }
         if let Some(c) = community {
-            if !out.iter().any(|s| s.community == c) {
-                out.push(Sim { name: name.to_string(), community: c });
+            if !out.iter().any(|s| same_folder(&s.community, &c)) {
+                out.push(Sim { name: name.to_string(), community: c, version });
             }
-        }
-    }
-    // And any Community folder chosen by hand.
-    for c in super::settings::Settings::load().map(|s| s.community_folders).unwrap_or_default() {
-        if c.is_dir() && !out.iter().any(|s| same_folder(&s.community, &c)) {
-            out.push(Sim { name: "Chosen Community folder".to_string(), community: c });
         }
     }
     out
 }
 
 /// The same folder, however it is spelled.
-fn same_folder(a: &Path, b: &Path) -> bool {
+pub fn same_folder(a: &Path, b: &Path) -> bool {
     match (fs::canonicalize(a), fs::canonicalize(b)) {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,
     }
 }
 
-/// Remember a Community folder chosen by hand, so it is looked in from now on.
-pub fn remember_community_folder(community: &Path) -> Result<()> {
-    let mut s = super::settings::Settings::load().unwrap_or_default();
-    if !s.community_folders.iter().any(|c| same_folder(c, community)) {
-        s.community_folders.push(community.to_path_buf());
-        s.save()?;
+/// A folder picked as a Community folder, or the one MSFS keeps Community (and Official)
+/// in, which will do as well.
+pub fn community_from_pick(picked: &Path) -> PathBuf {
+    let inner = picked.join("Community");
+    if !picked.file_name().is_some_and(|n| n.eq_ignore_ascii_case("community")) && inner.is_dir() {
+        inner
+    } else {
+        picked.to_path_buf()
     }
-    Ok(())
+}
+
+/// Which simulator a Community folder is for, going by the Fenix in it: the MSFS 2024
+/// Fenix keeps its cockpit as an attachment.
+pub fn sim_of_fenix(community: &Path) -> Option<SimVersion> {
+    let files = patcher::scan_fenix_oans(community);
+    if files.is_empty() {
+        None
+    } else if files.iter().any(|(_, p, _)| p.to_string_lossy().contains("attachments")) {
+        Some(SimVersion::Fs2024)
+    } else {
+        Some(SimVersion::Fs2020)
+    }
+}
+
+/// Use a Community folder chosen by hand for one simulator (or, with None, go back to the
+/// one found), saved in the settings.
+pub fn choose_community(version: SimVersion, folder: Option<PathBuf>) -> Result<()> {
+    let mut s = super::settings::Settings::load().unwrap_or_default();
+    version.set_chosen(&mut s, folder);
+    s.save()
 }
 
 /// The A220 map shipped with this program: next to the executable once installed, or
@@ -737,6 +803,27 @@ mod tests {
         assert!(remove_a220_map(&community).unwrap());
         assert!(gm5.join("manifest.json").is_file());
         assert_eq!(a220_map_state(&community), MapState::NotInstalled);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_picked_folder_and_its_fenix_say_which_simulator_it_is() {
+        let root = std::env::temp_dir().join(format!("amdb-pick-{}", std::process::id()));
+        let (c20, c24) = (root.join("2020").join("Community"), root.join("2024").join("Community"));
+        let f20 = c20.join("fnx-aircraft-320/SimObjects/Airplanes/FNX_32X/Panel");
+        let f24 = c24.join("fnx-aircraft-320/SimObjects/Airplanes/FNX_32X/attachments/fnx/Part_Interior_Cockpit/panel");
+        for f in [&f20, &f24] {
+            fs::create_dir_all(f).unwrap();
+            fs::write(f.join("panel.cfg"), "[VCockpit02]
+texture=$A320_ND_Captain
+").unwrap();
+        }
+        // The folder above Community will do; Community itself stays as it is.
+        assert_eq!(community_from_pick(&root.join("2024")), c24);
+        assert_eq!(community_from_pick(&c24), c24);
+        assert_eq!(sim_of_fenix(&c20), Some(SimVersion::Fs2020));
+        assert_eq!(sim_of_fenix(&c24), Some(SimVersion::Fs2024));
+        assert_eq!(sim_of_fenix(&root), None);
         let _ = fs::remove_dir_all(&root);
     }
 
