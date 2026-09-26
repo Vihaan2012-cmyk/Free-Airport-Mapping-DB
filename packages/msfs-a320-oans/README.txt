@@ -33,7 +33,9 @@ and brake yourself if needed.
 What it changes in the Fenix
 ----------------------------
 Nothing of Fenix's is replaced or redistributed. AMDB Bridge adds two gauge
-lines to the Fenix's panel.cfg and gives the captain's ND range knob its OANS
+lines to the Fenix's panel.cfg, draws the captain ND at 1536 x 1536 pixels
+rather than 768 (sharper text; Fenix's ND scales itself to it), and gives the
+captain's ND range knob its OANS
 positions in FNX32X_Interior.xml (Cockpit_Behavior.xml in MSFS 2024), keeping
 a backup beside each file. Uninstalling the A320 OANS, or turning it off in AMDB
 Bridge (`amdb-bridge a320-oans off`), puts both files back and removes this

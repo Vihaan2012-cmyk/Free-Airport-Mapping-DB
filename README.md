@@ -272,7 +272,9 @@ at 10 kt, past the exit, or on the parking brake, thrust, the autobrake or the e
 cleared, and disarms after each rollout.
 
 Nothing of the Fenix's is replaced or redistributed. Two gauge lines go into its
-`panel.cfg`, and the range knob gets its OANS positions in `FNX32X_Interior.xml`
+`panel.cfg`, the captain ND is drawn at 1536 x 1536 pixels instead of 768 for sharp text
+(Fenix's ND scales itself to it), and the range knob gets its OANS positions in
+`FNX32X_Interior.xml`
 (`Cockpit_Behavior.xml` in MSFS 2024), each with a backup beside it. A Fenix update puts
 both files back to its own; the bridge adds the lines again the next time it starts.
 

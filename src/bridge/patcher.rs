@@ -949,7 +949,49 @@ pub fn patch_fenix_oans_text(text: &str) -> Option<String> {
     if !out.contains(FENIX_OANS_ND_PATH) {
         out = add_fenix_nd_overlay(&out)?;
     }
+    if !fenix_nd_is_sharp(&out) {
+        out = sharpen_fenix_nd(&out)?;
+    }
     (out != text).then_some(out)
+}
+
+/// The captain ND's `[VCockpit..]` block: its start and end in the text.
+fn fenix_nd_block(text: &str) -> Option<(usize, usize)> {
+    let tex = text.find(FENIX_ND_TEXTURE)?;
+    let start = text[..tex].rfind("\n[").map_or(0, |i| i + 1);
+    let end = text[tex..].find("\n[").map_or(text.len(), |i| tex + i);
+    Some((start, end))
+}
+
+/// A `key=W,H` line's two numbers, spaces allowed.
+fn fenix_pair(block: &str, key: &str) -> Option<(u32, u32)> {
+    let line = block.lines().find(|l| l.trim_start().starts_with(key) && l.trim_start()[key.len()..].trim_start().starts_with('='))?;
+    let (w, h) = line.split_once('=')?.1.split_once(',')?;
+    Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
+}
+
+/// The captain ND is drawn at twice the pixels of its layout, for sharp OANS text. Fenix's
+/// own ND scales itself to it, and so does the OANS.
+fn fenix_nd_is_sharp(text: &str) -> bool {
+    let Some((start, end)) = fenix_nd_block(text) else { return false };
+    let block = &text[start..end];
+    matches!((fenix_pair(block, "size_mm"), fenix_pair(block, "pixel_size")), (Some((w, h)), Some((pw, ph))) if pw >= 2 * w && ph >= 2 * h)
+}
+
+/// Render the captain ND's texture at twice its layout size (768 -> 1536).
+fn sharpen_fenix_nd(text: &str) -> Option<String> {
+    let (start, end) = fenix_nd_block(text)?;
+    let block = &text[start..end];
+    let (w, h) = fenix_pair(block, "size_mm")?;
+    let line_at = block.lines().scan(0, |at, l| {
+        let here = *at;
+        *at += l.len() + 1;
+        Some((here, l))
+    });
+    let (at, line) = line_at.into_iter().find(|(_, l)| l.trim_start().starts_with("pixel_size"))?;
+    let sharp = format!("{FENIX_OANS_MARK} drawn at twice the pixels, for sharp OANS text\npixel_size={},{}", 2 * w, 2 * h);
+    let from = start + at;
+    Some(format!("{}{}{}", &text[..from], sharp, &text[from + line.len()..]))
 }
 
 /// Stack the ND overlay after the last gauge in the Captain ND's block, at that block's size.
@@ -1042,7 +1084,7 @@ fn fenix_oans_files(pdir: &Path) -> [(PathBuf, &'static str); 4] {
 
 fn fenix_file_patched(kind: &str, text: &str) -> bool {
     match kind {
-        "panel.cfg" => text.contains(FENIX_OANS_GAUGE_PATH) && text.contains(FENIX_OANS_ND_PATH),
+        "panel.cfg" => text.contains(FENIX_OANS_GAUGE_PATH) && text.contains(FENIX_OANS_ND_PATH) && fenix_nd_is_sharp(text),
         _ => text.contains(FENIX_KNOB_MARK),
     }
 }
@@ -1435,6 +1477,8 @@ bus.on('RequestNavigraphAccessToken',()=>{ return 'tok'; });";
         assert!(out.contains("htmlgauge00=C, 0,0,1,1\n\n[VCockpit16]\n//amdb-bridge-fenix-oans\nsize_mm=1,1\n"));
         assert!(out.contains("texture=NO_TEXTURE\nhtmlgauge00=amdb-oans/oans-shell.html, 0,0,1,1\n\n[VPainting01]"));
         assert!(out.contains("htmlgauge00=B, 0,0,768,768\n//amdb-bridge-fenix-oans\nhtmlgauge01=amdb-oans/oans-nd.html, 0,0,768,768\n\n[VCockpit15]"));
+        assert!(out.contains("size_mm=768,768\n//amdb-bridge-fenix-oans drawn at twice the pixels, for sharp OANS text\npixel_size=1536,1536\ntexture=$A320_ND_Captain"));
+        assert_eq!(out.matches("pixel_size=1536,1536").count(), 1, "only the ND is sharpened");
         assert!(!out[..out.find("[VCockpit02]").unwrap()].contains("oans-nd"), "overlay went into the PFD block");
         assert!(patch_fenix_oans_text(&out).is_none());
     }
