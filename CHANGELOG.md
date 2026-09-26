@@ -1,5 +1,15 @@
 # Changelog
 
+## A320 OANS 1.0.1 (2026-09-26, installer only)
+
+- The Fenix's `layout.json` now lists the new sizes of the two files the OANS changes in
+  it. MSFS 2020 ignores a listed size that no longer matches; MSFS 2024 may read a file
+  only that far, which would cut the end off the cockpit behaviour file and leave the
+  range knob stopping at 10. A Fenix patched by 1.0.0 is put right when the A320 OANS
+  next starts.
+- After a Fenix update, turning the OANS off puts back the updated Fenix files, not the
+  ones from before the update.
+
 ## 1.2.5 (2026-09-26) · A320 OANS 1.0.0
 
 **A320 OANS 1.0.0**: an airport moving map on the Fenix A320's captain ND, with brake to
