@@ -1117,6 +1117,10 @@ pub fn patch_fenix_oans(community: &Path, dry_run: bool) -> Result<Vec<PatchedFi
     let mut done = Vec::new();
     for (pkg, path, patched) in scan_fenix_oans(community) {
         if patched {
+            // Patched before layout.json was kept in step: bring it in step now.
+            if !dry_run {
+                sync_layout_size(&path)?;
+            }
             continue;
         }
         let text = fs::read_to_string(&path)?;
@@ -1131,10 +1135,14 @@ pub fn patch_fenix_oans(community: &Path, dry_run: bool) -> Result<Vec<PatchedFi
             continue;
         }
         let backup = PathBuf::from(format!("{}{}", path.display(), BACKUP_SUFFIX));
-        if !backup.exists() {
+        // A file with none of the OANS in it is Fenix's own: after a Fenix update that is a
+        // newer file than the backup, which must follow it, or turning the OANS off would
+        // put the old version back.
+        if !backup.exists() || !text.contains(FENIX_OANS_TAG) {
             fs::copy(&path, &backup).with_context(|| format!("backup {}", path.display()))?;
         }
         fs::write(&path, new_text)?;
+        sync_layout_size(&path)?;
         let pf = PatchedFile { path: path.clone(), backup, replacements: 1 };
         record.files.retain(|f| f.path != pf.path);
         record.files.push(pf.clone());
@@ -1149,12 +1157,54 @@ pub fn patch_fenix_oans(community: &Path, dry_run: bool) -> Result<Vec<PatchedFi
 /// Put Fenix's panel.cfg and range knob back, wherever the OANS changed them.
 pub fn unpatch_fenix_oans(community: &Path) -> Result<usize> {
     let mut n = 0;
-    for (_, path, patched) in scan_fenix_oans(community) {
-        if patched && restore_one(community, &path)? {
+    // Every file the record has, including one patched by an earlier version that does
+    // not have all of today's changes.
+    for (_, path, _) in scan_fenix_oans(community) {
+        if restore_one(community, &path)? {
+            sync_layout_size(&path)?;
             n += 1;
         }
     }
     Ok(n)
+}
+
+/// What every change the OANS makes to a Fenix file is marked with.
+const FENIX_OANS_TAG: &str = "amdb-bridge-fenix-oans";
+
+/// Put a changed file's new size (and time) into its package's layout.json. MSFS 2020
+/// ignores a size that no longer matches; MSFS 2024 may read the file only that far,
+/// which cuts the end off the XML.
+fn sync_layout_size(file: &Path) -> Result<()> {
+    let Some(pkg) = file.ancestors().skip(1).find(|a| a.join("layout.json").is_file()) else { return Ok(()) };
+    let rel = file.strip_prefix(pkg)?.to_string_lossy().replace('\\', "/");
+    let meta = fs::metadata(file)?;
+    let date = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| (d.as_secs() + 11_644_473_600) * 10_000_000 + u64::from(d.subsec_nanos()) / 100);
+    let layout = pkg.join("layout.json");
+    let text = fs::read_to_string(&layout)?;
+    if let Some(new) = set_layout_entry(&text, &rel, meta.len(), date) {
+        fs::write(&layout, new).with_context(|| format!("update {}", layout.display()))?;
+    }
+    Ok(())
+}
+
+/// layout.json with one entry's size and date set, its formatting otherwise kept. None
+/// when the file has no entry, or it already says so.
+fn set_layout_entry(text: &str, rel: &str, size: u64, date: u64) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let quoted = format!("\"{}\"", rel.to_ascii_lowercase());
+    // The entry's own `"path": "<rel>"`, whatever the spacing around the colon.
+    let at = lower.match_indices(&quoted).map(|(i, _)| i).find(|&i| lower[..i].trim_end().ends_with(':') && lower[..i].trim_end().trim_end_matches(':').trim_end().ends_with("\"path\""))?;
+    let start = text[..at].rfind('{')?;
+    let end = at + text[at..].find('}')?;
+    let mut entry = text[start..end].to_string();
+    for (key, value) in [("\"size\"", size), ("\"date\"", date)] {
+        let Some(k) = entry.find(key) else { continue };
+        let colon = k + key.len() + entry[k + key.len()..].find(':')? + 1;
+        let digits = colon + entry[colon..].len() - entry[colon..].trim_start().len();
+        let len = entry[digits..].bytes().take_while(u8::is_ascii_digit).count();
+        entry.replace_range(digits..digits + len, &value.to_string());
+    }
+    (entry != text[start..end]).then(|| format!("{}{}{}", &text[..start], entry, &text[end..]))
 }
 
 /// Every simulator exe.xml that exists on this machine.
@@ -1506,6 +1556,17 @@ bus.on('RequestNavigraphAccessToken',()=>{ return 'tok'; });";
         let _ = fs::remove_dir_all(&root);
         assert_eq!(found.len(), 2);
         assert!(found.iter().all(|(_, _, patched)| !patched));
+    }
+
+    #[test]
+    fn a_layout_entry_takes_the_new_size_and_nothing_else_changes() {
+        let layout = "{\n  \"content\": [\n    {\n      \"path\": \"SimObjects/A/panel.cfg\",\n      \"size\": 3184,\n      \"date\": 133000000000000000\n    },\n    {\n      \"path\": \"SimObjects/A/model/x.xml\",\n      \"size\": 10,\n      \"date\": 1\n    }\n  ]\n}\n";
+        let out = set_layout_entry(layout, "simobjects/a/Panel.cfg", 3464, 134000000000000000).unwrap();
+        assert!(out.contains("\"path\": \"SimObjects/A/panel.cfg\",\n      \"size\": 3464,\n      \"date\": 134000000000000000\n"));
+        assert!(out.contains("\"path\": \"SimObjects/A/model/x.xml\",\n      \"size\": 10,"), "the other entry is left alone");
+        assert_eq!(out.len(), layout.len(), "same digit counts, same length");
+        assert!(set_layout_entry(&out, "SimObjects/A/panel.cfg", 3464, 134000000000000000).is_none());
+        assert!(set_layout_entry(layout, "SimObjects/B/panel.cfg", 1, 1).is_none());
     }
 
     #[test]

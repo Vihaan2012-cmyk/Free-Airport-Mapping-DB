@@ -697,6 +697,20 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, text).unwrap();
         }
+        // The package's list of its files and their sizes, as Fenix ships it.
+        let layout = community.join("fnx-aircraft-320").join("layout.json");
+        let write_layout = |panel_len: usize| {
+            let entry = |p: &str, n: usize| format!("    {{\n      \"path\": \"{p}\",\n      \"size\": {n},\n      \"date\": 133000000000000000\n    }}");
+            let entries = [entry("SimObjects/Airplanes/FNX_32X/Panel/panel.cfg", panel_len), entry("SimObjects/Airplanes/FNX_32X/model/FNX32X_Interior.xml", model_text.len())];
+            fs::write(&layout, format!("{{\n  \"content\": [\n{}\n  ]\n}}\n", entries.join(",\n"))).unwrap();
+        };
+        write_layout(panel_text.len());
+        let listed = |path: &Path| -> u64 {
+            let rel = path.strip_prefix(community.join("fnx-aircraft-320")).unwrap().to_string_lossy().replace('\\', "/");
+            let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(&layout).unwrap()).unwrap();
+            v["content"].as_array().unwrap().iter().find(|e| e["path"].as_str().unwrap().eq_ignore_ascii_case(&rel)).unwrap()["size"].as_u64().unwrap()
+        };
+        let size = |path: &Path| fs::metadata(path).unwrap().len();
         let old = community.join("zzz-amdb-fenix-oans");
         fs::create_dir_all(&old).unwrap();
         fs::write(old.join("manifest.json"), "{}").unwrap();
@@ -706,17 +720,23 @@ mod tests {
         assert!(fenix_loads_a320_oans(&community));
         assert!(!old.exists(), "the earlier package would load alongside");
         assert!(fs::read_to_string(&panel).unwrap().contains("amdb-oans/oans-nd.html"));
+        assert_eq!((listed(&panel), listed(&model)), (size(&panel), size(&model)), "layout.json follows the changed files");
 
-        // A Fenix update puts its own files back; serving adds the OANS again.
-        fs::write(&panel, panel_text).unwrap();
+        // A Fenix update puts its own, newer files back; serving adds the OANS again, and the
+        // backup follows the update rather than keeping the version before it.
+        let updated = panel_text.replace("size_mm=605,128", "size_mm=605,130");
+        fs::write(&panel, &updated).unwrap();
+        write_layout(updated.len());
         assert!(!fenix_loads_a320_oans(&community));
         assert_eq!(repatch_a320_oans(&community).unwrap(), vec![panel.clone()]);
         assert!(fenix_loads_a320_oans(&community));
+        assert_eq!(listed(&panel), size(&panel));
 
         assert!(remove_a320_oans(&community).unwrap());
         assert_eq!(a320_oans_state(&community), MapState::NotInstalled);
-        assert_eq!(fs::read_to_string(&panel).unwrap(), panel_text);
+        assert_eq!(fs::read_to_string(&panel).unwrap(), updated, "the updated Fenix file, not the one before the update");
         assert_eq!(fs::read_to_string(&model).unwrap(), model_text);
+        assert_eq!((listed(&panel), listed(&model)), (size(&panel), size(&model)), "and layout.json back in step");
         let _ = fs::remove_dir_all(&root);
     }
 }
