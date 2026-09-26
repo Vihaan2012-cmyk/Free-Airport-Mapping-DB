@@ -206,6 +206,24 @@ function fenixBuildingAxisBearing(feature: Feature<Geometry>): number | undefine
   ],
   // Once a runway is picked for BTV, only the exits its landings can take (the bridge tags
   // each exit with them as idthr); data without the tag shows every exit, as before.
+  // BTV is armed from the MAP DATA page, in the place of LDG SHIFT, which FlyByWire keeps
+  // disabled; the state comes from FenixBtv on the bus and lives in L:AMDB_BTV_ARM.
+  'ND/OansControlPanel.tsx': [
+    [
+      '                      <Button\n' +
+        '                        label="LDG SHIFT"\n' +
+        '                        onClick={() => this.showLdgShiftPanel()}\n' +
+        '                        buttonStyle="flex: 1"\n' +
+        '                        disabled={Subject.create(true)}\n' +
+        '                      />\n',
+      '                      <Button\n' +
+        "                        label={ConsumerSubject.create(this.props.bus.getSubscriber<any>().on('amdb_btv_armed'), false).map((a) => (a ? 'DISARM BTV' : 'ARM BTV'))}\n" +
+        "                        onClick={() => SimVar.SetSimVarValue('L:AMDB_BTV_ARM', 'number', SimVar.GetSimVarValue('L:AMDB_BTV_ARM', 'number') > 0.5 ? 0 : 1)}\n" +
+        '                        buttonStyle="flex: 1"\n' +
+        "                        disabled={ConsumerSubject.create(this.props.bus.getSubscriber<any>().on('amdb_btv_can_arm'), false).map((c) => !c)}\n" +
+        '                      />\n',
+    ],
+  ],
   'OANC/OancLabelFilter.ts': [
     [
       '  switch (filter.type) {\n',
@@ -261,11 +279,15 @@ function dimStyleData(text) {
   return out;
 }
 
+/** The FlyByWire files the patches below were applied to, checked after the build. */
+const patched = new Set();
+
 const fbwPatches = {
   name: 'fbw-patches',
   setup(b) {
-    b.onLoad({ filter: /[\\/]OANC[\\/](Oanc\.tsx|OancLabelManager\.ts|OancLabelFilter\.ts|style-data\.ts)$/ }, (args) => {
-      const key = `OANC/${path.basename(args.path)}`;
+    b.onLoad({ filter: /[\\/](OANC[\\/](Oanc\.tsx|OancLabelManager\.ts|OancLabelFilter\.ts|style-data\.ts)|fbw-a380x[\\/].*[\\/]ND[\\/]OansControlPanel\.tsx)$/ }, (args) => {
+      const key = `${path.basename(path.dirname(args.path))}/${path.basename(args.path)}`;
+      patched.add(key);
       // Git on Windows may check the files out with CRLF line endings.
       let text = fs.readFileSync(args.path, 'utf8').replace(/\r\n/g, '\n');
       if (key === 'OANC/style-data.ts') {
@@ -326,6 +348,12 @@ await build({
 });
 for (const f of ['oans-nd.js', 'oans-nd.css']) {
   relinkAssets(path.join(outDir, f));
+}
+// A file the filter above never matched would otherwise go unpatched without a word.
+const unpatched = [...Object.keys(FBW_PATCHES), 'OANC/style-data.ts'].filter((k) => !patched.has(k));
+if (unpatched.length) {
+  console.error(`never patched (the file was not bundled, or the filter missed it): ${unpatched.join(', ')}`);
+  process.exit(1);
 }
 const leftover = [...new Set(fs.readFileSync(path.join(outDir, 'oans-nd.js'), 'utf8').match(/process\.env\.\w+/g) ?? [])];
 if (leftover.length) {

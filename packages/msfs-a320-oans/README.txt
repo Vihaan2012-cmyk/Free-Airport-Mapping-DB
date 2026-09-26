@@ -17,16 +17,18 @@ https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB
 Brake to vacate (BTV) -- experimental
 -------------------------------------
 Pick a runway and then an exit on the OANS (ND in PLAN or NAV: click the runway
-end, then the exit), and arm autobrake LO or MED. "BTV <exit>" shows in cyan at
-the top of the ND. At touchdown BTV presses the autobrake button off and brakes
-itself: no braking while the exit is further than the aircraft would roll, then
-just enough to reach the exit at 10 kt. The line turns green with the distance
-to go. BTV cannot add thrust: an exit further than the rollout reaches is taxied
-to as usual.
+end, then the exit), then press ARM BTV on the MAP DATA page of the OANS control
+panel. "BTV <exit>" shows in cyan at the top of the ND. The autobrake need not
+be armed; if a mode is, BTV presses it off at touchdown. It then brakes itself:
+no braking while the exit is further than the aircraft would roll, then just
+enough to reach the exit at 10 kt. The line turns green with the distance to
+go. BTV cannot add thrust: an exit further than the rollout reaches is taxied
+to as usual. L:AMDB_BTV_ARM (1 = armed) is there to bind to hardware.
 
 It lets go at 10 kt, on passing the exit, or when you set the parking brake,
-add thrust, arm the autobrake again, or clear the exit. It has been flown in
-test runs, not yet in many landings: watch it, and brake yourself if needed.
+add thrust, arm the autobrake, or clear the exit, and disarms itself after each
+rollout. It has been flown in test runs, not yet in many landings: watch it,
+and brake yourself if needed.
 
 What it changes in the Fenix
 ----------------------------

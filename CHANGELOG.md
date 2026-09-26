@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.1 (2026-09-26)
+
+**Brake to vacate is armed from the OANS**, and has now run from inside it.
+
+- **ARM BTV** on the MAP DATA page of the OANS control panel, in the place of the
+  landing-shift button, arms BTV once an exit is picked (also `L:AMDB_BTV_ARM`). 1.3.0
+  armed it with the autobrake at LO or MED, but the Fenix does not let those arm on the
+  ground, so it could not be armed there at all. The autobrake need not be armed now; any
+  mode that is, MAX included, is pressed off at touchdown, as a finger would, and BTV
+  disarms after each rollout.
+- Tested as a rejected takeoff on JFK 04L: from idle at 105 kt with the exit 1,510 m
+  ahead, it rolled without braking to 196 m out, braked at the 2.0 m/s2 it asked for
+  (1.94-2.09 measured), and let go at 9.9 kt 11 m before the exit.
+- The package build now stops if one of its changes to FlyByWire's code finds nothing to
+  change, instead of leaving it out without a word.
+
 ## 1.3.0 (2026-09-26)
 
 **A320 OANS**: an airport moving map on the Fenix A320's captain ND, with brake to

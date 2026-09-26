@@ -263,11 +263,13 @@ PLAN). Click the map for the context menu, drag to pan. `H:AMDB_OANS_TOGGLE`,
 `H:AMDB_OANS_RANGE_DEC` and `H:AMDB_OANS_RANGE_INC` are there to bind to hardware.
 
 **Brake to vacate** (experimental): pick a runway end and then an exit on the OANS (ND in
-PLAN or NAV) and arm autobrake LO or MED; `BTV <exit>` shows at the top of the ND. At
-touchdown it presses the autobrake off and brakes itself, following FlyByWire's A380X
-BTV law adjusted to the Fenix as measured: no braking while the exit is further than the
-aircraft would roll, then enough to reach the exit at 10 kt. It lets go at 10 kt, past the
-exit, or on the parking brake, thrust, the autobrake armed again or the exit cleared.
+PLAN or NAV) and press **ARM BTV** on the control panel's MAP DATA page (or set
+`L:AMDB_BTV_ARM` to 1); `BTV <exit>` shows at the top of the ND. The autobrake need not be
+armed. At touchdown it presses any armed autobrake off and brakes itself, following
+FlyByWire's A380X BTV law adjusted to the Fenix as measured: no braking while the exit is
+further than the aircraft would roll, then enough to reach the exit at 10 kt. It lets go
+at 10 kt, past the exit, or on the parking brake, thrust, the autobrake or the exit
+cleared, and disarms after each rollout.
 
 Nothing of the Fenix's is replaced or redistributed. Two gauge lines go into its
 `panel.cfg`, and the range knob gets its OANS positions in `FNX32X_Interior.xml`
