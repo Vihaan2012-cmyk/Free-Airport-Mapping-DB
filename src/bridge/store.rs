@@ -54,8 +54,8 @@ pub enum XpState {
 
 /// The first generator whose airports are current. Raise it when a change to what is
 /// built should reach airports already kept on disk: older ones are built again the next
-/// time they are asked for. 1.3.0: one runway exit line per exit and landing direction.
-const CURRENT_DATA_FROM: [u64; 3] = [1, 3, 0];
+/// time they are asked for. 1.2.5: one runway exit line per exit and landing direction.
+const CURRENT_DATA_FROM: [u64; 3] = [1, 2, 5];
 
 /// The generator an airport kept on disk was built by, when that is older than
 /// `CURRENT_DATA_FROM`.
@@ -265,6 +265,7 @@ mod data_version_tests {
         };
         assert_eq!(with("amdbgen 1.2.1").as_deref(), Some("amdbgen 1.2.1"));
         assert_eq!(with("amdbgen 0.1.0").as_deref(), Some("amdbgen 0.1.0"));
+        assert_eq!(with("amdbgen 1.2.5"), None);
         assert_eq!(with("amdbgen 1.3.0"), None);
         assert_eq!(with("amdbgen 1.10.2"), None);
         let _ = std::fs::remove_dir_all(&dir);

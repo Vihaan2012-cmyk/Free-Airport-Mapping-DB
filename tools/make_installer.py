@@ -3,7 +3,8 @@
   dist/AMDB-Bridge-Setup-<version>.exe   everything, as an installer
   dist/AMDB-Navdata-Setup-<version>.exe  the converter on its own, as an installer
   dist/AMDB-Navdata-<version>.zip        the same, as a zip to unpack anywhere
-  dist/A320-OANS-Setup-<version>.exe     the Fenix A320 OANS on its own, with its own bridge
+  dist/A320-OANS-Setup-<oans version>.exe  the Fenix A320 OANS on its own, with its own
+                                         bridge; versioned as packages/msfs-a320-oans
 
 Compiles the release binaries, refreshes the A220 map package's layout.json, runs Inno
 Setup's compiler on installer/amdb-bridge.iss, and packs the converter separately.
@@ -14,6 +15,7 @@ Needs Rust and Inno Setup 6 (winget install JRSoftware.InnoSetup).
 """
 
 import glob
+import json
 import os
 import re
 import shutil
@@ -97,7 +99,9 @@ def main():
     stage_webview2_loader()
     run([compiler, f"/DAppVersion={v}", "/Q", os.path.join("installer", "amdb-bridge.iss")])
     run([compiler, f"/DAppVersion={v}", "/Q", os.path.join("installer", "amdb-navdata.iss")])
-    run([compiler, f"/DAppVersion={v}", "/Q", os.path.join("installer", "a320-oans.iss")])
+    # The A320 OANS is versioned as its package, apart from AMDB Bridge.
+    oans = json.load(open(os.path.join(ROOT, "packages", "msfs-a320-oans", "manifest.json"), encoding="utf-8"))["package_version"]
+    run([compiler, f"/DAppVersion={oans}", "/Q", os.path.join("installer", "a320-oans.iss")])
 
     out = os.path.join(ROOT, "dist", f"AMDB-Bridge-Setup-{v}.exe")
     print(f"\nBuilt {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
@@ -105,7 +109,7 @@ def main():
     print(f"Built {z} ({os.path.getsize(z) / 1e6:.1f} MB)")
     n = os.path.join(ROOT, "dist", f"AMDB-Navdata-Setup-{v}.exe")
     print(f"Built {n} ({os.path.getsize(n) / 1e6:.1f} MB)")
-    a = os.path.join(ROOT, "dist", f"A320-OANS-Setup-{v}.exe")
+    a = os.path.join(ROOT, "dist", f"A320-OANS-Setup-{oans}.exe")
     print(f"Built {a} ({os.path.getsize(a) / 1e6:.1f} MB)")
     return 0
 
