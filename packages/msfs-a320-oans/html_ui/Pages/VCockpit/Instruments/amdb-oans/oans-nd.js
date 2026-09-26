@@ -67780,6 +67780,412 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   _VhfComManager.EMERGENCY_FREQUENCY = 18960384;
   var VhfComManager = _VhfComManager;
 
+  // .fbw/fbw-common/src/systems/instruments/src/MsfsAvionicsCommon/providers/RopRowOansPublisher.ts
+  var RopRowOansPublisher = class extends SimVarPublisher {
+    constructor(bus) {
+      super(
+        /* @__PURE__ */ new Map([
+          ["rowRopWord1Raw", { name: "L:A32NX_ROW_ROP_WORD_1", type: SimVarValueType.Enum }],
+          ["oansWord1Raw", { name: "L:A32NX_OANS_WORD_1", type: SimVarValueType.Enum }]
+        ]),
+        bus
+      );
+    }
+  };
+
+  // .fbw/fbw-common/src/systems/instruments/src/MsfsAvionicsCommon/Layer.tsx
+  var Layer = class extends DisplayComponent {
+    render() {
+      var _a7, _b5, _c;
+      const { x, y } = this.props;
+      const ref = (_a7 = this.props.ref) != null ? _a7 : FSComponent.createRef();
+      let value;
+      if (typeof x !== "number" && typeof y !== "number") {
+        value = MappedSubject.create(([x2, y2]) => "translate(".concat(x2, ", ").concat(y2, ")"), x, y);
+      } else if (typeof x !== "number" || typeof y !== "number") {
+        throw new Error("Both attributes of Layer must be of the same type (number or Subscribable)");
+      } else {
+        value = "translate(".concat(x, ", ").concat(y, ")");
+      }
+      return /* @__PURE__ */ FSComponent.buildComponent(
+        "g",
+        {
+          ref,
+          transform: value,
+          visibility: (_c = (_b5 = this.props.visible) == null ? void 0 : _b5.map((v3) => v3 ? "inherit" : "hidden")) != null ? _c : "inherit"
+        },
+        this.props.children
+      );
+    }
+  };
+
+  // .fbw/fbw-a380x/src/systems/instruments/src/MsfsAvionicsCommon/providers/ResetPanelPublisher.ts
+  var _ResetPanelSimvarPublisher = class _ResetPanelSimvarPublisher extends SimVarPublisher {
+    constructor(bus) {
+      super(_ResetPanelSimvarPublisher.simvars, bus);
+    }
+  };
+  _ResetPanelSimvarPublisher.simvars = /* @__PURE__ */ new Map([
+    ["a380x_reset_panel_arpt_nav", { name: "L:A32NX_RESET_PANEL_ARPT_NAV", type: SimVarValueType.Bool }],
+    ["a380x_reset_panel_fmc_a", { name: "L:A32NX_RESET_PANEL_FMC_A", type: SimVarValueType.Bool }],
+    ["a380x_reset_panel_fmc_b", { name: "L:A32NX_RESET_PANEL_FMC_B", type: SimVarValueType.Bool }],
+    ["a380x_reset_panel_fmc_c", { name: "L:A32NX_RESET_PANEL_FMC_C", type: SimVarValueType.Bool }],
+    ["a380x_reset_panel_fws1", { name: "L:A32NX_RESET_PANEL_FWS1", type: SimVarValueType.Bool }],
+    ["a380x_reset_panel_fws2", { name: "L:A32NX_RESET_PANEL_FWS2", type: SimVarValueType.Bool }],
+    ["a380x_reset_panel_aesu1", { name: "L:A32NX_RESET_PANEL_AESU1", type: SimVarValueType.Bool }],
+    ["a380x_reset_panel_aesu2", { name: "L:A32NX_RESET_PANEL_AESU2", type: SimVarValueType.Bool }],
+    ["a380x_reset_panel_nss_avncs", { name: "L:A32NX_RESET_PANEL_NSS_AVNCS", type: SimVarValueType.Bool }],
+    ["a380x_reset_panel_nss_flt_ops", { name: "L:A32NX_RESET_PANEL_NSS_FLT_OPS", type: SimVarValueType.Bool }]
+  ]);
+  var ResetPanelSimvarPublisher = _ResetPanelSimvarPublisher;
+
+  // src/AircraftPublisher.ts
+  var LGCIU_ON_GROUND = 1 << 10;
+  var AircraftPublisher = class {
+    constructor(bus) {
+      this.word = Arinc429Register.empty();
+      this.words = bus.getPublisher();
+      this.word.setSsm(3 /* NormalOperation */);
+    }
+    init() {
+    }
+    onUpdate() {
+      this.publishWord("latitude", SimVar.GetSimVarValue("PLANE LATITUDE", "degree latitude"));
+      this.publishWord("longitude", SimVar.GetSimVarValue("PLANE LONGITUDE", "degree longitude"));
+      this.publishWord("trueHeadingRaw", SimVar.GetSimVarValue("PLANE HEADING DEGREES TRUE", "degree"));
+      this.publishWord("groundSpeed", SimVar.GetSimVarValue("GROUND VELOCITY", "knots"));
+      this.publishWord("trueAirSpeed", SimVar.GetSimVarValue("AIRSPEED TRUE", "knots"));
+      this.publishWord("windDirection", SimVar.GetSimVarValue("AMBIENT WIND DIRECTION", "degrees"));
+      this.publishWord("windSpeed", SimVar.GetSimVarValue("AMBIENT WIND VELOCITY", "knots"));
+      const radioAltitude = SimVar.GetSimVarValue("RADIO HEIGHT", "feet");
+      this.publishWord("ra_radio_altitude_1", radioAltitude);
+      this.publishWord("ra_radio_altitude_2", radioAltitude);
+      this.publishWord("ra_radio_altitude_3", radioAltitude);
+      const gear = SimVar.GetSimVarValue("SIM ON GROUND", "bool") ? LGCIU_ON_GROUND : 0;
+      this.publishWord("lgciu_discrete_word_2_1", gear);
+      this.publishWord("lgciu_discrete_word_2_2", gear);
+    }
+    publishWord(topic, value) {
+      this.word.setValue(value);
+      this.words.pub(topic, this.word.rawWord, false, true);
+    }
+  };
+
+  // src/FenixOansPublisher.ts
+  var ZOOM_VAR = "L:AMDB_OANS_ZOOM";
+  var CMD_VAR = "L:AMDB_OANS_CMD";
+  var MAX_ZOOM = 5;
+  var DEFAULT_ZOOM = 4;
+  var COMMAND_NAMES = ["", "AMDB_OANS_TOGGLE", "AMDB_OANS_RANGE_DEC", "AMDB_OANS_RANGE_INC", "AMDB_OANS_MENU", "AMDB_OANS_PANEL", "AMDB_OANS_DUMP_LAYOUT"];
+  var UI_COMMANDS = ["AMDB_OANS_MENU", "AMDB_OANS_PANEL", "AMDB_OANS_DUMP_LAYOUT"];
+  var COMMANDS = {
+    AMDB_OANS_TOGGLE: (z) => z > 0 ? 0 : DEFAULT_ZOOM,
+    AMDB_OANS_RANGE_DEC: (z) => z > 0 ? Math.min(MAX_ZOOM, z + 1) : z,
+    AMDB_OANS_RANGE_INC: (z) => z > 1 ? z - 1 : z
+  };
+  var OANS_MODES = [4 /* PLAN */, 3 /* ARC */, 2 /* ROSE_NAV */];
+  var FenixOansPublisher = class extends AircraftPublisher {
+    constructor(bus) {
+      super(bus);
+      this.lastMode = -1;
+      this.lastZoom = -1;
+      /** Called with the display commands (open the menu, toggle the control panel). */
+      this.onUiCommand = () => void 0;
+      this.publisher = bus.getPublisher();
+    }
+    /** An H: event, or a command number arriving through L:AMDB_OANS_CMD. */
+    command(name) {
+      if (UI_COMMANDS.includes(name)) {
+        this.onUiCommand(name);
+        return;
+      }
+      const apply = COMMANDS[name];
+      if (apply) {
+        SimVar.SetSimVarValue(ZOOM_VAR, "number", apply(Math.round(SimVar.GetSimVarValue(ZOOM_VAR, "number"))));
+      }
+    }
+    onUpdate() {
+      var _a7;
+      const cmd = SimVar.GetSimVarValue(CMD_VAR, "number");
+      if (cmd) {
+        this.command((_a7 = COMMAND_NAMES[cmd]) != null ? _a7 : "");
+        SimVar.SetSimVarValue(CMD_VAR, "number", 0);
+      }
+      super.onUpdate();
+      const mode = Math.round(SimVar.GetSimVarValue("L:S_FCU_EFIS1_ND_MODE", "number"));
+      const zoom = Math.round(SimVar.GetSimVarValue(ZOOM_VAR, "number"));
+      if (mode === this.lastMode && zoom === this.lastZoom) {
+        return;
+      }
+      this.lastMode = mode;
+      this.lastZoom = zoom;
+      const show = zoom > 0 && OANS_MODES.includes(mode);
+      this.publisher.pub("ndMode", mode, false, true);
+      if (zoom > 0) {
+        this.publisher.pub("oansRange", MAX_ZOOM - zoom, false, true);
+      }
+      this.publisher.pub("nd_show_oans", { side: "L", show }, false, true);
+      SimVar.SetSimVarValue("L:AMDB_OANS_ACTIVE", "number", show ? 1 : 0);
+    }
+  };
+
+  // src/FenixBtv.ts
+  var KT = 0.514444;
+  var RELEASE_SPEED = 5.15;
+  var RELEASE_SPEED_HIGH_SPEED_EXIT = 40 * 0.514444;
+  var RELEASE_AIM = 0.9;
+  var HIGH_SPEED_EXIT = 2;
+  var RELEASE_BEFORE_EXIT_M = 10;
+  var HOLD_RATE_WITHIN_M = 15;
+  var RATE_WET = -2;
+  var RATE_DRY = -3;
+  var START_AT = 0.98;
+  var MARGIN = 1.05;
+  var ARM_SPEED = 30 * KT;
+  var PEDAL_RATE_PER_S = 1;
+  var TAKEOVER_CHECK_S = 0.5;
+  var LIMIT_S = 90;
+  var ARM_VAR = "L:AMDB_BTV_ARM";
+  var AUTOBRAKE = [
+    { light: "L:I_MIP_AUTOBRAKE_LO_L", button: "L:S_MIP_AUTOBRAKE_LO", name: "LO" },
+    { light: "L:I_MIP_AUTOBRAKE_MED_L", button: "L:S_MIP_AUTOBRAKE_MED", name: "MED" },
+    { light: "L:I_MIP_AUTOBRAKE_MAX_L", button: "L:S_MIP_AUTOBRAKE_MAX", name: "MAX" }
+  ];
+  var FenixBtv = class {
+    constructor(bus) {
+      this.status = Subject.create({ state: 0 /* Off */, exit: null, metres: null, missed: false });
+      this.exit = null;
+      this.exitName = null;
+      this.exitAt = null;
+      this.state = 0 /* Off */;
+      /** One try per rollout: set once it has been tried (or refused), cleared below 25 kt. */
+      this.rolloutDone = false;
+      this.takeoverAt = null;
+      this.startedAt = 0;
+      this.lastTime = 0;
+      this.slowingSince = null;
+      this.desired = RATE_WET;
+      this.endRate = 0;
+      this.missed = false;
+      /** The picked exit's `exittype`, as the OANS publishes it. */
+      this.exitType = 1;
+      /** For the rollout under way. */
+      this.releaseSpeed = RELEASE_SPEED;
+      this.releaseTarget = RELEASE_SPEED * RELEASE_AIM;
+      this.decel = 0;
+      this.integral = 0;
+      this.pedal = 0;
+      this.releaseFrames = 0;
+      this.nextLog = 0;
+      this.published = {};
+      this.pub = bus.getPublisher();
+      const sub2 = bus.getSubscriber();
+      sub2.on("oansExitCoordinates").handle((c) => {
+        this.exitAt = c;
+        this.updateExit();
+      });
+      bus.getSubscriber().on("amdb_btv_exit_type").handle((t) => {
+        this.exitType = t;
+      });
+      sub2.on("oansSelectedExit").handle((name) => {
+        this.exitName = name;
+        this.updateExit();
+      });
+    }
+    init() {
+    }
+    updateExit() {
+      this.exit = this.exitName && this.exitAt ? { name: this.exitName, lat: this.exitAt.lat, lon: this.exitAt.long } : null;
+    }
+    read() {
+      return {
+        time: SimVar.GetSimVarValue("E:SIMULATION TIME", "seconds"),
+        gs: SimVar.GetSimVarValue("GROUND VELOCITY", "meters per second"),
+        lat: SimVar.GetSimVarValue("PLANE LATITUDE", "degree latitude"),
+        lon: SimVar.GetSimVarValue("PLANE LONGITUDE", "degree longitude"),
+        heading: SimVar.GetSimVarValue("PLANE HEADING DEGREES TRUE", "degree"),
+        accel: SimVar.GetSimVarValue("ACCELERATION BODY Z", "meters per second squared"),
+        onGround: !!SimVar.GetSimVarValue("SIM ON GROUND", "bool"),
+        parkingBrake: SimVar.GetSimVarValue("BRAKE PARKING POSITION", "percent over 100"),
+        spoilers: SimVar.GetSimVarValue("SPOILERS LEFT POSITION", "percent over 100"),
+        autobrake: AUTOBRAKE.find((a) => SimVar.GetSimVarValue(a.light, "number") > 0.5),
+        armRequested: SimVar.GetSimVarValue(ARM_VAR, "number") > 0.5
+      };
+    }
+    /** What the ARM BTV button shows, sent only when it changes. */
+    publishArm(armed, canArm) {
+      if (this.published.armed !== armed) {
+        this.published.armed = armed;
+        this.pub.pub("amdb_btv_armed", armed, false, true);
+      }
+      if (this.published.canArm !== canArm) {
+        this.published.canArm = canArm;
+        this.pub.pub("amdb_btv_can_arm", canArm, false, true);
+      }
+    }
+    /** Along-track metres from the aircraft to the exit; negative once passed. */
+    ahead(r) {
+      if (!this.exit) {
+        return -Infinity;
+      }
+      const rad = Math.PI / 180;
+      const p1 = r.lat * rad;
+      const p2 = this.exit.lat * rad;
+      const dl = (this.exit.lon - r.lon) * rad;
+      const a = Math.sin((p2 - p1) / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+      const d = 2 * 6371e3 * Math.asin(Math.sqrt(a));
+      const bearing2 = Math.atan2(Math.sin(dl) * Math.cos(p2), Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl));
+      return d * Math.cos(bearing2 - r.heading * rad);
+    }
+    onUpdate() {
+      var _a7, _b5;
+      const r = this.read();
+      const dt = r.time - this.lastTime;
+      this.lastTime = r.time;
+      if (dt <= 0 || dt > 1) {
+        return;
+      }
+      if (r.gs < 25 * KT) {
+        this.rolloutDone = false;
+      }
+      this.publishArm(r.armRequested, !!this.exit || r.armRequested);
+      if (this.state === 0 /* Off */ || this.state === 1 /* Armed */) {
+        this.watch(r);
+      } else {
+        this.rollout(r, dt);
+      }
+      const ahead = this.ahead(r);
+      const active = this.state >= 2 /* Rolling */;
+      this.publish({
+        state: this.state,
+        exit: (_b5 = (_a7 = this.exit) == null ? void 0 : _a7.name) != null ? _b5 : null,
+        metres: active && Number.isFinite(ahead) ? Math.max(0, Math.round(ahead)) : null,
+        missed: active && this.missed
+      });
+    }
+    /** Armed or not, and the start of the rollout. */
+    watch(r) {
+      var _a7;
+      if (this.takeoverAt !== null) {
+        if (r.time - this.takeoverAt < TAKEOVER_CHECK_S) {
+          return;
+        }
+        this.takeoverAt = null;
+        if (r.autobrake) {
+          log("takeover-failed-".concat(r.autobrake.name, "-still-armed:-Fenix-autobrake-keeps-the-brakes"));
+          return;
+        }
+        this.begin(r);
+        return;
+      }
+      this.setState(this.exit && r.armRequested ? 1 /* Armed */ : 0 /* Off */);
+      const rolling = r.onGround && r.gs > ARM_SPEED;
+      this.slowingSince = rolling && r.accel < -0.15 ? (_a7 = this.slowingSince) != null ? _a7 : r.time : null;
+      const started = rolling && (r.spoilers > 0.5 || this.slowingSince !== null && r.time - this.slowingSince >= 1);
+      if (!started || this.rolloutDone || this.state !== 1 /* Armed */) {
+        return;
+      }
+      this.rolloutDone = true;
+      if (this.ahead(r) <= RELEASE_BEFORE_EXIT_M) {
+        log("exit-already-passed:-not-taking-over");
+        return;
+      }
+      if (!r.autobrake) {
+        this.begin(r);
+        return;
+      }
+      const button = r.autobrake.button;
+      const count = Math.round(SimVar.GetSimVarValue(button, "number"));
+      const released = count % 2 === 0 ? count : count + 1;
+      SimVar.SetSimVarValue(button, "number", released + 1);
+      setTimeout(() => SimVar.SetSimVarValue(button, "number", released + 2), 150);
+      this.takeoverAt = r.time;
+      log("takeover:-".concat(r.autobrake.name, "-pressed-off-at-").concat(Math.round(r.gs / KT), "kt-exit-").concat(Math.round(this.ahead(r)), "m"));
+    }
+    begin(r) {
+      var _a7;
+      const remaining = Math.max(1, this.ahead(r) - RELEASE_BEFORE_EXIT_M);
+      this.releaseSpeed = this.exitType === HIGH_SPEED_EXIT ? RELEASE_SPEED_HIGH_SPEED_EXIT : RELEASE_SPEED;
+      this.releaseTarget = this.releaseSpeed * RELEASE_AIM;
+      const need = -(r.gs ** 2 - this.releaseTarget ** 2) / (2 * remaining) * MARGIN;
+      this.desired = need < RATE_WET ? RATE_DRY : RATE_WET;
+      this.startedAt = r.time;
+      this.decel = r.accel;
+      this.integral = 0;
+      this.pedal = 0;
+      this.nextLog = 0;
+      this.missed = false;
+      this.setState(2 /* Rolling */);
+      log("active:-".concat(Math.round(r.gs / KT), "kt-exit-").concat((_a7 = this.exit) == null ? void 0 : _a7.name, "-").concat(Math.round(this.ahead(r)), "m-rate-").concat(this.desired, "-release-").concat(Math.round(this.releaseSpeed / KT), "kt"));
+    }
+    rollout(r, dt) {
+      if (this.state === 5 /* LettingGo */) {
+        this.brake(0);
+        if (--this.releaseFrames <= 0) {
+          SimVar.SetSimVarValue(ARM_VAR, "number", 0);
+          this.setState(0 /* Off */);
+        }
+        return;
+      }
+      const ahead = this.ahead(r);
+      const stop = !r.onGround ? "left-the-ground" : r.parkingBrake > 0.5 ? "parking-brake" : r.time - this.startedAt > 2 && r.accel > 0.5 ? "thrust" : r.autobrake ? "autobrake-".concat(r.autobrake.name, "-armed-again") : !this.exit ? "exit-cleared" : r.gs <= this.releaseSpeed ? "".concat(Math.round(this.releaseSpeed / KT), "kt") : ahead < -30 ? "exit-passed" : r.time - this.startedAt > LIMIT_S ? "time-limit" : null;
+      if (stop) {
+        log("released:-".concat(stop, "-at-").concat((r.gs / KT).toFixed(1), "kt-exit-").concat(Math.round(ahead), "m"));
+        this.releaseFrames = 5;
+        this.setState(5 /* LettingGo */);
+        this.brake(0);
+        return;
+      }
+      this.decel += (r.accel - this.decel) * Math.min(1, dt / 0.25);
+      const remaining = Math.max(0, ahead - RELEASE_BEFORE_EXIT_M);
+      const need = -Math.max(0, r.gs ** 2 - this.releaseTarget ** 2) / (2 * Math.max(0.5, remaining));
+      const request = Math.min(5, Math.max(this.desired, need * MARGIN));
+      if (this.state === 2 /* Rolling */ && request < this.desired * START_AT) {
+        this.setState(3 /* Braking */);
+      } else if (this.state === 3 /* Braking */ && remaining < HOLD_RATE_WITHIN_M) {
+        this.endRate = request;
+        this.setState(4 /* Holding */);
+      }
+      const target = this.state === 2 /* Rolling */ ? null : this.state === 4 /* Holding */ ? this.endRate : request;
+      this.missed = need * MARGIN < RATE_DRY && r.gs - this.releaseTarget > RELEASE_SPEED;
+      let want = 0;
+      if (target === null) {
+        this.integral = 0;
+      } else {
+        const err = this.decel - target;
+        this.integral = Math.min(1, Math.max(0, this.integral + 0.6 * err * dt));
+        want = Math.min(1, Math.max(0, this.integral + 0.15 * err));
+      }
+      this.pedal += Math.min(PEDAL_RATE_PER_S * dt, Math.max(-PEDAL_RATE_PER_S * dt, want - this.pedal));
+      this.brake(this.pedal);
+      if (r.time >= this.nextLog) {
+        this.nextLog = r.time + 1;
+        log("t".concat((r.time - this.startedAt).toFixed(1), "-s").concat(this.state, "-").concat((r.gs / KT).toFixed(1), "kt-").concat(Math.round(ahead), "m-tgt").concat(target === null ? "none" : target.toFixed(2), "-dec").concat(this.decel.toFixed(2), "-ped").concat(Math.round(this.pedal * 100)));
+      }
+    }
+    /** Both brake pedals, 0 (released) to 1 (fully pressed), as hardware toe brakes send them. */
+    brake(u7) {
+      const axis = Math.round(-16383 + 32766 * Math.min(1, Math.max(0, u7)));
+      SimVar.SetSimVarValue("K:AXIS_LEFT_BRAKE_SET", "number", axis);
+      SimVar.SetSimVarValue("K:AXIS_RIGHT_BRAKE_SET", "number", axis);
+    }
+    setState(state) {
+      if (state !== this.state) {
+        this.state = state;
+        SimVar.SetSimVarValue("L:AMDB_BTV_STATE", "number", state);
+      }
+    }
+    publish(s) {
+      const now = this.status.get();
+      if (now.state !== s.state || now.exit !== s.exit || now.metres !== s.metres || now.missed !== s.missed) {
+        this.status.set(s);
+      }
+    }
+  };
+  function log(what) {
+    fetch("http://127.0.0.1:8770/amdb-oans-event?btv-".concat(what)).catch(() => void 0);
+  }
+
   // .fbw/fbw-common/src/systems/instruments/src/OANC/api/NavigraphAmdbClient.ts
   var NavigraphAmdbClient = class {
     async searchForAirports(queryString) {
@@ -74749,6 +75155,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       ];
       this.rwyAheadArinc = Arinc429Register.empty();
       this.btvPathGeometry = [];
+      /** The taxi route the bridge keeps, in the map's own coordinates. */
+      this.amdbTaxiRoute = [];
       /** Stopping distance for dry rwy conditions, in meters. Null if not set. Counted from touchdown distance (min. 400m).  */
       this.dryStoppingDistance = ConsumerSubject.create(
         this.sub.on("a380x_btv_dry_stopping_distance").whenChanged(),
@@ -74793,6 +75201,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.remaininingDistToRwyEnd.sub(() => this.drawBtvLayer());
       (_a7 = this.aircraftOnGround) == null ? void 0 : _a7.sub(() => this.drawBtvLayer());
       (_b5 = this.zoomLevelIndex) == null ? void 0 : _b5.sub(() => this.drawBtvLayer());
+      this.sub.on("amdb_taxi_route").handle((route) => {
+        this.amdbTaxiRoute = route != null ? route : [];
+        this.drawBtvLayer();
+      });
       this.clearSelection();
     }
     async selectRunwayFromOans(runway, centerlineFeature, thresholdFeature) {
@@ -74819,7 +75231,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.drawBtvLayer();
     }
     async selectExitFromOans(exit, feature2) {
-      var _a7;
+      var _a7, _b5, _c;
       if (this.btvRunway.get() == null || !this.btvThresholdPositionOansReference || !this.btvOppositeThresholdPositionOansReference) {
         return;
       }
@@ -74861,6 +75273,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.btvExitPositionOansReference[1]
       ) - BTV_MIN_TOUCHDOWN_ZONE_DISTANCE;
       this.bus.getPublisher().pub("oansSelectedExit", exit, true);
+      this.bus.getPublisher().pub("amdb_btv_exit_type", (_c = (_b5 = feature2.properties) == null ? void 0 : _b5.exittype) != null ? _c : 1, true);
       this.btvPathGeometry = Array.from(feature2.geometry.coordinates);
       if (exitDistFromCenterLine1 < exitDistFromCenterLine2) {
         this.btvPathGeometry.unshift(thrLoc);
@@ -75076,8 +75489,27 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         (_p = this.labelManager) == null ? void 0 : _p.labels.push(stoplineLabel);
       }
     }
+    drawAmdbTaxiRoute() {
+      var _a7, _b5, _c, _d, _e, _f;
+      const ctx = (_a7 = this.canvasRef) == null ? void 0 : _a7.instance.getContext("2d");
+      if (this.amdbTaxiRoute.length < 2 || !((_b5 = this.canvasRef) == null ? void 0 : _b5.getOrDefault()) || !ctx) {
+        return;
+      }
+      ctx.resetTransform();
+      ctx.translate((_d = (_c = this.canvasCentreX) == null ? void 0 : _c.get()) != null ? _d : 0, (_f = (_e = this.canvasCentreY) == null ? void 0 : _e.get()) != null ? _f : 0);
+      ctx.lineWidth = 5;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.strokeStyle = "#ff94ff";
+      const path = new Path2D();
+      path.moveTo(this.amdbTaxiRoute[0][0], this.amdbTaxiRoute[0][1] * -1);
+      for (let i = 1; i < this.amdbTaxiRoute.length; i++) {
+        path.lineTo(this.amdbTaxiRoute[i][0], this.amdbTaxiRoute[i][1] * -1);
+      }
+      ctx.stroke(path);
+    }
     drawBtvLayer() {
-      var _a7, _b5, _c, _d;
+      var _a7, _b5, _c, _d, _e;
       if (!((_a7 = this.canvasRef) == null ? void 0 : _a7.getOrDefault())) {
         return;
       }
@@ -75087,13 +75519,15 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         "btv-stop-line-magenta" /* BtvStopLineMagenta */,
         "btv-stop-line-red" /* BtvStopLineRed */
       ].includes(s);
-      (_b5 = this.canvasRef.instance.getContext("2d")) == null ? void 0 : _b5.clearRect(0, 0, this.canvasRef.instance.width, this.canvasRef.instance.height);
-      while (((_c = this.labelManager) == null ? void 0 : _c.visibleLabels.getArray().findIndex((it) => isStopLineStyle(it.style))) !== -1) {
-        (_d = this.labelManager) == null ? void 0 : _d.visibleLabels.removeAt(
+      (_b5 = this.canvasRef.instance.getContext("2d")) == null ? void 0 : _b5.resetTransform();
+      (_c = this.canvasRef.instance.getContext("2d")) == null ? void 0 : _c.clearRect(0, 0, this.canvasRef.instance.width, this.canvasRef.instance.height);
+      while (((_d = this.labelManager) == null ? void 0 : _d.visibleLabels.getArray().findIndex((it) => isStopLineStyle(it.style))) !== -1) {
+        (_e = this.labelManager) == null ? void 0 : _e.visibleLabels.removeAt(
           this.labelManager.visibleLabels.getArray().findIndex((it) => isStopLineStyle(it.style))
         );
       }
       this.labelManager.labels = this.labelManager.labels.filter((it) => !isStopLineStyle(it.style));
+      this.drawAmdbTaxiRoute();
       this.drawBtvPath();
       this.drawStopLines();
     }
@@ -75325,32 +75759,6 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       renderScale: 1,
       zoomLevelVisibilities: [true, true, true, true, true],
       styleRules: []
-    }
-  };
-
-  // .fbw/fbw-common/src/systems/instruments/src/MsfsAvionicsCommon/Layer.tsx
-  var Layer = class extends DisplayComponent {
-    render() {
-      var _a7, _b5, _c;
-      const { x, y } = this.props;
-      const ref = (_a7 = this.props.ref) != null ? _a7 : FSComponent.createRef();
-      let value;
-      if (typeof x !== "number" && typeof y !== "number") {
-        value = MappedSubject.create(([x2, y2]) => "translate(".concat(x2, ", ").concat(y2, ")"), x, y);
-      } else if (typeof x !== "number" || typeof y !== "number") {
-        throw new Error("Both attributes of Layer must be of the same type (number or Subscribable)");
-      } else {
-        value = "translate(".concat(x, ", ").concat(y, ")");
-      }
-      return /* @__PURE__ */ FSComponent.buildComponent(
-        "g",
-        {
-          ref,
-          transform: value,
-          visibility: (_c = (_b5 = this.props.visible) == null ? void 0 : _b5.map((v3) => v3 ? "inherit" : "hidden")) != null ? _c : "inherit"
-        },
-        this.props.children
-      );
     }
   };
 
@@ -77646,19 +78054,6 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
   };
 
-  // .fbw/fbw-common/src/systems/instruments/src/MsfsAvionicsCommon/providers/RopRowOansPublisher.ts
-  var RopRowOansPublisher = class extends SimVarPublisher {
-    constructor(bus) {
-      super(
-        /* @__PURE__ */ new Map([
-          ["rowRopWord1Raw", { name: "L:A32NX_ROW_ROP_WORD_1", type: SimVarValueType.Enum }],
-          ["oansWord1Raw", { name: "L:A32NX_OANS_WORD_1", type: SimVarValueType.Enum }]
-        ]),
-        bus
-      );
-    }
-  };
-
   // .fbw/fbw-a380x/src/systems/instruments/src/MsfsAvionicsCommon/UiWidgets/ContextMenu.tsx
   var ContextMenu = class extends DisplayComponent {
     constructor() {
@@ -77745,26 +78140,6 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       super.destroy();
     }
   };
-
-  // .fbw/fbw-a380x/src/systems/instruments/src/MsfsAvionicsCommon/providers/ResetPanelPublisher.ts
-  var _ResetPanelSimvarPublisher = class _ResetPanelSimvarPublisher extends SimVarPublisher {
-    constructor(bus) {
-      super(_ResetPanelSimvarPublisher.simvars, bus);
-    }
-  };
-  _ResetPanelSimvarPublisher.simvars = /* @__PURE__ */ new Map([
-    ["a380x_reset_panel_arpt_nav", { name: "L:A32NX_RESET_PANEL_ARPT_NAV", type: SimVarValueType.Bool }],
-    ["a380x_reset_panel_fmc_a", { name: "L:A32NX_RESET_PANEL_FMC_A", type: SimVarValueType.Bool }],
-    ["a380x_reset_panel_fmc_b", { name: "L:A32NX_RESET_PANEL_FMC_B", type: SimVarValueType.Bool }],
-    ["a380x_reset_panel_fmc_c", { name: "L:A32NX_RESET_PANEL_FMC_C", type: SimVarValueType.Bool }],
-    ["a380x_reset_panel_fws1", { name: "L:A32NX_RESET_PANEL_FWS1", type: SimVarValueType.Bool }],
-    ["a380x_reset_panel_fws2", { name: "L:A32NX_RESET_PANEL_FWS2", type: SimVarValueType.Bool }],
-    ["a380x_reset_panel_aesu1", { name: "L:A32NX_RESET_PANEL_AESU1", type: SimVarValueType.Bool }],
-    ["a380x_reset_panel_aesu2", { name: "L:A32NX_RESET_PANEL_AESU2", type: SimVarValueType.Bool }],
-    ["a380x_reset_panel_nss_avncs", { name: "L:A32NX_RESET_PANEL_NSS_AVNCS", type: SimVarValueType.Bool }],
-    ["a380x_reset_panel_nss_flt_ops", { name: "L:A32NX_RESET_PANEL_NSS_FLT_OPS", type: SimVarValueType.Bool }]
-  ]);
-  var ResetPanelSimvarPublisher = _ResetPanelSimvarPublisher;
 
   // .fbw/fbw-a32nx/src/systems/fmgc/src/FmsError.ts
   var FmsErrorType = /* @__PURE__ */ ((FmsErrorType3) => {
@@ -80346,331 +80721,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
   };
 
-  // src/FenixOansPublisher.ts
-  var ZOOM_VAR = "L:AMDB_OANS_ZOOM";
-  var CMD_VAR = "L:AMDB_OANS_CMD";
-  var MAX_ZOOM = 5;
-  var DEFAULT_ZOOM = 4;
-  var COMMAND_NAMES = ["", "AMDB_OANS_TOGGLE", "AMDB_OANS_RANGE_DEC", "AMDB_OANS_RANGE_INC", "AMDB_OANS_MENU", "AMDB_OANS_PANEL", "AMDB_OANS_DUMP_LAYOUT"];
-  var UI_COMMANDS = ["AMDB_OANS_MENU", "AMDB_OANS_PANEL", "AMDB_OANS_DUMP_LAYOUT"];
-  var COMMANDS = {
-    AMDB_OANS_TOGGLE: (z) => z > 0 ? 0 : DEFAULT_ZOOM,
-    AMDB_OANS_RANGE_DEC: (z) => z > 0 ? Math.min(MAX_ZOOM, z + 1) : z,
-    AMDB_OANS_RANGE_INC: (z) => z > 1 ? z - 1 : z
-  };
-  var OANS_MODES = [4 /* PLAN */, 3 /* ARC */, 2 /* ROSE_NAV */];
-  var LGCIU_ON_GROUND = 1 << 10;
-  var FenixOansPublisher = class {
-    constructor(bus) {
-      this.word = Arinc429Register.empty();
-      this.lastMode = -1;
-      this.lastZoom = -1;
-      /** Called with the display commands (open the menu, toggle the control panel). */
-      this.onUiCommand = () => void 0;
-      this.publisher = bus.getPublisher();
-      this.word.setSsm(3 /* NormalOperation */);
-    }
-    init() {
-    }
-    /** An H: event, or a command number arriving through L:AMDB_OANS_CMD. */
-    command(name) {
-      if (UI_COMMANDS.includes(name)) {
-        this.onUiCommand(name);
-        return;
-      }
-      const apply = COMMANDS[name];
-      if (apply) {
-        SimVar.SetSimVarValue(ZOOM_VAR, "number", apply(Math.round(SimVar.GetSimVarValue(ZOOM_VAR, "number"))));
-      }
-    }
-    onUpdate() {
-      var _a7;
-      const cmd = SimVar.GetSimVarValue(CMD_VAR, "number");
-      if (cmd) {
-        this.command((_a7 = COMMAND_NAMES[cmd]) != null ? _a7 : "");
-        SimVar.SetSimVarValue(CMD_VAR, "number", 0);
-      }
-      this.publishWord("latitude", SimVar.GetSimVarValue("PLANE LATITUDE", "degree latitude"));
-      this.publishWord("longitude", SimVar.GetSimVarValue("PLANE LONGITUDE", "degree longitude"));
-      this.publishWord("trueHeadingRaw", SimVar.GetSimVarValue("PLANE HEADING DEGREES TRUE", "degree"));
-      this.publishWord("groundSpeed", SimVar.GetSimVarValue("GROUND VELOCITY", "knots"));
-      this.publishWord("trueAirSpeed", SimVar.GetSimVarValue("AIRSPEED TRUE", "knots"));
-      this.publishWord("windDirection", SimVar.GetSimVarValue("AMBIENT WIND DIRECTION", "degrees"));
-      this.publishWord("windSpeed", SimVar.GetSimVarValue("AMBIENT WIND VELOCITY", "knots"));
-      const radioAltitude = SimVar.GetSimVarValue("RADIO HEIGHT", "feet");
-      this.publishWord("ra_radio_altitude_1", radioAltitude);
-      this.publishWord("ra_radio_altitude_2", radioAltitude);
-      this.publishWord("ra_radio_altitude_3", radioAltitude);
-      const gear = SimVar.GetSimVarValue("SIM ON GROUND", "bool") ? LGCIU_ON_GROUND : 0;
-      this.publishWord("lgciu_discrete_word_2_1", gear);
-      this.publishWord("lgciu_discrete_word_2_2", gear);
-      const mode = Math.round(SimVar.GetSimVarValue("L:S_FCU_EFIS1_ND_MODE", "number"));
-      const zoom = Math.round(SimVar.GetSimVarValue(ZOOM_VAR, "number"));
-      if (mode === this.lastMode && zoom === this.lastZoom) {
-        return;
-      }
-      this.lastMode = mode;
-      this.lastZoom = zoom;
-      const show = zoom > 0 && OANS_MODES.includes(mode);
-      this.publisher.pub("ndMode", mode, false, true);
-      if (zoom > 0) {
-        this.publisher.pub("oansRange", MAX_ZOOM - zoom, false, true);
-      }
-      this.publisher.pub("nd_show_oans", { side: "L", show }, false, true);
-      SimVar.SetSimVarValue("L:AMDB_OANS_ACTIVE", "number", show ? 1 : 0);
-    }
-    publishWord(topic, value) {
-      this.word.setValue(value);
-      this.publisher.pub(topic, this.word.rawWord, false, true);
-    }
-  };
-
-  // src/FenixBtv.ts
-  var KT = 0.514444;
-  var RELEASE_SPEED = 5.15;
-  var RELEASE_TARGET = RELEASE_SPEED * 0.9;
-  var RELEASE_BEFORE_EXIT_M = 10;
-  var HOLD_RATE_WITHIN_M = 15;
-  var RATE_WET = -2;
-  var RATE_DRY = -3;
-  var START_AT = 0.98;
-  var MARGIN = 1.05;
-  var ARM_SPEED = 30 * KT;
-  var PEDAL_RATE_PER_S = 1;
-  var TAKEOVER_CHECK_S = 0.5;
-  var LIMIT_S = 90;
-  var ARM_VAR = "L:AMDB_BTV_ARM";
-  var AUTOBRAKE = [
-    { light: "L:I_MIP_AUTOBRAKE_LO_L", button: "L:S_MIP_AUTOBRAKE_LO", name: "LO" },
-    { light: "L:I_MIP_AUTOBRAKE_MED_L", button: "L:S_MIP_AUTOBRAKE_MED", name: "MED" },
-    { light: "L:I_MIP_AUTOBRAKE_MAX_L", button: "L:S_MIP_AUTOBRAKE_MAX", name: "MAX" }
-  ];
-  var FenixBtv = class {
-    constructor(bus) {
-      this.status = Subject.create({ state: 0 /* Off */, exit: null, metres: null, missed: false });
-      this.exit = null;
-      this.exitName = null;
-      this.exitAt = null;
-      this.state = 0 /* Off */;
-      /** One try per rollout: set once it has been tried (or refused), cleared below 25 kt. */
-      this.rolloutDone = false;
-      this.takeoverAt = null;
-      this.startedAt = 0;
-      this.lastTime = 0;
-      this.slowingSince = null;
-      this.desired = RATE_WET;
-      this.endRate = 0;
-      this.missed = false;
-      this.decel = 0;
-      this.integral = 0;
-      this.pedal = 0;
-      this.releaseFrames = 0;
-      this.nextLog = 0;
-      this.published = {};
-      this.pub = bus.getPublisher();
-      const sub2 = bus.getSubscriber();
-      sub2.on("oansExitCoordinates").handle((c) => {
-        this.exitAt = c;
-        this.updateExit();
-      });
-      sub2.on("oansSelectedExit").handle((name) => {
-        this.exitName = name;
-        this.updateExit();
-      });
-    }
-    init() {
-    }
-    updateExit() {
-      this.exit = this.exitName && this.exitAt ? { name: this.exitName, lat: this.exitAt.lat, lon: this.exitAt.long } : null;
-    }
-    read() {
-      return {
-        time: SimVar.GetSimVarValue("E:SIMULATION TIME", "seconds"),
-        gs: SimVar.GetSimVarValue("GROUND VELOCITY", "meters per second"),
-        lat: SimVar.GetSimVarValue("PLANE LATITUDE", "degree latitude"),
-        lon: SimVar.GetSimVarValue("PLANE LONGITUDE", "degree longitude"),
-        heading: SimVar.GetSimVarValue("PLANE HEADING DEGREES TRUE", "degree"),
-        accel: SimVar.GetSimVarValue("ACCELERATION BODY Z", "meters per second squared"),
-        onGround: !!SimVar.GetSimVarValue("SIM ON GROUND", "bool"),
-        parkingBrake: SimVar.GetSimVarValue("BRAKE PARKING POSITION", "percent over 100"),
-        spoilers: SimVar.GetSimVarValue("SPOILERS LEFT POSITION", "percent over 100"),
-        autobrake: AUTOBRAKE.find((a) => SimVar.GetSimVarValue(a.light, "number") > 0.5),
-        armRequested: SimVar.GetSimVarValue(ARM_VAR, "number") > 0.5
-      };
-    }
-    /** What the ARM BTV button shows, sent only when it changes. */
-    publishArm(armed, canArm) {
-      if (this.published.armed !== armed) {
-        this.published.armed = armed;
-        this.pub.pub("amdb_btv_armed", armed, false, true);
-      }
-      if (this.published.canArm !== canArm) {
-        this.published.canArm = canArm;
-        this.pub.pub("amdb_btv_can_arm", canArm, false, true);
-      }
-    }
-    /** Along-track metres from the aircraft to the exit; negative once passed. */
-    ahead(r) {
-      if (!this.exit) {
-        return -Infinity;
-      }
-      const rad = Math.PI / 180;
-      const p1 = r.lat * rad;
-      const p2 = this.exit.lat * rad;
-      const dl = (this.exit.lon - r.lon) * rad;
-      const a = Math.sin((p2 - p1) / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
-      const d = 2 * 6371e3 * Math.asin(Math.sqrt(a));
-      const bearing2 = Math.atan2(Math.sin(dl) * Math.cos(p2), Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl));
-      return d * Math.cos(bearing2 - r.heading * rad);
-    }
-    onUpdate() {
-      var _a7, _b5;
-      const r = this.read();
-      const dt = r.time - this.lastTime;
-      this.lastTime = r.time;
-      if (dt <= 0 || dt > 1) {
-        return;
-      }
-      if (r.gs < 25 * KT) {
-        this.rolloutDone = false;
-      }
-      this.publishArm(r.armRequested, !!this.exit || r.armRequested);
-      if (this.state === 0 /* Off */ || this.state === 1 /* Armed */) {
-        this.watch(r);
-      } else {
-        this.rollout(r, dt);
-      }
-      const ahead = this.ahead(r);
-      const active = this.state >= 2 /* Rolling */;
-      this.publish({
-        state: this.state,
-        exit: (_b5 = (_a7 = this.exit) == null ? void 0 : _a7.name) != null ? _b5 : null,
-        metres: active && Number.isFinite(ahead) ? Math.max(0, Math.round(ahead)) : null,
-        missed: active && this.missed
-      });
-    }
-    /** Armed or not, and the start of the rollout. */
-    watch(r) {
-      var _a7;
-      if (this.takeoverAt !== null) {
-        if (r.time - this.takeoverAt < TAKEOVER_CHECK_S) {
-          return;
-        }
-        this.takeoverAt = null;
-        if (r.autobrake) {
-          log("takeover-failed-".concat(r.autobrake.name, "-still-armed:-Fenix-autobrake-keeps-the-brakes"));
-          return;
-        }
-        this.begin(r);
-        return;
-      }
-      this.setState(this.exit && r.armRequested ? 1 /* Armed */ : 0 /* Off */);
-      const rolling = r.onGround && r.gs > ARM_SPEED;
-      this.slowingSince = rolling && r.accel < -0.15 ? (_a7 = this.slowingSince) != null ? _a7 : r.time : null;
-      const started = rolling && (r.spoilers > 0.5 || this.slowingSince !== null && r.time - this.slowingSince >= 1);
-      if (!started || this.rolloutDone || this.state !== 1 /* Armed */) {
-        return;
-      }
-      this.rolloutDone = true;
-      if (this.ahead(r) <= RELEASE_BEFORE_EXIT_M) {
-        log("exit-already-passed:-not-taking-over");
-        return;
-      }
-      if (!r.autobrake) {
-        this.begin(r);
-        return;
-      }
-      const button = r.autobrake.button;
-      const count = Math.round(SimVar.GetSimVarValue(button, "number"));
-      const released = count % 2 === 0 ? count : count + 1;
-      SimVar.SetSimVarValue(button, "number", released + 1);
-      setTimeout(() => SimVar.SetSimVarValue(button, "number", released + 2), 150);
-      this.takeoverAt = r.time;
-      log("takeover:-".concat(r.autobrake.name, "-pressed-off-at-").concat(Math.round(r.gs / KT), "kt-exit-").concat(Math.round(this.ahead(r)), "m"));
-    }
-    begin(r) {
-      var _a7;
-      const remaining = Math.max(1, this.ahead(r) - RELEASE_BEFORE_EXIT_M);
-      const need = -(r.gs ** 2 - RELEASE_TARGET ** 2) / (2 * remaining) * MARGIN;
-      this.desired = need < RATE_WET ? RATE_DRY : RATE_WET;
-      this.startedAt = r.time;
-      this.decel = r.accel;
-      this.integral = 0;
-      this.pedal = 0;
-      this.nextLog = 0;
-      this.missed = false;
-      this.setState(2 /* Rolling */);
-      log("active:-".concat(Math.round(r.gs / KT), "kt-exit-").concat((_a7 = this.exit) == null ? void 0 : _a7.name, "-").concat(Math.round(this.ahead(r)), "m-rate-").concat(this.desired));
-    }
-    rollout(r, dt) {
-      if (this.state === 5 /* LettingGo */) {
-        this.brake(0);
-        if (--this.releaseFrames <= 0) {
-          SimVar.SetSimVarValue(ARM_VAR, "number", 0);
-          this.setState(0 /* Off */);
-        }
-        return;
-      }
-      const ahead = this.ahead(r);
-      const stop = !r.onGround ? "left-the-ground" : r.parkingBrake > 0.5 ? "parking-brake" : r.time - this.startedAt > 2 && r.accel > 0.5 ? "thrust" : r.autobrake ? "autobrake-".concat(r.autobrake.name, "-armed-again") : !this.exit ? "exit-cleared" : r.gs <= RELEASE_SPEED ? "10kt" : ahead < -30 ? "exit-passed" : r.time - this.startedAt > LIMIT_S ? "time-limit" : null;
-      if (stop) {
-        log("released:-".concat(stop, "-at-").concat((r.gs / KT).toFixed(1), "kt-exit-").concat(Math.round(ahead), "m"));
-        this.releaseFrames = 5;
-        this.setState(5 /* LettingGo */);
-        this.brake(0);
-        return;
-      }
-      this.decel += (r.accel - this.decel) * Math.min(1, dt / 0.25);
-      const remaining = Math.max(0, ahead - RELEASE_BEFORE_EXIT_M);
-      const need = -Math.max(0, r.gs ** 2 - RELEASE_TARGET ** 2) / (2 * Math.max(0.5, remaining));
-      const request = Math.min(5, Math.max(this.desired, need * MARGIN));
-      if (this.state === 2 /* Rolling */ && request < this.desired * START_AT) {
-        this.setState(3 /* Braking */);
-      } else if (this.state === 3 /* Braking */ && remaining < HOLD_RATE_WITHIN_M) {
-        this.endRate = request;
-        this.setState(4 /* Holding */);
-      }
-      const target = this.state === 2 /* Rolling */ ? null : this.state === 4 /* Holding */ ? this.endRate : request;
-      this.missed = need * MARGIN < RATE_DRY && r.gs - RELEASE_TARGET > RELEASE_SPEED;
-      let want = 0;
-      if (target === null) {
-        this.integral = 0;
-      } else {
-        const err = this.decel - target;
-        this.integral = Math.min(1, Math.max(0, this.integral + 0.6 * err * dt));
-        want = Math.min(1, Math.max(0, this.integral + 0.15 * err));
-      }
-      this.pedal += Math.min(PEDAL_RATE_PER_S * dt, Math.max(-PEDAL_RATE_PER_S * dt, want - this.pedal));
-      this.brake(this.pedal);
-      if (r.time >= this.nextLog) {
-        this.nextLog = r.time + 1;
-        log("t".concat((r.time - this.startedAt).toFixed(1), "-s").concat(this.state, "-").concat((r.gs / KT).toFixed(1), "kt-").concat(Math.round(ahead), "m-tgt").concat(target === null ? "none" : target.toFixed(2), "-dec").concat(this.decel.toFixed(2), "-ped").concat(Math.round(this.pedal * 100)));
-      }
-    }
-    /** Both brake pedals, 0 (released) to 1 (fully pressed), as hardware toe brakes send them. */
-    brake(u7) {
-      const axis = Math.round(-16383 + 32766 * Math.min(1, Math.max(0, u7)));
-      SimVar.SetSimVarValue("K:AXIS_LEFT_BRAKE_SET", "number", axis);
-      SimVar.SetSimVarValue("K:AXIS_RIGHT_BRAKE_SET", "number", axis);
-    }
-    setState(state) {
-      if (state !== this.state) {
-        this.state = state;
-        SimVar.SetSimVarValue("L:AMDB_BTV_STATE", "number", state);
-      }
-    }
-    publish(s) {
-      const now = this.status.get();
-      if (now.state !== s.state || now.exit !== s.exit || now.metres !== s.metres || now.missed !== s.missed) {
-        this.status.set(s);
-      }
-    }
-  };
-  function log(what) {
-    fetch("http://127.0.0.1:8770/amdb-oans-event?btv-".concat(what)).catch(() => void 0);
-  }
-
-  // src/instrument.tsx
+  // src/OansDisplay.tsx
   var reported = /* @__PURE__ */ new Set();
   function reportOnce(what) {
     if (!reported.has(what)) {
@@ -80678,30 +80729,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       fetch("http://127.0.0.1:8770/amdb-oans-event?".concat(what)).catch(() => void 0);
     }
   }
-  function btvText(s) {
-    if (s.state === 0 /* Off */ || s.state === 5 /* LettingGo */ || !s.exit) {
-      return "";
-    }
-    if (s.missed) {
-      return "BTV ".concat(s.exit, " EXIT MISSED");
-    }
-    return s.metres === null ? "BTV ".concat(s.exit) : "BTV ".concat(s.exit, " ").concat(s.metres, "M");
-  }
-  function btvClass(s) {
-    const colour = s.missed ? "Amber" : s.state === 1 /* Armed */ ? "Cyan" : "Green";
-    return "".concat(colour, " FontIntermediate MiddleAlign");
-  }
-  var AmdbFenixOans = class extends BaseInstrument {
-    constructor() {
-      super(...arguments);
-      this.bus = new ArincEventBus();
-      this.backplane = new InstrumentBackplane();
-      this.fenix = new FenixOansPublisher(this.bus);
-      this.btv = new FenixBtv(this.bus);
+  var OansDisplay = class {
+    constructor(bus) {
+      this.bus = bus;
       this.oansRef = FSComponent.createRef();
-      this.controlPanelRef = FSComponent.createRef();
+      this.rootRef = FSComponent.createRef();
       this.contextMenuRef = FSComponent.createRef();
-      this.oansShown = Subject.create(false);
+      this.shown = Subject.create(false);
       this.contextMenuVisible = Subject.create(false);
       this.contextMenuX = Subject.create(0);
       this.contextMenuY = Subject.create(0);
@@ -80719,50 +80753,20 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.trueAirSpeed = Subject.create("");
       this.halfRange = Subject.create("");
       this.arcView = Subject.create(false);
-      /**
-       * Display pixels per layout pixel. The display is laid out at 768 x 768, as Fenix's ND
-       * is; a panel.cfg that renders the ND texture larger (pixel_size 1536 for sharper text)
-       * gives a bigger page, which this fills by scaling the layout up to it.
-       */
-      this.scale = 1;
     }
-    get templateID() {
-      return "AmdbOansNd";
+    /** The airport the OANS is showing, or null. */
+    airport() {
+      var _a7, _b5, _c;
+      return ((_c = (_b5 = (_a7 = this.oansRef.getOrDefault()) == null ? void 0 : _a7.dataAirportIcao) == null ? void 0 : _b5.get) == null ? void 0 : _c.call(_b5)) || null;
     }
-    get isInteractive() {
-      return true;
+    update() {
+      var _a7;
+      (_a7 = this.oansRef.getOrDefault()) == null ? void 0 : _a7.Update();
     }
-    connectedCallback() {
-      super.connectedCallback();
-      this.backplane.addInstrument("fenix", this.fenix);
-      this.fenix.onUiCommand = (name) => {
-        reportOnce("command-".concat(name));
-        if (name === "AMDB_OANS_MENU") {
-          this.openContextMenu(260, 200);
-        } else if (name === "AMDB_OANS_PANEL") {
-          this.controlPanelVisible.set(!this.controlPanelVisible.get());
-        } else if (name === "AMDB_OANS_DUMP_LAYOUT") {
-          this.dumpLayout();
-        }
-      };
-      this.backplane.addInstrument("clock", new Clock(this.bus));
-      this.backplane.addPublisher("fms-oans", new FmsOansSimvarPublisher(this.bus));
-      this.backplane.addPublisher("rop-row-oans", new RopRowOansPublisher(this.bus));
-      this.backplane.addPublisher("btv", new BtvSimvarPublisher(this.bus));
-      this.backplane.addPublisher("resetPanel", new ResetPanelSimvarPublisher(this.bus));
-      this.backplane.addInstrument("btv-braking", this.btv);
-      this.backplane.init();
-      const fms = this.bus.getSubscriber();
-      fms.on("oansExitCoordinates").handle((c) => {
-        SimVar.SetSimVarValue("L:AMDB_BTV_EXIT_LAT", "degrees", c.lat);
-        SimVar.SetSimVarValue("L:AMDB_BTV_EXIT_LON", "degrees", c.long);
-      });
-      fms.on("oansSelectedExit").handle((exit) => {
-        SimVar.SetSimVarValue("L:AMDB_BTV_EXIT_SELECTED", "number", exit ? 1 : 0);
-        reportOnce("btv-exit-".concat(exit != null ? exit : "cleared"));
-      });
+    /** Put the display in `container`, and wire it up. */
+    render(container) {
       FSComponent.render(
-        /* @__PURE__ */ FSComponent.buildComponent("div", { class: "amdb-oans-root", style: { display: this.oansShown.map((v3) => v3 ? "block" : "none") } }, /* @__PURE__ */ FSComponent.buildComponent("div", { class: "oanc-container" }, /* @__PURE__ */ FSComponent.buildComponent(
+        /* @__PURE__ */ FSComponent.buildComponent("div", { ref: this.rootRef, class: "amdb-oans-root", style: { display: this.shown.map((v3) => v3 ? "block" : "none") } }, /* @__PURE__ */ FSComponent.buildComponent("div", { class: "oanc-container" }, /* @__PURE__ */ FSComponent.buildComponent(
           Oanc3,
           {
             bus: this.bus,
@@ -80792,19 +80796,32 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         ), /* @__PURE__ */ FSComponent.buildComponent(
           OansControlPanel,
           {
-            ref: this.controlPanelRef,
             bus: this.bus,
             side: "L",
             isVisible: this.controlPanelVisible,
             togglePanel: () => this.controlPanelVisible.set(!this.controlPanelVisible.get())
           }
         )),
-        document.getElementById("OANS_CONTENT")
+        container
       );
-      FSComponent.render(
-        /* @__PURE__ */ FSComponent.buildComponent("svg", { class: "amdb-btv", viewBox: "0 0 768 768" }, /* @__PURE__ */ FSComponent.buildComponent("text", { x: 384, y: 60, class: this.btv.status.map(btvClass) }, this.btv.status.map(btvText))),
-        document.getElementById("OANS_CONTENT")
-      );
+      this.wireMouse();
+      this.wireFrame();
+    }
+    /** A mouse position in the display's own 768 x 768 layout, wherever and however big it is shown. */
+    layoutPoint(e) {
+      const r = this.rootRef.instance.getBoundingClientRect();
+      const k = r.width > 0 ? r.width / 768 : 1;
+      return [(e.clientX - r.left) / k, (e.clientY - r.top) / k];
+    }
+    // The A380X opens the context menu with the KCCU. On Fenix MSFS delivers mousedown and
+    // click to the panel but never dblclick or contextmenu, so: a left click on the map that
+    // is not on a label and does not end a drag toggles the menu, and a right-button press
+    // opens it. A click on a label stays the label's own (runway and exit selection for BTV).
+    // A press is judged from mousedown to mouseup (or, failing a mouseup, the click that
+    // follows), using the press's own position: the synthesised click is not trusted for it.
+    // Movement is measured in screen coordinates, as FlyByWire's own panning does. Only the
+    // labels that act on a click (runway ends and exits for BTV, crosses, flags) keep it.
+    wireMouse() {
       const labels = this.oansRef.instance.labelContainerRef.instance;
       const onActiveLabel = (e) => {
         const target = e.target;
@@ -80833,11 +80850,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         if (e.button === 2) {
           press = null;
           if (!onActiveLabel(e)) {
-            this.openContextMenu(e.clientX / this.scale, e.clientY / this.scale);
+            const [x2, y2] = this.layoutPoint(e);
+            this.openContextMenu(x2, y2);
           }
           return;
         }
-        press = { x: e.clientX / this.scale, y: e.clientY / this.scale, sx: e.screenX, sy: e.screenY, onLabel: onActiveLabel(e), moved: false };
+        const [x, y] = this.layoutPoint(e);
+        press = { x, y, sx: e.screenX, sy: e.screenY, onLabel: onActiveLabel(e), moved: false };
       });
       labels.addEventListener("mousemove", (e) => {
         if (press && Math.hypot(e.screenX - press.sx, e.screenY - press.sy) > 10) {
@@ -80854,9 +80873,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         reportOnce("click-at-".concat(Math.round(e.clientX), ",").concat(Math.round(e.clientY)));
         release();
       });
+      labels.addEventListener("contextmenu", (e) => e.preventDefault());
+    }
+    wireFrame() {
       const sub2 = this.bus.getSubscriber();
       sub2.on("nd_show_oans").handle(({ show }) => {
-        this.oansShown.set(show);
+        this.shown.set(show);
         if (show) {
           this.placeForMode();
           setTimeout(() => this.reportLayout(), 3e3);
@@ -80896,28 +80918,27 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return;
       }
       const wanted = this.arcView.get() ? 620 - 768 / 2 : 0;
-      const found = oanc.modeAnimationOffsetY.get();
-      reportOnce("mode-offset-found-".concat(found, "-wanted-").concat(wanted));
+      reportOnce("mode-offset-found-".concat(oanc.modeAnimationOffsetY.get(), "-wanted-").concat(wanted));
       oanc.modeAnimationOffsetX.set(0);
       oanc.modeAnimationOffsetY.set(wanted);
     }
     /** Where the map's moving containers and the aircraft actually ended up, for the bridge log. */
     reportLayout() {
-      var _a7, _b5;
-      const root = document.querySelector(".amdb-oans-root .oanc-container");
+      var _a7, _b5, _c;
+      const root = (_a7 = this.rootRef.getOrDefault()) == null ? void 0 : _a7.querySelector(".oanc-container");
       if (!root) {
         return;
       }
       const moving = Array.from(root.querySelectorAll('[style*="transform"]')).slice(0, 6);
       const transforms = moving.map((el) => window.getComputedStyle(el).transform.replace(/\s/g, "")).join("|");
-      const plane = (_b5 = (_a7 = root.querySelector(".oanc-airplane")) == null ? void 0 : _a7.closest("svg")) == null ? void 0 : _b5.getBoundingClientRect();
+      const plane = (_c = (_b5 = root.querySelector(".oanc-airplane")) == null ? void 0 : _b5.closest("svg")) == null ? void 0 : _c.getBoundingClientRect();
       const where = plane ? "".concat(Math.round(plane.left + plane.width / 2), ",").concat(Math.round(plane.top + plane.height / 2)) : "none";
       reportOnce("layout-aircraft-".concat(where, "-transforms-").concat(transforms));
     }
     /** Every positioned element of the map, with where it really is, sent to the bridge log. */
     dumpLayout() {
-      var _a7;
-      const root = document.querySelector(".amdb-oans-root .oanc-container");
+      var _a7, _b5;
+      const root = (_a7 = this.rootRef.getOrDefault()) == null ? void 0 : _a7.querySelector(".oanc-container");
       const oanc = this.oansRef.getOrDefault();
       if (!root || !oanc) {
         return;
@@ -80928,7 +80949,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return "".concat(Math.round(r.left), ",").concat(Math.round(r.top), " ").concat(Math.round(r.width), "x").concat(Math.round(r.height));
       };
       send("mode=".concat(this.arcView.get() ? "ARC" : "not-arc", " offset=").concat(oanc.modeAnimationOffsetX.get(), ",").concat(oanc.modeAnimationOffsetY.get(), " pan=").concat(oanc.panOffsetX.get(), ",").concat(oanc.panOffsetY.get()));
-      const plane = (_a7 = root.querySelector(".oanc-airplane")) == null ? void 0 : _a7.closest("svg");
+      const plane = (_b5 = root.querySelector(".oanc-airplane")) == null ? void 0 : _b5.closest("svg");
       if (plane) {
         send("aircraft box=".concat(box(plane), " visibility=").concat(window.getComputedStyle(plane).visibility));
       }
@@ -80939,11 +80960,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       });
     }
     openContextMenu(x, y) {
+      var _a7;
       reportOnce("menu-opened-at-".concat(Math.round(x), ",").concat(Math.round(y)));
       this.bus.getPublisher().pub("oans_query_symbols_at_cursor", { side: "L", cursorPosition: [x, y] });
       this.contextMenuAt = { x, y };
       this.contextMenuRef.instance.display(x, y);
-      const menu = document.querySelector(".amdb-oans-root .mfd-context-menu");
+      const menu = (_a7 = this.rootRef.getOrDefault()) == null ? void 0 : _a7.querySelector(".mfd-context-menu");
       if (menu) {
         const size = 768;
         const w = menu.offsetWidth;
@@ -80981,16 +81003,157 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         { name: "CENTER ON ACFT", disabled: false, onPressed: () => pub().pub("oans_center_on_acft", true, true, false) }
       ];
     }
+  };
+
+  // src/TaxiRouteFeed.ts
+  var BRIDGE2 = "http://127.0.0.1:8770";
+  var POLL_MS = 2e3;
+  var TaxiRouteFeed = class {
+    constructor(bus, airport, onRoute) {
+      this.bus = bus;
+      this.airport = airport;
+      this.onRoute = onRoute;
+      /** What is drawn now: the route's serial and the airport, or none. */
+      this.shown = "";
+      this.busy = false;
+      this.next = 0;
+      this.last = null;
+    }
+    /** Call every frame: asks the bridge now and then, and redraws when the airport changes. */
+    update(now = Date.now()) {
+      this.show(this.last);
+      if (this.busy || now < this.next) {
+        return;
+      }
+      this.next = now + POLL_MS;
+      this.busy = true;
+      fetch("".concat(BRIDGE2, "/amdb/taxi-route/current")).then((r) => r.json()).then(
+        (route) => {
+          this.busy = false;
+          this.last = route && Array.isArray(route.points) ? route : null;
+          this.show(this.last);
+        },
+        () => {
+          this.busy = false;
+        }
+      );
+    }
+    /** Ask the bridge again on the next update, as after setting or clearing the route. */
+    refresh() {
+      this.next = 0;
+    }
+    show(route) {
+      const icao = this.airport();
+      const drawn = route && icao && route.icao.toUpperCase() === icao.toUpperCase() ? route : null;
+      const key = drawn ? "".concat(drawn.serial, "|").concat(icao) : "none|".concat(icao);
+      if (key === this.shown) {
+        return;
+      }
+      this.shown = key;
+      this.bus.getPublisher().pub("amdb_taxi_route", drawn ? drawn.points : null, false, true);
+      if (this.onRoute) {
+        this.onRoute(drawn);
+      }
+    }
+    /** Route a clearance from a position; the bridge keeps it as the current route. */
+    static set(icao, lat, lon, clearance) {
+      const q = "icao=".concat(encodeURIComponent(icao), "&lat=").concat(lat, "&lon=").concat(lon, "&clearance=").concat(encodeURIComponent(clearance));
+      return fetch("".concat(BRIDGE2, "/amdb/taxi-route?").concat(q)).then(
+        (r) => r.json(),
+        () => ({ error: "AMDB Bridge is not running" })
+      );
+    }
+    static clear() {
+      return fetch("".concat(BRIDGE2, "/amdb/taxi-route/clear")).then(
+        (r) => r.json(),
+        () => null
+      );
+    }
+  };
+
+  // src/instrument.tsx
+  function btvText(s) {
+    if (s.state === 0 /* Off */ || s.state === 5 /* LettingGo */ || !s.exit) {
+      return "";
+    }
+    if (s.missed) {
+      return "BTV ".concat(s.exit, " EXIT MISSED");
+    }
+    return s.metres === null ? "BTV ".concat(s.exit) : "BTV ".concat(s.exit, " ").concat(s.metres, "M");
+  }
+  function btvClass(s) {
+    const colour = s.missed ? "Amber" : s.state === 1 /* Armed */ ? "Cyan" : "Green";
+    return "".concat(colour, " FontIntermediate MiddleAlign");
+  }
+  var AmdbFenixOans = class extends BaseInstrument {
+    constructor() {
+      super(...arguments);
+      this.bus = new ArincEventBus();
+      this.backplane = new InstrumentBackplane();
+      this.fenix = new FenixOansPublisher(this.bus);
+      this.btv = new FenixBtv(this.bus);
+      this.display = new OansDisplay(this.bus);
+      /** The taxi route the bridge keeps, drawn when it is for the airport shown. */
+      this.taxiRoute = new TaxiRouteFeed(this.bus, () => this.display.airport());
+      /**
+       * Display pixels per layout pixel. The display is laid out at 768 x 768, as Fenix's ND
+       * is; a panel.cfg that renders the ND texture larger (pixel_size 1536 for sharper text)
+       * gives a bigger page, which this fills by scaling the layout up to it.
+       */
+      this.scale = 1;
+    }
+    get templateID() {
+      return "AmdbOansNd";
+    }
+    get isInteractive() {
+      return true;
+    }
+    connectedCallback() {
+      super.connectedCallback();
+      this.backplane.addInstrument("fenix", this.fenix);
+      this.fenix.onUiCommand = (name) => {
+        reportOnce("command-".concat(name));
+        if (name === "AMDB_OANS_MENU") {
+          this.display.openContextMenu(260, 200);
+        } else if (name === "AMDB_OANS_PANEL") {
+          this.display.controlPanelVisible.set(!this.display.controlPanelVisible.get());
+        } else if (name === "AMDB_OANS_DUMP_LAYOUT") {
+          this.display.dumpLayout();
+        }
+      };
+      this.backplane.addInstrument("clock", new Clock(this.bus));
+      this.backplane.addPublisher("fms-oans", new FmsOansSimvarPublisher(this.bus));
+      this.backplane.addPublisher("rop-row-oans", new RopRowOansPublisher(this.bus));
+      this.backplane.addPublisher("btv", new BtvSimvarPublisher(this.bus));
+      this.backplane.addPublisher("resetPanel", new ResetPanelSimvarPublisher(this.bus));
+      this.backplane.addInstrument("btv-braking", this.btv);
+      this.backplane.init();
+      const fms = this.bus.getSubscriber();
+      fms.on("oansExitCoordinates").handle((c) => {
+        SimVar.SetSimVarValue("L:AMDB_BTV_EXIT_LAT", "degrees", c.lat);
+        SimVar.SetSimVarValue("L:AMDB_BTV_EXIT_LON", "degrees", c.long);
+      });
+      fms.on("oansSelectedExit").handle((exit) => {
+        SimVar.SetSimVarValue("L:AMDB_BTV_EXIT_SELECTED", "number", exit ? 1 : 0);
+        reportOnce("btv-exit-".concat(exit != null ? exit : "cleared"));
+      });
+      const content = document.getElementById("OANS_CONTENT");
+      this.display.render(content);
+      FSComponent.render(
+        /* @__PURE__ */ FSComponent.buildComponent("svg", { class: "amdb-btv", viewBox: "0 0 768 768" }, /* @__PURE__ */ FSComponent.buildComponent("text", { x: 384, y: 60, class: this.btv.status.map(btvClass) }, this.btv.status.map(btvText))),
+        content
+      );
+    }
     onInteractionEvent(args) {
       super.onInteractionEvent(args);
       this.fenix.command(args[0]);
     }
     Update() {
-      var _a7;
       super.Update();
       this.fitToDisplay();
+      this.taxiRoute.update();
       this.backplane.onUpdate();
-      (_a7 = this.oansRef.getOrDefault()) == null ? void 0 : _a7.Update();
+      this.display.update();
     }
     /** Scale the 768 x 768 layout to the page the display gives this gauge. */
     fitToDisplay() {

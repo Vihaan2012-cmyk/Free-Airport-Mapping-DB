@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- Airport Map: a runway, and a taxi route leaving it for a stand -->
+  <g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="7" y="4" width="11" height="40" rx="1.5" stroke-width="2.4" />
+    <path d="M12.5 9v4M12.5 19v4M12.5 29v4" stroke-width="1.8" />
+    <path d="M18 30h6a8 8 0 0 0 8-8v-8" stroke-width="2.4" stroke-dasharray="4 3" />
+    <path d="M27 14h10" stroke-width="2.4" />
+  </g>
+  <circle cx="32" cy="9" r="3.4" fill="#FFFFFF" />
+</svg>

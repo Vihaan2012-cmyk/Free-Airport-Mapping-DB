@@ -21,14 +21,22 @@ end, then the exit), then press ARM BTV on the MAP DATA page of the OANS control
 panel. "BTV <exit>" shows in cyan at the top of the ND. The autobrake need not
 be armed; if a mode is, BTV presses it off at touchdown. It then brakes itself:
 no braking while the exit is further than the aircraft would roll, then just
-enough to reach the exit at 10 kt. The line turns green with the distance to
+enough to reach the exit at the speed it is built for: 40 kt for a high-speed
+exit (one leaving the runway at 20 to 50 degrees, as the map data marks it),
+10 kt for any other. The line turns green with the distance to
 go. BTV cannot add thrust: an exit further than the rollout reaches is taxied
 to as usual. L:AMDB_BTV_ARM (1 = armed) is there to bind to hardware.
 
-It lets go at 10 kt, on passing the exit, or when you set the parking brake,
+It lets go at that speed, on passing the exit, or when you set the parking brake,
 add thrust, arm the autobrake, or clear the exit, and disarms itself after each
 rollout. It has been flown in test runs, not yet in many landings: watch it,
 and brake yourself if needed.
+
+Taxi routes
+-----------
+A taxi route set in the Airport Map toolbar window (a separate download: type a
+clearance such as "A B K 31L") is drawn on this OANS too, in magenta, whenever
+it is for the airport shown.
 
 What it changes in the Fenix
 ----------------------------

@@ -98,6 +98,14 @@ mod app {
             quit_running();
             return uninstall();
         }
+        // For the Airport Map toolbar window's installer, which has no bridge of its own.
+        if let Some(i) = args.iter().position(|a| a == "--install-toolbar") {
+            return install_toolbar(args.get(i + 1).map(PathBuf::from));
+        }
+        if has("--uninstall-toolbar") {
+            desktop::remove_toolbar_oans_everywhere().iter().for_each(|p| amdbgen::term::warn(p));
+            return 0;
+        }
         if let Some(i) = args.iter().position(|a| a == "--start-with-sim") {
             return start_with_sim(args.get(i + 1).map_or(true, |v| v != "off"));
         }
@@ -143,6 +151,23 @@ mod app {
             amdbgen::term::warn("No Fenix A320 found in any simulator's Community folder");
         }
         i32::from(failed)
+    }
+
+    fn install_toolbar(package: Option<PathBuf>) -> i32 {
+        let Some(package) = package else {
+            amdbgen::term::error("--install-toolbar needs the Airport Map package's folder");
+            return 2;
+        };
+        match desktop::install_toolbar_oans_everywhere(&package) {
+            Ok(notes) => {
+                notes.iter().for_each(|n| amdbgen::term::success(n));
+                0
+            }
+            Err(e) => {
+                amdbgen::term::error(&format!("Airport Map: {e:#}"));
+                1
+            }
+        }
     }
 
     fn uninstall() -> i32 {

@@ -18,6 +18,7 @@ pub mod service;
 pub mod settings;
 pub mod simbrief;
 pub mod store;
+pub mod taxi;
 pub mod tls;
 
 pub const DEFAULT_PORT: u16 = 8770;

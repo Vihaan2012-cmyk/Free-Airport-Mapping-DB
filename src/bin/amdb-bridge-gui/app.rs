@@ -232,7 +232,15 @@ pub fn main() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
     let shared = Arc::new(Shared::default());
-    let headless = has("--install-a220") || has("--install-a320-oans") || has("--update-a320-oans") || has("--uninstall") || has("--quit") || has("--run-at-login") || has("--setup-navigraph");
+    let headless = has("--install-a220")
+        || has("--install-a320-oans")
+        || has("--update-a320-oans")
+        || has("--install-toolbar")
+        || has("--uninstall-toolbar")
+        || has("--uninstall")
+        || has("--quit")
+        || has("--run-at-login")
+        || has("--setup-navigraph");
     install_sink(&shared, !headless);
 
     if has("--quit") {
@@ -243,6 +251,27 @@ pub fn main() -> i32 {
     }
     if has("--install-a320-oans") || has("--update-a320-oans") {
         return install_a320_oans_everywhere(has("--update-a320-oans"));
+    }
+    // For the Airport Map toolbar window's installer, which has no bridge of its own.
+    if let Some(i) = args.iter().position(|a| a == "--install-toolbar") {
+        let Some(package) = args.get(i + 1) else {
+            amdbgen::term::error("--install-toolbar needs the Airport Map package's folder");
+            return 2;
+        };
+        return match desktop::install_toolbar_oans_everywhere(std::path::Path::new(package)) {
+            Ok(notes) => {
+                notes.iter().for_each(|n| amdbgen::term::success(n));
+                0
+            }
+            Err(e) => {
+                amdbgen::term::error(&format!("Airport Map: {e:#}"));
+                1
+            }
+        };
+    }
+    if has("--uninstall-toolbar") {
+        desktop::remove_toolbar_oans_everywhere().iter().for_each(|p| amdbgen::term::warn(p));
+        return 0;
     }
     let relaunched = has("--relaunched");
     if has("--uninstall") {

@@ -478,6 +478,9 @@ pub fn convert(feat: &mut AmdbFeature, seq: usize, thresholds: &Thresholds) -> b
             // The runway ends whose landings can take it, dot-joined: our own addition, which
             // the A320 OANS reads to offer only the exits for the runway picked for BTV.
             put("idthr", opt_str(s(&p, "idthr")));
+            // 2: a high-speed exit (20-50 degrees off the runway), 1 any other: also ours, for
+            // BTV to aim at the speed the exit is built for.
+            put("exittype", Value::from(i(&p, "exittype").unwrap_or(1)));
             put("status", Value::from(1));
             put("color", Value::from(0));
             put("style", Value::from(0));

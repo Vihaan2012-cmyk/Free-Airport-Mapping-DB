@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.2.7 (2026-09-26) · A320 OANS 1.0.5 · Airport Map 1.0.0
+
+**Taxi routes, an OANS window for any aircraft, and BTV that knows a high-speed exit.**
+
+- **Airport Map**, a new, separate download (`AMDB-Airport-Map-Setup-1.0.0.exe`): the
+  FlyByWire A380X OANS in a toolbar window, for any aircraft, with its own ARC / ROSE /
+  PLAN and 0.2 to 5 NM range, the MAP DATA panel, and a **TAXI** box. Type a clearance,
+  `A B K 31L` or `B K STAND 73`, and the way from the aircraft along those taxiways to the
+  runway or stand is drawn in magenta. It carries no bridge: its installer asks where AMDB
+  Bridge or the A320 OANS is installed and has it add the window to each simulator.
+- **Taxi routing in the bridge**: `/amdb/taxi-route` finds the way on the airport's
+  taxiway network, following the taxiways named in order (another only where one must be
+  crossed to reach the first), holding short of the runway, or to a stand. The current
+  route is kept for every display to draw.
+- **A320 OANS 1.0.5** draws the same route on the Fenix ND, in magenta, when it is for the
+  airport shown.
+- **BTV aims for the exit's own speed**: 40 kt for a high-speed exit (20 to 50 degrees off
+  the runway, as the map data now marks it), 10 kt for any other.
+- `AMDB Bridge.exe` and `A320 OANS.exe` take `--install-toolbar <package>` and
+  `--uninstall-toolbar`, for the Airport Map's installer.
+- Fixed: the OANS's BTV layer was cleared under the transform its last drawing left, so the
+  part of the map above and left of its centre kept anything drawn there before.
+
 ## 1.2.6 (2026-09-26) · A320 OANS 1.0.4
 
 **Community folders, for a simulator whose settings do not lead to its own.** AMDB Bridge
