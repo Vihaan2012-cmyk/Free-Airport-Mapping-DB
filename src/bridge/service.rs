@@ -130,6 +130,14 @@ pub fn start(settings: &Settings, opts: &Options) -> Result<Running> {
             }
         }
     }
+    // Only where the A320 OANS is installed: a Fenix update drops the lines that load it.
+    for sim in desktop::detect_sims() {
+        match desktop::repatch_a320_oans(&sim.community) {
+            Ok(files) if !files.is_empty() => crate::term::success(&format!("{}: A320 OANS added to the Fenix again after a Fenix update; restart the simulator to load it", sim.name)),
+            Ok(_) => {}
+            Err(e) => crate::term::warn(&format!("{}: could not add the A320 OANS to the Fenix: {e:#}", sim.name)),
+        }
+    }
     crate::term::success("Ready: load your aircraft");
     Ok(Running { handle, redirected, http_port, started: Instant::now() })
 }

@@ -304,19 +304,100 @@ fn derived_props(geom: &Geometry<f64>, decimals: i32) -> Vec<(&'static str, Valu
 fn layer_collection(ap: &AirportData, layer: Layer, wgs84: bool, precision: Option<f64>) -> Value {
     let decimals = if wgs84 { 7 } else { 2 };
     let feats = ap.layers.get(&layer).map(Vec::as_slice).unwrap_or(&[]);
+    let named_building = largest_named(feats, "ident", short_building_name);
+    let mut stands_served = std::collections::HashSet::new();
     let arr: Vec<Value> = feats
         .iter()
-        .map(|f: &AmdbFeature| {
+        .enumerate()
+        .filter_map(|(i, f): (usize, &AmdbFeature)| {
+            let mut props = f.props.clone();
+            // A moving map labels every stand location and every named building, so each
+            // stand and each building name is served once.
+            match layer {
+                Layer::ParkingStandLocation => {
+                    let name = stand_base_name(f.get_str("idstd").unwrap_or("")).to_string();
+                    if !name.is_empty() && !stands_served.insert(name.clone()) {
+                        return None;
+                    }
+                    props.insert("idstd".to_string(), Value::from(name));
+                }
+                Layer::VerticalPolygonalStructure => {
+                    if let Some(name) = f.get_str("ident") {
+                        let label = short_building_name(name);
+                        let shown = if named_building.get(&label) == Some(&i) { Value::from(label) } else { Value::Null };
+                        props.insert("ident".to_string(), shown);
+                    }
+                }
+                _ => {}
+            }
             let mut geom = if wgs84 { ap.frame.to_wgs84(&f.geom) } else { f.geom.clone() };
             geom = snap_geometry(&geom, precision);
-            let mut props = f.props.clone();
             for (k, v) in derived_props(&geom, decimals) {
                 props.insert(k.to_string(), v);
             }
-            json!({"type":"Feature","geometry": geometry_to_json(&geom, decimals),"properties": Value::Object(props)})
+            Some(json!({"type":"Feature","geometry": geometry_to_json(&geom, decimals),"properties": Value::Object(props)}))
         })
         .collect();
     json!({"type":"FeatureCollection","features": arr})
+}
+
+/// `A13 (2)` -> `A13`. The generator keeps repeated stand names unique that way (the
+/// scenery often gives one gate a parking spot per aircraft size), but it is one stand.
+fn stand_base_name(name: &str) -> &str {
+    match name.rsplit_once(" (") {
+        Some((base, n)) if n.len() > 1 && n.ends_with(')') && n[..n.len() - 1].chars().all(|c| c.is_ascii_digit()) => base,
+        _ => name,
+    }
+}
+
+/// A building name short enough to label on a moving map, as AMDB idents are (`T1`,
+/// `TERMINAL 2`); OpenStreetMap gives full names such as `Terminal do Aeroporto da Madeira`.
+fn short_building_name(name: &str) -> String {
+    const LIMIT: usize = 16;
+    let words: Vec<&str> = name.split_whitespace().collect();
+    if let Some(i) = words.iter().position(|w| w.eq_ignore_ascii_case("terminal")) {
+        // Keep a designator ("2", "B", "T3"), not the start of a phrase ("do", "de", "of").
+        let designator = words.get(i + 1).filter(|w| w.len() <= 3 && !["do", "da", "de", "del", "des", "du", "of", "the"].contains(&w.to_ascii_lowercase().as_str()));
+        return match designator {
+            Some(d) => format!("Terminal {d}"),
+            None => "Terminal".to_string(),
+        };
+    }
+    if name.chars().count() <= LIMIT {
+        return name.to_string();
+    }
+    let mut out = String::new();
+    for w in words {
+        if out.chars().count() + w.chars().count() + usize::from(!out.is_empty()) > LIMIT {
+            break;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(w);
+    }
+    if out.is_empty() {
+        name.chars().take(LIMIT).collect()
+    } else {
+        out
+    }
+}
+
+/// For each label `key` is shown as (through `label`), the index of the largest feature
+/// carrying it: two buildings whose names shorten to the same label get one label.
+fn largest_named(feats: &[AmdbFeature], key: &str, label: fn(&str) -> String) -> std::collections::HashMap<String, usize> {
+    use geo::Area;
+    let mut best: std::collections::HashMap<String, (usize, f64)> = std::collections::HashMap::new();
+    for (i, f) in feats.iter().enumerate() {
+        if let Some(name) = f.get_str(key) {
+            let area = f.geom.unsigned_area();
+            let e = best.entry(label(name)).or_insert((i, area));
+            if area > e.1 {
+                *e = (i, area);
+            }
+        }
+    }
+    best.into_iter().map(|(k, (i, _))| (k, i)).collect()
 }
 
 /// Friendly name for the calling add-on, from its User-Agent.
@@ -617,6 +698,24 @@ pub fn start(store: Arc<Store>, listen: Listen) -> Result<ServerHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stand_names_lose_only_the_uniqueness_suffix() {
+        assert_eq!(stand_base_name("A13 (2)"), "A13");
+        assert_eq!(stand_base_name("GA ramp (3)"), "GA ramp");
+        assert_eq!(stand_base_name("A13"), "A13");
+        assert_eq!(stand_base_name("Cargo (North)"), "Cargo (North)");
+        assert_eq!(stand_base_name("Remote ()"), "Remote ()");
+    }
+
+    #[test]
+    fn building_names_fit_a_moving_map() {
+        assert_eq!(short_building_name("Terminal do Aeroporto da Madeira"), "Terminal");
+        assert_eq!(short_building_name("Terminal 2"), "Terminal 2");
+        assert_eq!(short_building_name("International Terminal B"), "Terminal B");
+        assert_eq!(short_building_name("Hangar"), "Hangar");
+        assert_eq!(short_building_name("Air Traffic Control Tower Building"), "Air Traffic");
+    }
 
     #[test]
     fn names_the_a380s_own_client() {

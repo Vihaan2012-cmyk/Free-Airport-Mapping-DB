@@ -920,6 +920,201 @@ pub fn unpatch_a220_page(community: &Path) -> Result<usize> {
     Ok(n)
 }
 
+// ---------------------------------------------------------------------------------
+// Fenix A320 OANS shell. Proof-of-life only: one invisible manager gauge (NO_TEXTURE,
+// 1x1 -- the pattern Fenix's own LOD.html already uses) added as a new [VCockpitNN]
+// block in Fenix's own panel.cfg, pointed at a single HTML file our own package adds
+// under the aircraft's html_ui folder. Nothing of Fenix's own is replaced; panel.cfg
+// is the aircraft's own file, edited where it sits, with a backup kept beside it.
+// ---------------------------------------------------------------------------------
+
+const FENIX_OANS_MARK: &str = "//amdb-bridge-fenix-oans";
+/// Paths our own package adds under `html_ui/Pages/VCockpit/Instruments/`, where panel.cfg
+/// gauge paths resolve -- Fenix never had anything here, so nothing is overridden.
+const FENIX_OANS_GAUGE_PATH: &str = "amdb-oans/oans-shell.html";
+const FENIX_OANS_ND_PATH: &str = "amdb-oans/oans-nd.html";
+/// The Captain ND's block is found by its texture, not its number.
+const FENIX_ND_TEXTURE: &str = "texture=$A320_ND_Captain";
+
+/// Add both OANS gauges to Fenix's panel.cfg text: the invisible manager as a new
+/// `[VCockpitNN]` block, and the ND overlay stacked after the Captain ND's own gauge on
+/// the same texture (the way Fenix stacks its PFD over its weather radar). Only what is
+/// missing is added. None when both are already there, or when either anchor is not
+/// found (a panel.cfg shape this bridge does not know).
+pub fn patch_fenix_oans_text(text: &str) -> Option<String> {
+    let mut out = text.to_string();
+    if !out.contains(FENIX_OANS_GAUGE_PATH) {
+        out = add_fenix_manager_block(&out)?;
+    }
+    if !out.contains(FENIX_OANS_ND_PATH) {
+        out = add_fenix_nd_overlay(&out)?;
+    }
+    (out != text).then_some(out)
+}
+
+/// Stack the ND overlay after the last gauge in the Captain ND's block, at that block's size.
+fn add_fenix_nd_overlay(text: &str) -> Option<String> {
+    let tex = text.find(FENIX_ND_TEXTURE)?;
+    let start = text[..tex].rfind("\n[").map_or(0, |i| i + 1);
+    let end = text[tex..].find("\n[").map_or(text.len(), |i| tex + i);
+    let block = &text[start..end];
+    let mut next = 0u32;
+    let mut from = 0;
+    while let Some(at) = block[from..].find("htmlgauge") {
+        let at = from + at + "htmlgauge".len();
+        from = at;
+        let digits: String = block[at..].chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Ok(n) = digits.parse::<u32>() {
+            next = next.max(n + 1);
+        }
+    }
+    let size = block.lines().find_map(|l| l.trim().strip_prefix("size_mm=")).map(|s| s.replace(' ', "")).unwrap_or_else(|| "768,768".to_string());
+    let at = start + block.trim_end().len();
+    let line = format!("\n{FENIX_OANS_MARK}\nhtmlgauge{next:02}={FENIX_OANS_ND_PATH}, 0,0,{size}");
+    Some(format!("{}{}{}", &text[..at], line, &text[at..]))
+}
+
+fn add_fenix_manager_block(text: &str) -> Option<String> {
+    let mut max = 0u32;
+    let mut from = 0;
+    while let Some(at) = text[from..].find("[VCockpit") {
+        let at = from + at + "[VCockpit".len();
+        from = at;
+        let digits: String = text[at..].chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Ok(n) = digits.parse::<u32>() {
+            max = max.max(n);
+        }
+    }
+    if max == 0 {
+        return None;
+    }
+    let next = max + 1;
+    let block = format!("[VCockpit{next:02}]\n{FENIX_OANS_MARK}\nsize_mm=1,1\npixel_size=1,1\ntexture=NO_TEXTURE\nhtmlgauge00={FENIX_OANS_GAUGE_PATH}, 0,0,1,1\n");
+    // After the last cockpit, before the paintings (MSFS 2020); the MSFS 2024 cockpit part
+    // has none, and it goes at the end.
+    Some(match text.find("\n[VPainting") {
+        Some(at) => format!("{}{}\n{}", &text[..at + 1], block, &text[at + 1..]),
+        None => format!("{}\n\n{}", text.trim_end(), block),
+    })
+}
+
+// The Captain EFIS range knob. Its template runs INC_CODE / DEC_CODE for every click,
+// wheel step and drag, and lets each knob override them, so the knob itself is given one
+// more position below 10 NM without Fenix's own range variable ever leaving 0..5:
+// turning left past 10 NM turns OANS on and keeps zooming in (5, 2, 1, 0.5, 0.2 NM);
+// turning right zooms back out and, past 5 NM, returns to the normal ND at 10 NM.
+// OANS lives in L:AMDB_OANS_ZOOM: 0 off, 1..5 closer in.
+
+const FENIX_KNOB_ANCHOR: &str = "<ANIM_NAME>EFIS_1_Range_Selector_Knob</ANIM_NAME>";
+const FENIX_KNOB_MARK: &str = "<!--amdb-bridge-fenix-oans-->";
+const FENIX_KNOB_DEC: &str = "(L:AMDB_OANS_ZOOM) 0 &gt; if{ (L:AMDB_OANS_ZOOM) 1 + 5 min (&gt;L:AMDB_OANS_ZOOM) } els{ (L:S_FCU_EFIS1_ND_ZOOM) 0 &gt; if{ (L:S_FCU_EFIS1_ND_ZOOM) 1 - (&gt;L:S_FCU_EFIS1_ND_ZOOM) } els{ 1 (&gt;L:AMDB_OANS_ZOOM) } }";
+const FENIX_KNOB_INC: &str = "(L:AMDB_OANS_ZOOM) 0 &gt; if{ (L:AMDB_OANS_ZOOM) 1 - (&gt;L:AMDB_OANS_ZOOM) } els{ (L:S_FCU_EFIS1_ND_ZOOM) 1 + 5 min (&gt;L:S_FCU_EFIS1_ND_ZOOM) }";
+
+/// Give the Captain range knob its OANS positions. None when already done, or when the
+/// knob is not where this bridge expects it.
+pub fn patch_fenix_knob_text(text: &str) -> Option<String> {
+    if text.contains(FENIX_KNOB_MARK) {
+        return None;
+    }
+    let at = text.find(FENIX_KNOB_ANCHOR)?;
+    let close = at + text[at..].find("</UseTemplate>")?;
+    let line = text[..at].rfind('\n').map_or(0, |i| i + 1);
+    let indent = &text[line..at];
+    let close_line = text[..close].rfind('\n').map_or(0, |i| i + 1);
+    let added = format!("{indent}{FENIX_KNOB_MARK}\n{indent}<INC_CODE>{FENIX_KNOB_INC}</INC_CODE>\n{indent}<DEC_CODE>{FENIX_KNOB_DEC}</DEC_CODE>\n");
+    Some(format!("{}{}{}", &text[..close_line], added, &text[close_line..]))
+}
+
+/// The two Fenix files the OANS needs changed: panel.cfg for the gauges, the cockpit
+/// model for the range knob.
+/// The Fenix files the OANS changes, in the MSFS 2020 layout and in the MSFS 2024 one,
+/// where the cockpit is an attachment with its own panel.cfg and behaviours.
+fn fenix_oans_files(pdir: &Path) -> [(PathBuf, &'static str); 4] {
+    let fnx = pdir.join("SimObjects/Airplanes/FNX_32X");
+    let cockpit = fnx.join("attachments/fnx/Part_Interior_Cockpit");
+    [
+        (fnx.join("Panel/panel.cfg"), "panel.cfg"),
+        (fnx.join("model/FNX32X_Interior.xml"), "cockpit model"),
+        (cockpit.join("panel/panel.cfg"), "panel.cfg"),
+        (cockpit.join("model/Cockpit_Behavior.xml"), "cockpit model"),
+    ]
+}
+
+fn fenix_file_patched(kind: &str, text: &str) -> bool {
+    match kind {
+        "panel.cfg" => text.contains(FENIX_OANS_GAUGE_PATH) && text.contains(FENIX_OANS_ND_PATH),
+        _ => text.contains(FENIX_KNOB_MARK),
+    }
+}
+
+/// Fenix files in a Community folder the OANS changes: (package, file, already patched).
+pub fn scan_fenix_oans(community: &Path) -> Vec<(String, PathBuf, bool)> {
+    let mut out = Vec::new();
+    let Ok(rd) = fs::read_dir(community) else { return out };
+    for pkg in rd.flatten() {
+        let pdir = pkg.path();
+        if !pdir.is_dir() {
+            continue;
+        }
+        let name = pkg.file_name().to_string_lossy().to_string();
+        for (path, kind) in fenix_oans_files(&pdir) {
+            let Ok(text) = fs::read_to_string(&path) else { continue };
+            let is_fenix = if kind == "panel.cfg" { text.contains("[VCockpit") } else { text.contains(FENIX_KNOB_ANCHOR) || text.contains(FENIX_KNOB_MARK) };
+            if is_fenix {
+                out.push((name.clone(), path, fenix_file_patched(kind, &text)));
+            }
+        }
+    }
+    out
+}
+
+/// Add the OANS gauges to Fenix's panel.cfg and the OANS positions to its range knob in a
+/// Community folder (backups kept, recorded for `unpatch`).
+pub fn patch_fenix_oans(community: &Path, dry_run: bool) -> Result<Vec<PatchedFile>> {
+    let mut record = load_record(community);
+    let mut done = Vec::new();
+    for (pkg, path, patched) in scan_fenix_oans(community) {
+        if patched {
+            continue;
+        }
+        let text = fs::read_to_string(&path)?;
+        let is_panel = path.file_name().is_some_and(|n| n == "panel.cfg");
+        let Some(new_text) = (if is_panel { patch_fenix_oans_text(&text) } else { patch_fenix_knob_text(&text) }) else {
+            log::warn!("{pkg}: {} is a version of this Fenix file the bridge does not know how to patch", path.display());
+            continue;
+        };
+        log::info!("{}{}: OANS added to {}", if dry_run { "[dry-run] " } else { "" }, pkg, path.display());
+        if dry_run {
+            done.push(PatchedFile { path: path.clone(), backup: PathBuf::new(), replacements: 1 });
+            continue;
+        }
+        let backup = PathBuf::from(format!("{}{}", path.display(), BACKUP_SUFFIX));
+        if !backup.exists() {
+            fs::copy(&path, &backup).with_context(|| format!("backup {}", path.display()))?;
+        }
+        fs::write(&path, new_text)?;
+        let pf = PatchedFile { path: path.clone(), backup, replacements: 1 };
+        record.files.retain(|f| f.path != pf.path);
+        record.files.push(pf.clone());
+        done.push(pf);
+    }
+    if !dry_run && !done.is_empty() {
+        save_record(community, &record)?;
+    }
+    Ok(done)
+}
+
+/// Put Fenix's panel.cfg and range knob back, wherever the OANS changed them.
+pub fn unpatch_fenix_oans(community: &Path) -> Result<usize> {
+    let mut n = 0;
+    for (_, path, patched) in scan_fenix_oans(community) {
+        if patched && restore_one(community, &path)? {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
 /// Every simulator exe.xml that exists on this machine.
 pub fn exe_xml_files() -> Vec<PathBuf> {
     let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
@@ -938,20 +1133,38 @@ pub fn exe_xml_files() -> Vec<PathBuf> {
 
 /// Is the bridge registered to start with any simulator?
 pub fn autostart_installed() -> bool {
-    exe_xml_files().iter().any(|p| fs::read_to_string(p).map_or(false, |t| t.contains(AUTOSTART_NAME)))
+    autostart_installed_as(AUTOSTART_NAME)
 }
 
-const AUTOSTART_NAME: &str = "<Name>AMDB Bridge</Name>";
+/// The name AMDB Bridge's entry goes by in exe.xml. The standalone A320 OANS has its own,
+/// so neither replaces the other's.
+pub const AUTOSTART_NAME: &str = "AMDB Bridge";
+
+fn autostart_tag(name: &str) -> String {
+    format!("<Name>{name}</Name>")
+}
+
+/// Is a program registered, under this name, to start with any simulator?
+pub fn autostart_installed_as(name: &str) -> bool {
+    let tag = autostart_tag(name);
+    exe_xml_files().iter().any(|p| fs::read_to_string(p).map_or(false, |t| t.contains(&tag)))
+}
 
 /// Remove the bridge's `Launch.Addon` block from every exe.xml. Returns the files changed.
 pub fn remove_autostart() -> Result<Vec<PathBuf>> {
+    remove_autostart_as(AUTOSTART_NAME)
+}
+
+/// Remove the `Launch.Addon` block of this name from every exe.xml. Returns the files changed.
+pub fn remove_autostart_as(name: &str) -> Result<Vec<PathBuf>> {
+    let tag = autostart_tag(name);
     let mut changed = Vec::new();
     for p in exe_xml_files() {
         let text = fs::read_to_string(&p)?;
-        let Some(name) = text.find(AUTOSTART_NAME) else { continue };
-        let Some(open) = text[..name].rfind("<Launch.Addon>") else { continue };
-        let Some(close_rel) = text[name..].find("</Launch.Addon>") else { continue };
-        let mut end = name + close_rel + "</Launch.Addon>".len();
+        let Some(at) = text.find(&tag) else { continue };
+        let Some(open) = text[..at].rfind("<Launch.Addon>") else { continue };
+        let Some(close_rel) = text[at..].find("</Launch.Addon>") else { continue };
+        let mut end = at + close_rel + "</Launch.Addon>".len();
         // Take the line break and the indentation before the block with it.
         let start = text[..open].rfind('\n').map_or(open, |i| i + 1);
         if text[end..].starts_with("\r\n") {
@@ -968,9 +1181,15 @@ pub fn remove_autostart() -> Result<Vec<PathBuf>> {
 
 /// Register the bridge in the simulator's exe.xml so it starts with the sim.
 pub fn install_autostart(exe: &Path, args: &str) -> Result<Vec<PathBuf>> {
+    install_autostart_as(AUTOSTART_NAME, exe, args)
+}
+
+/// Register a program, under this name, in the simulator's exe.xml so it starts with the sim.
+pub fn install_autostart_as(name: &str, exe: &Path, args: &str) -> Result<Vec<PathBuf>> {
+    let tag = autostart_tag(name);
     let candidates: Vec<String> = exe_xml_files().iter().map(|p| p.display().to_string()).collect();
     let entry = format!(
-        "  <Launch.Addon>\n    <Name>AMDB Bridge</Name>\n    <Disabled>False</Disabled>\n    <ManualLoad>False</ManualLoad>\n    <Path>{}</Path>\n    <CommandLine>{}</CommandLine>\n  </Launch.Addon>\n",
+        "  <Launch.Addon>\n    {tag}\n    <Disabled>False</Disabled>\n    <ManualLoad>False</ManualLoad>\n    <Path>{}</Path>\n    <CommandLine>{}</CommandLine>\n  </Launch.Addon>\n",
         exe.display(),
         args
     );
@@ -981,7 +1200,7 @@ pub fn install_autostart(exe: &Path, args: &str) -> Result<Vec<PathBuf>> {
             continue;
         }
         let text = fs::read_to_string(&p)?;
-        if text.contains(AUTOSTART_NAME) {
+        if text.contains(&tag) {
             continue;
         }
         let Some(pos) = text.rfind("</SimBase.Document>") else { continue };
@@ -1206,5 +1425,63 @@ bus.on('RequestNavigraphAccessToken',()=>{ return 'tok'; });";
         assert_eq!(unpatch(&dir).unwrap(), 1);
         assert_eq!(fs::read_to_string(&f).unwrap(), original);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    const FENIX_PANEL: &str = "[VCockpit01]\nsize_mm=768,768\ntexture=$A320_PFD_Captain\nhtmlgauge00=A, 0,0,768,768\n\n[VCockpit02]\nsize_mm=768,768\npixel_size=768,768\ntexture=$A320_ND_Captain\nhtmlgauge00=B, 0,0,768,768\n\n[VCockpit15]\nsize_mm=1,1\ntexture=NO_TEXTURE\nhtmlgauge00=C, 0,0,1,1\n\n[VPainting01]\nsize_mm\t= 605, 128\n";
+
+    #[test]
+    fn fenix_oans_adds_manager_block_and_nd_overlay_once() {
+        let out = patch_fenix_oans_text(FENIX_PANEL).unwrap();
+        assert!(out.contains("htmlgauge00=C, 0,0,1,1\n\n[VCockpit16]\n//amdb-bridge-fenix-oans\nsize_mm=1,1\n"));
+        assert!(out.contains("texture=NO_TEXTURE\nhtmlgauge00=amdb-oans/oans-shell.html, 0,0,1,1\n\n[VPainting01]"));
+        assert!(out.contains("htmlgauge00=B, 0,0,768,768\n//amdb-bridge-fenix-oans\nhtmlgauge01=amdb-oans/oans-nd.html, 0,0,768,768\n\n[VCockpit15]"));
+        assert!(!out[..out.find("[VCockpit02]").unwrap()].contains("oans-nd"), "overlay went into the PFD block");
+        assert!(patch_fenix_oans_text(&out).is_none());
+    }
+
+    /// The MSFS 2024 cockpit part: the ND gauge after two others, and no paintings.
+    const FENIX_2024_PANEL: &str = "[VCockpit02]\nsize_mm=768,768\npixel_size=768,768\ntexture=$A320_ND_Captain\nhtmlgauge00=R, 0,0,768,768\nhtmlgauge01=C, 0,0,384,264\nhtmlgauge02=ND, 0,0,768,768\n\n[VCockpit16]\nsize_mm = 1024, 512\ntexture = DisplaysReflection\nhtmlgauge00=F, 0, 0, 1024, 512";
+
+    #[test]
+    fn fenix_2024_cockpit_gets_the_overlay_on_top_and_the_manager_at_the_end() {
+        let out = patch_fenix_oans_text(FENIX_2024_PANEL).unwrap();
+        assert!(out.contains("htmlgauge02=ND, 0,0,768,768\n//amdb-bridge-fenix-oans\nhtmlgauge03=amdb-oans/oans-nd.html, 0,0,768,768\n\n[VCockpit16]"));
+        assert!(out.ends_with("htmlgauge00=F, 0, 0, 1024, 512\n\n[VCockpit17]\n//amdb-bridge-fenix-oans\nsize_mm=1,1\npixel_size=1,1\ntexture=NO_TEXTURE\nhtmlgauge00=amdb-oans/oans-shell.html, 0,0,1,1\n"));
+        assert!(patch_fenix_oans_text(&out).is_none());
+    }
+
+    #[test]
+    fn fenix_2024_files_are_found_in_the_cockpit_attachment() {
+        let root = std::env::temp_dir().join(format!("amdb-fenix-2024-{}", std::process::id()));
+        let cockpit = root.join("fnx-aircraft-320/SimObjects/Airplanes/FNX_32X/attachments/fnx/Part_Interior_Cockpit");
+        fs::create_dir_all(cockpit.join("panel")).unwrap();
+        fs::create_dir_all(cockpit.join("model")).unwrap();
+        fs::write(cockpit.join("panel/panel.cfg"), FENIX_2024_PANEL).unwrap();
+        fs::write(cockpit.join("model/Cockpit_Behavior.xml"), "<UseTemplate><ANIM_NAME>EFIS_1_Range_Selector_Knob</ANIM_NAME>\n</UseTemplate>\n").unwrap();
+        let found = scan_fenix_oans(&root);
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(found.len(), 2);
+        assert!(found.iter().all(|(_, _, patched)| !patched));
+    }
+
+    #[test]
+    fn fenix_knob_gains_oans_positions_once() {
+        let xml = "\t\t\t<UseTemplate Name=\"FNX32X_Interact_Knob_Increment_Template\">\n\t\t\t\t<ANIM_NAME>EFIS_1_Mode_Selector_Knob</ANIM_NAME>\n\t\t\t\t<VAR_MAX>4</VAR_MAX>\n\t\t\t</UseTemplate>\n\t\t\t<UseTemplate Name=\"FNX32X_Interact_Knob_Increment_Template\">\n\t\t\t\t<ANIM_NAME>EFIS_1_Range_Selector_Knob</ANIM_NAME>\n\t\t\t\t<VAR_NAME>S_FCU_EFIS1_ND_ZOOM</VAR_NAME>\n\t\t\t\t<VAR_MAX>5</VAR_MAX>\n\t\t\t</UseTemplate>\n";
+        let out = patch_fenix_knob_text(xml).unwrap();
+        // Inside the range knob's own block, before its closing tag, at its indentation.
+        let range = &out[out.find("EFIS_1_Range_Selector_Knob").unwrap()..];
+        let inc = range.find("\t\t\t\t<INC_CODE>").unwrap();
+        assert!(inc < range.find("</UseTemplate>").unwrap());
+        assert!(range.contains("<DEC_CODE>(L:AMDB_OANS_ZOOM) 0 &gt; if{"));
+        assert!(!out[..out.find("EFIS_1_Range_Selector_Knob").unwrap()].contains("INC_CODE"), "the mode knob was changed");
+        assert!(patch_fenix_knob_text(&out).is_none());
+    }
+
+    #[test]
+    fn fenix_oans_adds_only_the_missing_overlay() {
+        let manager_only = FENIX_PANEL.replace("[VPainting01]", "[VCockpit16]\nhtmlgauge00=amdb-oans/oans-shell.html, 0,0,1,1\n\n[VPainting01]");
+        let out = patch_fenix_oans_text(&manager_only).unwrap();
+        assert_eq!(out.matches("oans-shell.html").count(), 1);
+        assert_eq!(out.matches("oans-nd.html").count(), 1);
     }
 }

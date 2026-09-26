@@ -373,6 +373,17 @@ enum Cmd {
         #[arg(long = "community")]
         community: Vec<PathBuf>,
     },
+    /// The A320 OANS, an airport moving map on the Fenix A320's captain ND: `on` installs
+    /// its package and adds it to the Fenix (two lines in panel.cfg and the range knob's
+    /// OANS positions, backups kept), `off` removes it and puts those files back,
+    /// `status` says where it is installed and whether the Fenix still loads it.
+    #[command(name = "a320-oans")]
+    A320Oans {
+        /// on, off or status
+        state: String,
+        #[arg(long = "community")]
+        community: Vec<PathBuf>,
+    },
     /// Approach charts on the flight bags built on the Navigraph SDK (iniBuilds A350, PMDG
     /// 737 and 777): `on` points their charts at this bridge, `off` gives them back their
     /// own, `status` says which each is. No administrator rights needed. While on, the
@@ -545,6 +556,15 @@ fn serve(a: ServeArgs) -> Result<()> {
                     }
                 }
                 Err(e) => crate::term::warn(&format!("could not add the A220 moving map in {}: {e:#}", d.display())),
+            }
+            // Only where the A320 OANS is installed: a Fenix update drops the lines that load it.
+            match super::desktop::repatch_a320_oans(&d) {
+                Ok(files) => {
+                    for f in files {
+                        crate::term::success(&format!("A320 OANS added to the Fenix again after a Fenix update (backup kept, `unpatch` restores): {}", f.display()));
+                    }
+                }
+                Err(e) => crate::term::warn(&format!("could not add the A320 OANS to the Fenix in {}: {e:#}", d.display())),
             }
         }
     }
@@ -794,6 +814,51 @@ pub fn run() -> Result<()> {
                 crate::term::warn("no flight bag built on the Navigraph SDK found (iniBuilds A350, PMDG 737/777)");
             } else if state == "on" {
                 crate::term::info("Start the bridge before the flight: the tablet asks it for every chart.");
+            }
+            Ok(())
+        }
+        Cmd::A320Oans { state, community } => {
+            let state = state.to_ascii_lowercase();
+            let dirs = communities(&community);
+            let mut found = 0;
+            for d in &dirs {
+                if !super::desktop::fenix_in_community(d) {
+                    continue;
+                }
+                if state == "on" && !super::desktop::a320_oans_fits(d) {
+                    crate::term::warn(&format!("{}: this Fenix's cockpit files are not where the A320 OANS expects them", d.display()));
+                    continue;
+                }
+                found += 1;
+                match state.as_str() {
+                    "on" => {
+                        for note in super::desktop::install_a320_oans(d)? {
+                            crate::term::success(&note);
+                        }
+                    }
+                    "off" => {
+                        if super::desktop::remove_a320_oans(d)? {
+                            crate::term::success(&format!("A320 OANS removed from {}", d.display()));
+                        }
+                    }
+                    "status" => {
+                        let state = match super::desktop::a320_oans_state(d) {
+                            super::desktop::MapState::NotInstalled => "not installed".to_string(),
+                            super::desktop::MapState::Installed(v) => format!("v{v} installed"),
+                            super::desktop::MapState::Outdated { installed, available } => format!("v{installed} installed, v{available} available"),
+                        };
+                        println!("  {}: A320 OANS {state}", d.display());
+                        for (pkg, f, patched) in patcher::scan_fenix_oans(d) {
+                            println!("    {pkg}  {}: {}", if patched { "PATCHED (OANS added)" } else { "not patched" }, f.display());
+                        }
+                    }
+                    other => return Err(anyhow!("a320-oans takes on, off or status, not {other}")),
+                }
+            }
+            if found == 0 {
+                crate::term::warn("no Fenix A320 found in any Community folder");
+            } else if state == "on" {
+                crate::term::info("Restart the simulator to load it, and keep the bridge running while you fly: the map comes from it.");
             }
             Ok(())
         }

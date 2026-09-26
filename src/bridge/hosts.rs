@@ -104,12 +104,32 @@ pub fn is_installed(domain: &str) -> bool {
     read().map(|t| t.lines().any(|l| l.contains(MARKER) && l.contains(domain))).unwrap_or(false)
 }
 
+/// Clear the DNS resolver cache so the new hosts-file entries take effect at once.
+///
+/// `DnsFlushResolverCache` is what `ipconfig /flushdns` calls; winapi does not declare
+/// it, so it is loaded from dnsapi.dll by name. Best effort, exactly as before: if the
+/// export is missing, nothing happens and nothing fails.
+#[cfg(windows)]
 fn flush_dns() {
-    if cfg!(windows) {
-        let _ = super::quiet_command("ipconfig").arg("/flushdns").output();
-    } else {
-        let _ = std::process::Command::new("resolvectl").arg("flush-caches").output();
+    use winapi::um::libloaderapi::{FreeLibrary, GetProcAddress, LoadLibraryW};
+    let dll: Vec<u16> = "dnsapi.dll".encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let lib = LoadLibraryW(dll.as_ptr());
+        if lib.is_null() {
+            return;
+        }
+        let proc = GetProcAddress(lib, b"DnsFlushResolverCache\0".as_ptr() as *const _);
+        if !proc.is_null() {
+            let flush: extern "system" fn() -> i32 = std::mem::transmute(proc);
+            flush();
+        }
+        FreeLibrary(lib);
     }
+}
+
+#[cfg(not(windows))]
+fn flush_dns() {
+    let _ = std::process::Command::new("resolvectl").arg("flush-caches").output();
 }
 
 #[cfg(test)]

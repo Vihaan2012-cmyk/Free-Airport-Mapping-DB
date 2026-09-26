@@ -22,8 +22,10 @@ pub mod tls;
 
 pub const DEFAULT_PORT: u16 = 8770;
 
-/// A console tool (certutil, reg, ipconfig) run without flashing a console window, which
-/// it otherwise does when started from the desktop app.
+/// A console tool run without flashing a console window, which it otherwise does when
+/// started from the desktop app. Windows now calls the equivalent APIs directly, so this
+/// only backs the non-Windows fallbacks (reg, tasklist) that never run there anyway.
+#[cfg_attr(windows, allow(dead_code))]
 pub(crate) fn quiet_command(program: &str) -> std::process::Command {
     #[allow(unused_mut)]
     let mut c = std::process::Command::new(program);
