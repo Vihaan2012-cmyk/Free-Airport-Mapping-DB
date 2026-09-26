@@ -20,6 +20,9 @@ pub struct AirportData {
     pub manifest: Manifest,
     /// Features in the local metre frame, already converted to client conventions.
     pub layers: BTreeMap<Layer, Vec<AmdbFeature>>,
+    /// The taxiway network as the generator wrote it, for taxi routes: the conversion
+    /// for the aircraft drops the taxiway and stand names it needs.
+    pub network: super::taxi::Network,
 }
 
 /// What happens to an airport's files after it has been loaded into memory.
@@ -179,6 +182,7 @@ impl Store {
         // the routing network's: a runway node names the threshold it is nearest.
         let thresholds = super::compat::Thresholds::read(&dir, &frame, is_wgs84);
         let mut layers = BTreeMap::new();
+        let (mut raw_edges, mut raw_nodes) = (Vec::new(), Vec::new());
         for l in ALL_LAYERS {
             let p = dir.join(format!("{}.geojson", l.name()));
             let Ok(text) = std::fs::read_to_string(&p) else { continue };
@@ -188,6 +192,11 @@ impl Store {
                 if is_wgs84 {
                     f.geom = project_to_local(&frame, &f.geom);
                 }
+                match l {
+                    Layer::AsrnEdge => raw_edges.push(f.clone()),
+                    Layer::AsrnNode => raw_nodes.push(f.clone()),
+                    _ => {}
+                }
                 // Layers Navigraph does not serve are dropped here.
                 if super::compat::convert(&mut f, i, &thresholds) {
                     kept.push(f);
@@ -195,7 +204,8 @@ impl Store {
             }
             layers.insert(*l, kept);
         }
-        Ok(AirportData { icao: icao.to_string(), frame, manifest, layers })
+        let network = super::taxi::Network::build(&raw_edges, &raw_nodes);
+        Ok(AirportData { icao: icao.to_string(), frame, manifest, layers, network })
     }
 
     /// Airports around a point, nearest first: index airports (large/medium/small) plus

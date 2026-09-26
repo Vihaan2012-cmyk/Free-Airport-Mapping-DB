@@ -267,9 +267,12 @@ PLAN or NAV) and press **ARM BTV** on the control panel's MAP DATA page (or set
 `L:AMDB_BTV_ARM` to 1); `BTV <exit>` shows at the top of the ND. The autobrake need not be
 armed. At touchdown it presses any armed autobrake off and brakes itself, following
 FlyByWire's A380X BTV law adjusted to the Fenix as measured: no braking while the exit is
-further than the aircraft would roll, then enough to reach the exit at 10 kt. It lets go
-at 10 kt, past the exit, or on the parking brake, thrust, the autobrake or the exit
-cleared, and disarms after each rollout.
+further than the aircraft would roll, then enough to reach the exit at the speed it is
+built for: 40 kt for a high-speed exit (20 to 50 degrees off the runway, as the map data
+marks it), 10 kt for any other. It lets go at that speed, past the exit, or on the
+parking brake, thrust, the autobrake or the exit cleared, and disarms after each rollout.
+
+A taxi route set in the Airport Map window (below) is drawn on it too, in magenta.
 
 Nothing of the Fenix's is replaced or redistributed. Two gauge lines go into its
 `panel.cfg`, the captain ND is drawn at 1536 x 1536 pixels instead of 768 for sharp text
@@ -283,6 +286,32 @@ The package is built from FlyByWire's source at a pinned commit by
 under the GPL-3.0, like FlyByWire's aircraft, and credits them in its `README.txt`. It
 carries none of FlyByWire's fonts or images: the font is Airbus's B612 (SIL Open Font
 License) and the flag and cross symbols are its own.
+
+## Airport Map: the OANS in a toolbar window (MSFS)
+
+The same FlyByWire A380X OANS in a window of its own on the simulator's toolbar, for any
+aircraft, with its own mode (ARC, ROSE, PLAN) and range, and **taxi routes**: type the
+clearance as the controller gives it, the taxiways in order and then a runway or a stand,
+
+```
+A B K 31L
+B K STAND 73
+22R            (no taxiways: the shortest way there)
+```
+
+and the way from the aircraft along those taxiways is drawn in magenta, in the window
+and on the A320 OANS. The bridge finds it on the airport's taxiway network
+(`/amdb/taxi-route?icao=&lat=&lon=&clearance=`, then `/amdb/taxi-route/current` and
+`/clear`), keeping to the taxiways named and taking another only where one must be
+crossed to reach the first; a name the airport's data does not have is refused rather
+than guessed.
+
+**`AMDB-Airport-Map-Setup-<version>.exe`** carries no bridge. It asks for the folder AMDB
+Bridge (1.2.7 or later) or the A320 OANS program (1.0.5 or later) is installed in, and has
+that program put the package, `amdb-oans-toolbar`, into each simulator's Community
+folder, the ones chosen by hand included (`AMDB Bridge.exe --install-toolbar <package>`,
+or `A320 OANS.exe --install-toolbar <package>`). Uninstalling takes it out of the folders
+it went into. Built by the same `tools/fenix-oans/build.mjs`; GPL-3.0 for the same reason.
 
 ## X-Plane 12
 
@@ -472,7 +501,8 @@ charts you already have.
 
 ## Licence
 
-MIT, except the A320 OANS (`packages/msfs-a320-oans` and `tools/fenix-oans`), which
-contains FlyByWire Simulations' code and is GPL-3.0. Generated data derives from
+MIT, except the A320 OANS and the Airport Map (`packages/msfs-a320-oans`,
+`packages/msfs-amdb-oans-toolbar` and `tools/fenix-oans`), which contain FlyByWire
+Simulations' code and are GPL-3.0. Generated data derives from
 OpenStreetMap (ODbL) and the X-Plane Scenery Gateway; it is for simulation only and not
 for real-world navigation.

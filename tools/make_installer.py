@@ -5,6 +5,9 @@
   dist/AMDB-Navdata-<version>.zip        the same, as a zip to unpack anywhere
   dist/A320-OANS-Setup-<oans version>.exe  the Fenix A320 OANS on its own, with its own
                                          bridge; versioned as packages/msfs-a320-oans
+  dist/AMDB-Airport-Map-Setup-<version>.exe  the Airport Map toolbar window, without a
+                                         bridge (it installs through the user's own);
+                                         versioned as packages/msfs-amdb-oans-toolbar
 
 Compiles the release binaries, refreshes the A220 map package's layout.json, runs Inno
 Setup's compiler on installer/amdb-bridge.iss, and packs the converter separately.
@@ -102,6 +105,9 @@ def main():
     # The A320 OANS is versioned as its package, apart from AMDB Bridge.
     oans = json.load(open(os.path.join(ROOT, "packages", "msfs-a320-oans", "manifest.json"), encoding="utf-8"))["package_version"]
     run([compiler, f"/DAppVersion={oans}", "/Q", os.path.join("installer", "a320-oans.iss")])
+    # So is the Airport Map, which is built by the same script.
+    toolbar = json.load(open(os.path.join(ROOT, "packages", "msfs-amdb-oans-toolbar", "manifest.json"), encoding="utf-8"))["package_version"]
+    run([compiler, f"/DAppVersion={toolbar}", "/Q", os.path.join("installer", "amdb-oans-toolbar.iss")])
 
     out = os.path.join(ROOT, "dist", f"AMDB-Bridge-Setup-{v}.exe")
     print(f"\nBuilt {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
@@ -111,6 +117,8 @@ def main():
     print(f"Built {n} ({os.path.getsize(n) / 1e6:.1f} MB)")
     a = os.path.join(ROOT, "dist", f"A320-OANS-Setup-{oans}.exe")
     print(f"Built {a} ({os.path.getsize(a) / 1e6:.1f} MB)")
+    t = os.path.join(ROOT, "dist", f"AMDB-Airport-Map-Setup-{toolbar}.exe")
+    print(f"Built {t} ({os.path.getsize(t) / 1e6:.1f} MB)")
     return 0
 
 NAVDATA_README = "AMDB Navdata {v}\n\nThe navigation-data converter on its own.\n\n  AMDB Navdata.exe   a window: tick the aeroplane, press Convert\n  amdb-navdata.exe   the same converter on the command line\n\nIt reads the navigation data Microsoft Flight Simulator already has on this computer\nand writes it into the database an add-on aircraft reads, so the aeroplane flies on\ncurrent data instead of whatever AIRAC cycle it shipped with.\n\nNothing is downloaded and nothing licensed is redistributed: the data is the\nsimulator's own, and it stays on this machine. The aircraft's database is never\noverwritten without a backup being kept beside it first.\n\n  See what would be written, touching nothing:\n    amdb-navdata --to dfd --from-sim --cycle 2609 --dry-run\n\n  Write a Navigraph-layout database (iniBuilds A350, Synaptic A220, PMDG 737 and 777):\n    amdb-navdata --to dfd --from-sim --cycle 2609 --out navdata.db3\n\n  Replace the Fenix A320's own, keeping a backup beside it:\n    amdb-navdata --to fenix --from-sim --cycle 2609 --in-place\n\n  amdb-navdata --help  for the rest.\n\nThe window reads FS2024. FS2020 gives more procedures, and the command line will\nread it: add --sim fs2020.\n\nThis is the same converter as `amdbgen navdata`, which the full AMDB Bridge installer\nstill carries. Take this one if the converter is all you want.\n\nNOT FOR REAL-WORLD NAVIGATION.\n"

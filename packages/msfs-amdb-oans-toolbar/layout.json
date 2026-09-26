@@ -1,0 +1,64 @@
+{
+  "content": [
+    {
+      "path": "html_ui/fonts/amdb-oans-toolbar/b612mono-regular.ttf",
+      "size": 140292,
+      "date": 134348858848028583
+    },
+    {
+      "path": "html_ui/images/amdb-oans-toolbar/oans/oans-cross.svg",
+      "size": 401,
+      "date": 134348858848440730
+    },
+    {
+      "path": "html_ui/images/amdb-oans-toolbar/oans/oans-flag.svg",
+      "size": 469,
+      "date": 134348858848641387
+    },
+    {
+      "path": "html_ui/ingamepanels/amdboansmap/amdboansmap.css",
+      "size": 35155,
+      "date": 134349134258468591
+    },
+    {
+      "path": "html_ui/ingamepanels/amdboansmap/amdboansmap.html",
+      "size": 1292,
+      "date": 134349128130572259
+    },
+    {
+      "path": "html_ui/ingamepanels/amdboansmap/amdboansmap.js",
+      "size": 3574806,
+      "date": 134349134258448605
+    },
+    {
+      "path": "html_ui/textures/menu/toolbar/icon_toolbar_amdb_oans_moving_map.svg",
+      "size": 555,
+      "date": 134349128130947776
+    },
+    {
+      "path": "ingamepanels/amdb-oans-moving-map-panels.spb",
+      "size": 698,
+      "date": 134349125741484157
+    },
+    {
+      "path": "license-b612-font.txt",
+      "size": 4470,
+      "date": 134348858848242573
+    },
+    {
+      "path": "license.txt",
+      "size": 35823,
+      "date": 134349128130131846
+    },
+    {
+      "path": "manifest.json",
+      "size": 690,
+      "date": 134349134261623771
+    },
+    {
+      "path": "readme.txt",
+      "size": 2668,
+      "date": 134349128270008730
+    }
+  ]
+}

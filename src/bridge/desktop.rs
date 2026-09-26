@@ -333,6 +333,95 @@ pub fn remove_a320_oans(community: &Path) -> Result<bool> {
     Ok(was)
 }
 
+/// Folder name of the Airport Map toolbar window (packages/msfs-amdb-oans-toolbar) in a
+/// Community folder. It comes with its own download, which keeps the package in its own
+/// folder and has AMDB Bridge or the A320 OANS program put it into each simulator.
+pub const TOOLBAR_OANS_FOLDER: &str = "amdb-oans-toolbar";
+
+/// Beside the package its download keeps: the Community folders it was put into, one per
+/// line, so its uninstaller can take it out of them even with no bridge left to ask.
+const TOOLBAR_OANS_RECORD: &str = "community-folders.txt";
+
+/// Beside the package: why it could not be put into a simulator, for its installer to show.
+const TOOLBAR_OANS_PROBLEMS: &str = "install-problems.txt";
+
+/// The Airport Map's version in one Community folder, if it is there.
+pub fn toolbar_oans_version(community: &Path) -> Option<String> {
+    package_version(&community.join(TOOLBAR_OANS_FOLDER))
+}
+
+/// Put the Airport Map package at `src` into one Community folder, replacing any copy there.
+pub fn install_toolbar_oans(community: &Path, src: &Path) -> Result<String> {
+    if !src.join("manifest.json").is_file() {
+        return Err(anyhow!("{} is not the Airport Map package (it has no manifest.json)", src.display()));
+    }
+    let dest = community.join(TOOLBAR_OANS_FOLDER);
+    if dest.exists() {
+        fs::remove_dir_all(&dest).with_context(|| format!("remove the old Airport Map in {} (is the simulator running?)", dest.display()))?;
+    }
+    copy_dir(src, &dest)?;
+    Ok(format!("Airport Map {} installed in {}", package_version(&dest).unwrap_or_default(), community.display()))
+}
+
+/// Take the Airport Map out of one Community folder. Returns false when it was not there.
+pub fn remove_toolbar_oans(community: &Path) -> Result<bool> {
+    let dest = community.join(TOOLBAR_OANS_FOLDER);
+    if !dest.exists() {
+        return Ok(false);
+    }
+    fs::remove_dir_all(&dest).with_context(|| format!("remove {} (is the simulator running?)", dest.display()))?;
+    Ok(true)
+}
+
+/// `--install-toolbar <package>`, for the Airport Map's installer: the package into every
+/// simulator found (the Community folders chosen in this program first), recording where
+/// beside the package, or why not. Returns what was done, one line per simulator.
+pub fn install_toolbar_oans_everywhere(src: &Path) -> Result<Vec<String>> {
+    let beside = src.parent().unwrap_or(src).to_path_buf();
+    let _ = fs::remove_file(beside.join(TOOLBAR_OANS_PROBLEMS));
+    let result = (|| {
+        let sims = detect_sims();
+        if sims.is_empty() {
+            return Err(anyhow!(
+                "no Microsoft Flight Simulator Community folder was found. Choose it in AMDB Bridge (Community folders...) or in the A320 OANS (Choose Community folder...), then run this installer again"
+            ));
+        }
+        let mut notes = Vec::new();
+        let mut problems = Vec::new();
+        let mut record = String::new();
+        for sim in sims {
+            match install_toolbar_oans(&sim.community, src) {
+                Ok(note) => {
+                    notes.push(format!("{}: {note}", sim.name));
+                    record.push_str(&format!("{}\r\n", sim.community.display()));
+                }
+                Err(e) => problems.push(format!("{}: {e:#}", sim.name)),
+            }
+        }
+        if notes.is_empty() {
+            return Err(anyhow!(problems.join("\n")));
+        }
+        fs::write(beside.join(TOOLBAR_OANS_RECORD), record).with_context(|| format!("write {}", beside.join(TOOLBAR_OANS_RECORD).display()))?;
+        notes.extend(problems.into_iter().map(|p| format!("not installed - {p}")));
+        Ok(notes)
+    })();
+    if let Err(e) = &result {
+        let _ = fs::write(beside.join(TOOLBAR_OANS_PROBLEMS), format!("{e:#}"));
+    }
+    result
+}
+
+/// `--uninstall-toolbar`: the Airport Map out of every simulator found.
+pub fn remove_toolbar_oans_everywhere() -> Vec<String> {
+    let mut problems = Vec::new();
+    for sim in detect_sims() {
+        if let Err(e) = remove_toolbar_oans(&sim.community) {
+            problems.push(format!("{}: {e:#}", sim.name));
+        }
+    }
+    problems
+}
+
 fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst).with_context(|| format!("create {}", dst.display()))?;
     for entry in fs::read_dir(src).with_context(|| format!("read {}", src.display()))? {

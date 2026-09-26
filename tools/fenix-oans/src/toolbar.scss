@@ -1,0 +1,135 @@
+// SPDX-License-Identifier: GPL-3.0
+//
+// The Airport Map window: the 768 x 768 OANS display, scaled into the space above a bar of
+// controls in the style of the A380X's MFD (grey keys, cyan for what is selected, the
+// route in magenta, warnings in amber).
+
+$bar: #0b0d10;
+$key: #2e3238;
+$key-edge: #5b6370;
+$text: #ffffff;
+$cyan: #00ffff;
+$magenta: #ff94ff;
+$amber: #ffa500;
+
+#AmdbOansMapPage ingame-ui#AmdbOansMap_Frame {
+  width: 100%;
+  height: 100%;
+}
+
+#AmdbOansMap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.amdb-map {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: #000000;
+  font-family: 'Ecam', monospace;
+}
+
+.amdb-map-screen {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  background: #000000;
+}
+
+.amdb-map-content {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 768px;
+  height: 768px;
+}
+
+.amdb-map-bar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: $bar;
+  border-top: 1px solid $key-edge;
+  color: $text;
+  font-size: 18px;
+}
+
+.amdb-map-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.amdb-map-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.amdb-map-button {
+  min-width: 44px;
+  padding: 5px 10px;
+  text-align: center;
+  background: $key;
+  border: 1px solid $key-edge;
+  color: $text;
+  cursor: pointer;
+
+  &:hover {
+    border-color: $cyan;
+  }
+
+  &.selected {
+    color: $cyan;
+    border-color: $cyan;
+  }
+}
+
+.amdb-map-range {
+  min-width: 70px;
+  text-align: center;
+  color: $cyan;
+}
+
+.amdb-map-label {
+  color: $text;
+  letter-spacing: 1px;
+}
+
+.amdb-map-clearance {
+  flex: 1 1 160px;
+  min-width: 120px;
+  padding: 5px 8px;
+  background: #000000;
+  border: 1px solid $key-edge;
+  color: $cyan;
+  font-family: 'Ecam', monospace;
+  font-size: 18px;
+  text-transform: uppercase;
+
+  &:focus {
+    border-color: $cyan;
+  }
+}
+
+.amdb-map-status {
+  min-height: 22px;
+  color: $text;
+
+  &.route {
+    color: $magenta;
+  }
+
+  &.warn {
+    color: $amber;
+  }
+}

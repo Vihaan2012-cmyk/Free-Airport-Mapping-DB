@@ -135,6 +135,57 @@ fn handle_charts(store: &Store, req: Request, path: &str) -> Option<Request> {
 /// endpoint answers. `userid` and `username` are accepted and ignored: there is only ever
 /// one plan on file, the last one dispatched, whoever it is asked for. Returns the
 /// request back when the path is not this one.
+/// Taxi routes, for the OANS toolbar window (which sets them) and the A320 OANS (which
+/// shows the current one):
+///
+///   /amdb/taxi-route?icao=KJFK&lat=..&lon=..&clearance=A B K 04L   route it, keep it
+///   /amdb/taxi-route/current                                        the one kept, or null
+///   /amdb/taxi-route/clear                                          forget it
+fn handle_taxi(store: &Store, req: Request, path: &str, params: &Map<String, Value>) -> Option<Request> {
+    let Some(pos) = path.find("/amdb/taxi-route") else { return Some(req) };
+    let rest = path[pos + "/amdb/taxi-route".len()..].trim_matches('/');
+    match rest {
+        "current" => respond_json(req, 200, super::taxi::current().to_string()),
+        "clear" => {
+            super::taxi::clear();
+            crate::term::info("Taxi route cleared");
+            respond_json(req, 200, Value::Null.to_string());
+        }
+        "" => {
+            let text = |k: &str| params.get(k).and_then(Value::as_str).map(str::to_string);
+            let num = |k: &str| text(k).and_then(|s| s.parse::<f64>().ok());
+            let (Some(icao), Some(lat), Some(lon), Some(clearance)) = (text("icao"), num("lat"), num("lon"), text("clearance")) else {
+                respond_json(req, 400, json!({"error":"taxi-route needs icao=, lat=, lon= and clearance="}).to_string());
+                return None;
+            };
+            let ap = match store.airport(&icao) {
+                Ok(a) => a,
+                Err(e) => {
+                    respond_json(req, 404, json!({"error": format!("{e:#}")}).to_string());
+                    return None;
+                }
+            };
+            if ap.network.is_empty() {
+                respond_json(req, 200, json!({"error": format!("{} has no taxiway network in its data", ap.icao)}).to_string());
+                return None;
+            }
+            let from = ap.frame.forward(lon, lat);
+            match super::taxi::set(&ap.icao, &ap.network, from, &clearance) {
+                Ok(route) => {
+                    crate::term::success(&format!("[{}] Taxi route {}: {} ({} m)", ap.icao, clearance.trim(), route["legs"].as_array().map(|l| l.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" ")).unwrap_or_default(), route["length_m"]));
+                    respond_json(req, 200, route.to_string());
+                }
+                Err(e) => {
+                    crate::term::warn(&format!("[{}] Taxi route {}: {e}", ap.icao, clearance.trim()));
+                    respond_json(req, 200, json!({"error": e}).to_string());
+                }
+            }
+        }
+        _ => respond_json(req, 404, json!({"error":"unknown taxi-route request"}).to_string()),
+    }
+    None
+}
+
 fn handle_simbrief(req: Request, path: &str, params: &Map<String, Value>) -> Option<Request> {
     if !path.contains("/api/xml.fetcher.php") {
         return Some(req);
@@ -520,6 +571,7 @@ fn handle(store: Arc<Store>, req: Request) {
     let Some(req) = super::planner::handle(req, &path, &params, |r, s, b| respond_json(r, s, b), |r, s, t, b| respond_bytes(r, s, t, b)) else { return };
     let Some(req) = handle_simbrief(req, &path, &params) else { return };
     let Some(req) = handle_charts(&store, req, &path) else { return };
+    let Some(req) = handle_taxi(&store, req, &path, &params) else { return };
     // `/v1/...`, or a bare `/v1` with no trailing slash, which some clients probe with
     // before asking for anything.
     // `/v1/<what>`, or a bare `/v1` with nothing after it, which some clients probe with

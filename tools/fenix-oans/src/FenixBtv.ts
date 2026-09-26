@@ -11,9 +11,11 @@
 // - no braking while the aircraft would reach the exit on its own (it only ever brakes as
 //   much as the exit needs; BTV cannot add thrust);
 // - once the deceleration needed reaches the chosen rate (2 m/s2, or 3 when 2 would not
-//   do), it brakes for 10 kt at the exit (v^2 = v_r^2 + 2ad, plus 5%);
-// - it lets go at 10 kt, or on passing the exit, the parking brake, thrust, the autobrake
-//   being armed again, the exit being cleared, or leaving the ground.
+//   do), it brakes for the exit's speed at the exit (v^2 = v_r^2 + 2ad, plus 5%): 40 kt
+//   for a high-speed exit (20-50 degrees off the runway, as the map data marks it), 10 kt
+//   for any other, as the real BTV aims for the speed an exit is built for;
+// - it lets go at that speed, or on passing the exit, the parking brake, thrust, the
+//   autobrake being armed again, the exit being cleared, or leaving the ground.
 //
 // The law is FlyByWire's A380X BtvDecelScheduler (fbw-a380x/src/wasm/systems/a380_systems/
 // src/hydraulic/autobrakes.rs), changed where the Fenix differs, as measured: the release
@@ -28,8 +30,13 @@ import { EventBus, Instrument, Publisher, Subject } from '@microsoft/msfs-sdk';
 import { FmsOansData } from '@flybywiresim/fbw-sdk';
 
 const KT = 0.514444;
-const RELEASE_SPEED = 5.15; // 10 kt
-const RELEASE_TARGET = RELEASE_SPEED * 0.9;
+/** Speed to let go at: 10 kt for most exits, 40 kt for a high-speed one. */
+const RELEASE_SPEED = 5.15;
+const RELEASE_SPEED_HIGH_SPEED_EXIT = 40 * 0.514444;
+/** Aimed a little under the release speed, as FBW does. */
+const RELEASE_AIM = 0.9;
+/** `exittype` of a high-speed exit in the bridge's data. */
+const HIGH_SPEED_EXIT = 2;
 const RELEASE_BEFORE_EXIT_M = 10;
 const HOLD_RATE_WITHIN_M = 15;
 const RATE_WET = -2.0;
@@ -118,6 +125,14 @@ export class FenixBtv implements Instrument {
 
   private missed = false;
 
+  /** The picked exit's `exittype`, as the OANS publishes it. */
+  private exitType = 1;
+
+  /** For the rollout under way. */
+  private releaseSpeed = RELEASE_SPEED;
+
+  private releaseTarget = RELEASE_SPEED * RELEASE_AIM;
+
   private decel = 0;
 
   private integral = 0;
@@ -138,6 +153,9 @@ export class FenixBtv implements Instrument {
     sub.on('oansExitCoordinates').handle((c: { lat: number; long: number }) => {
       this.exitAt = c;
       this.updateExit();
+    });
+    (bus.getSubscriber<any>() as any).on('amdb_btv_exit_type').handle((t: number) => {
+      this.exitType = t;
     });
     sub.on('oansSelectedExit').handle((name: string | null) => {
       this.exitName = name;
@@ -270,7 +288,9 @@ export class FenixBtv implements Instrument {
 
   private begin(r: Reading): void {
     const remaining = Math.max(1, this.ahead(r) - RELEASE_BEFORE_EXIT_M);
-    const need = (-(r.gs ** 2 - RELEASE_TARGET ** 2) / (2 * remaining)) * MARGIN;
+    this.releaseSpeed = this.exitType === HIGH_SPEED_EXIT ? RELEASE_SPEED_HIGH_SPEED_EXIT : RELEASE_SPEED;
+    this.releaseTarget = this.releaseSpeed * RELEASE_AIM;
+    const need = (-(r.gs ** 2 - this.releaseTarget ** 2) / (2 * remaining)) * MARGIN;
     // As FBW: the wet rate unless only the dry one gets there.
     this.desired = need < RATE_WET ? RATE_DRY : RATE_WET;
     this.startedAt = r.time;
@@ -280,7 +300,7 @@ export class FenixBtv implements Instrument {
     this.nextLog = 0;
     this.missed = false;
     this.setState(BtvState.Rolling);
-    log(`active:-${Math.round(r.gs / KT)}kt-exit-${this.exit?.name}-${Math.round(this.ahead(r))}m-rate-${this.desired}`);
+    log(`active:-${Math.round(r.gs / KT)}kt-exit-${this.exit?.name}-${Math.round(this.ahead(r))}m-rate-${this.desired}-release-${Math.round(this.releaseSpeed / KT)}kt`);
   }
 
   private rollout(r: Reading, dt: number): void {
@@ -306,8 +326,8 @@ export class FenixBtv implements Instrument {
             ? `autobrake-${r.autobrake.name}-armed-again`
             : !this.exit
               ? 'exit-cleared'
-              : r.gs <= RELEASE_SPEED
-                ? '10kt'
+              : r.gs <= this.releaseSpeed
+                ? `${Math.round(this.releaseSpeed / KT)}kt`
                 : ahead < -30
                   ? 'exit-passed'
                   : r.time - this.startedAt > LIMIT_S
@@ -323,7 +343,7 @@ export class FenixBtv implements Instrument {
 
     this.decel += (r.accel - this.decel) * Math.min(1, dt / 0.25);
     const remaining = Math.max(0, ahead - RELEASE_BEFORE_EXIT_M);
-    const need = -Math.max(0, r.gs ** 2 - RELEASE_TARGET ** 2) / (2 * Math.max(0.5, remaining));
+    const need = -Math.max(0, r.gs ** 2 - this.releaseTarget ** 2) / (2 * Math.max(0.5, remaining));
     const request = Math.min(5, Math.max(this.desired, need * MARGIN));
     if (this.state === BtvState.Rolling && request < this.desired * START_AT) {
       this.setState(BtvState.Braking);
@@ -333,7 +353,7 @@ export class FenixBtv implements Instrument {
     }
     const target = this.state === BtvState.Rolling ? null : this.state === BtvState.Holding ? this.endRate : request;
     // Not even the dry rate reaches the exit at 10 kt.
-    this.missed = need * MARGIN < RATE_DRY && r.gs - RELEASE_TARGET > RELEASE_SPEED;
+    this.missed = need * MARGIN < RATE_DRY && r.gs - this.releaseTarget > RELEASE_SPEED;
 
     let want = 0;
     if (target === null) {

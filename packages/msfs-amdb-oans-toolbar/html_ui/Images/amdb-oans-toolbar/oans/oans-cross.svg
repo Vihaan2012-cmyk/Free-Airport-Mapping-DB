@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="35" height="35" viewBox="0 0 35 35">
+  <!-- A pilot's cross on the OANS map: a magenta X, outlined so it reads on any surface. -->
+  <path d="M7 7 L28 28 M28 7 L7 28" stroke="#000000" stroke-width="7" stroke-linecap="round" fill="none"/>
+  <path d="M7 7 L28 28 M28 7 L7 28" stroke="#ff94ff" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+</svg>

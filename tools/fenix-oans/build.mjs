@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0
 //
-// Builds FlyByWire's A380X OANS, with the Fenix A320 harness in ./src, into the A320 OANS
-// package (packages/msfs-a320-oans) as one script and one stylesheet, with the fonts and
-// images they use, and writes the package's layout.json.
+// Builds FlyByWire's A380X OANS, with the harness in ./src, into two packages, each as one
+// script and one stylesheet with the fonts and images they use, and writes each one's
+// layout.json:
+//   packages/msfs-a320-oans          the OANS on the Fenix A320's captain ND (instrument.tsx)
+//   packages/msfs-amdb-oans-toolbar  the Airport Map toolbar window (toolbar.tsx)
 //
 // FlyByWire's source is fetched at a pinned commit into ./.fbw (sparse, not committed).
 // Each FlyByWire file keeps resolving its imports through its own tsconfig, as in their
@@ -33,29 +35,55 @@ const FBW_DIRS = [
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fbw = path.join(here, '.fbw');
-const pkg = path.resolve(here, '../../packages/msfs-a320-oans');
-const outDir = path.join(pkg, 'html_ui/Pages/VCockpit/Instruments/amdb-oans');
 
-// What the display draws with comes from this package's own assets, not FlyByWire's:
+/**
+ * What is built. Each package has its own asset folder (MSFS merges every package's
+ * html_ui into one file system, so two packages must not ship the same path) and reports
+ * its load and its errors to the bridge under its own name.
+ */
+const TARGETS = [
+  {
+    pkg: path.resolve(here, '../../packages/msfs-a320-oans'),
+    out: 'html_ui/Pages/VCockpit/Instruments/amdb-oans',
+    entry: 'src/instrument.tsx',
+    name: 'oans-nd',
+    assetDir: 'amdb-a320-oans',
+    tag: 'amdb-oans',
+  },
+  {
+    pkg: path.resolve(here, '../../packages/msfs-amdb-oans-toolbar'),
+    out: 'html_ui/InGamePanels/AmdbOansMap',
+    entry: 'src/toolbar.tsx',
+    name: 'AmdbOansMap',
+    assetDir: 'amdb-oans-toolbar',
+    tag: 'AmdbOansMap',
+  },
+];
+
+// What the display draws with comes from the package's own assets, not FlyByWire's:
 // their licence covers their code (GPL) and 3D models, but not their fonts or images. The
 // font is B612, the typeface Airbus commissioned for cockpit displays (SIL Open Font
-// License, assets/fonts/B612-OFL.txt); the flag and cross are drawn for this package.
-const ASSET_DIR = 'amdb-a320-oans';
-const ASSETS = {
-  [`Fonts/${ASSET_DIR}/B612Mono-Regular.ttf`]: 'assets/fonts/B612Mono-Regular.ttf',
-  [`Images/${ASSET_DIR}/oans/oans-cross.svg`]: 'assets/images/oans-cross.svg',
-  [`Images/${ASSET_DIR}/oans/oans-flag.svg`]: 'assets/images/oans-flag.svg',
-};
-const FONT = `/Fonts/${ASSET_DIR}/B612Mono-Regular.ttf`;
-const RELINK = [
-  ['/Fonts/fbw-a380x/FBW-Display-EIS-A380-SlashedZero.ttf', FONT],
-  ['/Fonts/fbw-a380x/FBW-Display-EIS-A380.ttf', FONT],
-  ['/Fonts/fbw-a380x/NDChrono.ttf', FONT],
-  ['/Images/fbw-a380x/oans/oans-cross.png', `/Images/${ASSET_DIR}/oans/oans-cross.svg`],
-  ['/Images/fbw-a380x/oans/oans-flag.png', `/Images/${ASSET_DIR}/oans/oans-flag.svg`],
-  // The erase dialog, which adds "cross.svg" or "flag.svg" itself.
-  ['/Images/fbw-a380x/oans/oans-', `/Images/${ASSET_DIR}/oans/oans-`],
-];
+// License, assets/fonts/B612-OFL.txt); the flag and cross are drawn for these packages.
+function assets(dir) {
+  return {
+    [`Fonts/${dir}/B612Mono-Regular.ttf`]: 'assets/fonts/B612Mono-Regular.ttf',
+    [`Images/${dir}/oans/oans-cross.svg`]: 'assets/images/oans-cross.svg',
+    [`Images/${dir}/oans/oans-flag.svg`]: 'assets/images/oans-flag.svg',
+  };
+}
+
+function relinks(dir) {
+  const font = `/Fonts/${dir}/B612Mono-Regular.ttf`;
+  return [
+    ['/Fonts/fbw-a380x/FBW-Display-EIS-A380-SlashedZero.ttf', font],
+    ['/Fonts/fbw-a380x/FBW-Display-EIS-A380.ttf', font],
+    ['/Fonts/fbw-a380x/NDChrono.ttf', font],
+    ['/Images/fbw-a380x/oans/oans-cross.png', `/Images/${dir}/oans/oans-cross.svg`],
+    ['/Images/fbw-a380x/oans/oans-flag.png', `/Images/${dir}/oans/oans-flag.svg`],
+    // The erase dialog, which adds "cross.svg" or "flag.svg" itself.
+    ['/Images/fbw-a380x/oans/oans-', `/Images/${dir}/oans/oans-`],
+  ];
+}
 
 function git(...args) {
   return execFileSync('git', args, { cwd: fbw, stdio: ['ignore', 'pipe', 'inherit'] }).toString().trim();
@@ -77,11 +105,11 @@ function fetchFbw() {
   git('checkout', '-q', 'FETCH_HEAD');
 }
 
-function copyAssets() {
+function copyAssets({ pkg, assetDir }) {
   for (const dir of ['Fonts', 'Images']) {
     fs.rmSync(path.join(pkg, 'html_ui', dir), { recursive: true, force: true });
   }
-  for (const [to, from] of Object.entries(ASSETS)) {
+  for (const [to, from] of Object.entries(assets(assetDir))) {
     fs.mkdirSync(path.dirname(path.join(pkg, 'html_ui', to)), { recursive: true });
     fs.copyFileSync(path.join(here, from), path.join(pkg, 'html_ui', to));
   }
@@ -89,14 +117,14 @@ function copyAssets() {
 }
 
 /** Point the bundle's font and image paths at the package's own assets, and check each exists. */
-function relinkAssets(file) {
+function relinkAssets(file, { pkg, assetDir }) {
   let text = fs.readFileSync(file, 'utf8');
-  for (const [from, to] of RELINK) {
+  for (const [from, to] of relinks(assetDir)) {
     text = text.split(from).join(to);
   }
   const left = text.match(/\/(Fonts|Images)\/fbw-a380x\/[\w./-]*/);
   if (left) {
-    throw new Error(`${path.basename(file)} still uses FlyByWire's ${left[0]}: add it to RELINK`);
+    throw new Error(`${path.basename(file)} still uses FlyByWire's ${left[0]}: add it to relinks()`);
   }
   for (const [ref, dir] of text.matchAll(/\/((?:Fonts|Images)\/[\w-]+\/[\w./-]*)/g)) {
     // A path cut short where the script adds the rest (oans-flag / oans-cross) is checked
@@ -104,14 +132,14 @@ function relinkAssets(file) {
     const local = path.join(pkg, 'html_ui', dir);
     const exists = /\.\w+$/.test(dir) ? fs.existsSync(local) : fs.existsSync(path.dirname(local));
     if (!exists) {
-      throw new Error(`${path.basename(file)} uses ${ref}, which the package does not have: add it to ASSETS`);
+      throw new Error(`${path.basename(file)} uses ${ref}, which the package does not have: add it to assets()`);
     }
   }
   fs.writeFileSync(file, text);
 }
 
 /** MSFS's list of a package's files, and the size it states in its manifest. */
-function writeLayout() {
+function writeLayout({ pkg }) {
   const manifestPath = path.join(pkg, 'manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const writeManifest = () => fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}
@@ -224,6 +252,61 @@ function fenixBuildingAxisBearing(feature: Feature<Geometry>): number | undefine
         '                      />\n',
     ],
   ],
+  'OANC/OansBrakeToVacateSelection.ts': [
+    // The layer is cleared under whatever transform the last drawing left, which is moved
+    // to the canvas centre: the part above and left of the centre was never cleared, so a
+    // taxi route taken away stayed there in part. It is cleared untransformed.
+    [
+      "    this.canvasRef.instance\n      .getContext('2d')\n      ?.clearRect(0, 0, this.canvasRef.instance.width, this.canvasRef.instance.height);\n",
+      "    this.canvasRef.instance.getContext('2d')?.resetTransform();\n" +
+        "    this.canvasRef.instance\n      .getContext('2d')\n      ?.clearRect(0, 0, this.canvasRef.instance.width, this.canvasRef.instance.height);\n",
+    ],
+    // The picked exit's type (the bridge marks high-speed exits), for BTV's release speed.
+    [
+      "    this.bus.getPublisher<FmsOansData>().pub('oansSelectedExit', exit, true);\n",
+      "    this.bus.getPublisher<FmsOansData>().pub('oansSelectedExit', exit, true);\n" +
+        "    this.bus.getPublisher<any>().pub('amdb_btv_exit_type', feature.properties?.exittype ?? 1, true);\n",
+    ],
+    // The taxi route the bridge keeps (typed in the OANS toolbar window), drawn in magenta
+    // on the BTV layer, which moves and turns with the map.
+    [
+      '  private btvPathGeometry: Position[] = [];\n',
+      '  private btvPathGeometry: Position[] = [];\n\n' +
+        '  /** The taxi route the bridge keeps, in the map\'s own coordinates. */\n' +
+        '  private amdbTaxiRoute: Position[] = [];\n',
+    ],
+    [
+      '    this.zoomLevelIndex?.sub(() => this.drawBtvLayer());\n',
+      '    this.zoomLevelIndex?.sub(() => this.drawBtvLayer());\n' +
+        "    (this.sub as any).on('amdb_taxi_route').handle((route: Position[] | null) => {\n" +
+        '      this.amdbTaxiRoute = route ?? [];\n' +
+        '      this.drawBtvLayer();\n' +
+        '    });\n',
+    ],
+    ['    this.drawBtvPath();\n', '    this.drawAmdbTaxiRoute();\n    this.drawBtvPath();\n'],
+    [
+      '  drawBtvLayer() {\n',
+      '  drawAmdbTaxiRoute() {\n' +
+        "    const ctx = this.canvasRef?.instance.getContext('2d');\n" +
+        '    if (this.amdbTaxiRoute.length < 2 || !this.canvasRef?.getOrDefault() || !ctx) {\n' +
+        '      return;\n' +
+        '    }\n' +
+        '    ctx.resetTransform();\n' +
+        '    ctx.translate(this.canvasCentreX?.get() ?? 0, this.canvasCentreY?.get() ?? 0);\n' +
+        '    ctx.lineWidth = 5;\n' +
+        "    ctx.lineJoin = 'round';\n" +
+        "    ctx.lineCap = 'round';\n" +
+        "    ctx.strokeStyle = '#ff94ff';\n" +
+        '    const path = new Path2D();\n' +
+        '    path.moveTo(this.amdbTaxiRoute[0][0], this.amdbTaxiRoute[0][1] * -1);\n' +
+        '    for (let i = 1; i < this.amdbTaxiRoute.length; i++) {\n' +
+        '      path.lineTo(this.amdbTaxiRoute[i][0], this.amdbTaxiRoute[i][1] * -1);\n' +
+        '    }\n' +
+        '    ctx.stroke(path);\n' +
+        '  }\n\n' +
+        '  drawBtvLayer() {\n',
+    ],
+  ],
   'OANC/OancLabelFilter.ts': [
     [
       '  switch (filter.type) {\n',
@@ -285,7 +368,7 @@ const patched = new Set();
 const fbwPatches = {
   name: 'fbw-patches',
   setup(b) {
-    b.onLoad({ filter: /[\\/](OANC[\\/](Oanc\.tsx|OancLabelManager\.ts|OancLabelFilter\.ts|style-data\.ts)|fbw-a380x[\\/].*[\\/]ND[\\/]OansControlPanel\.tsx)$/ }, (args) => {
+    b.onLoad({ filter: /[\\/](OANC[\\/](Oanc\.tsx|OancLabelManager\.ts|OancLabelFilter\.ts|OansBrakeToVacateSelection\.ts|style-data\.ts)|fbw-a380x[\\/].*[\\/]ND[\\/]OansControlPanel\.tsx)$/ }, (args) => {
       const key = `${path.basename(path.dirname(args.path))}/${path.basename(args.path)}`;
       patched.add(key);
       // Git on Windows may check the files out with CRLF line endings.
@@ -307,58 +390,67 @@ const fbwPatches = {
   },
 };
 
+async function buildTarget(target) {
+  const { pkg, out, entry, name, tag } = target;
+  const outDir = path.join(pkg, out);
+  patched.clear();
+  copyAssets(target);
+  await build({
+    absWorkingDir: here,
+    entryPoints: { [name]: path.join(here, entry) },
+    outdir: outDir,
+    bundle: true,
+    format: 'iife',
+    // Approximately CoherentGT's WebKit, as FlyByWire targets it.
+    target: 'safari11',
+    jsxFactory: 'FSComponent.buildComponent',
+    jsxFragment: 'FSComponent.Fragment',
+    // FlyByWire's build fills these from its .env; the simulator has no `process`, so any
+    // left in the bundle throws the moment it loads (checked after the build).
+    define: {
+      DEBUG: 'false',
+      'process.env.NODE_ENV': '"production"',
+      'process.env.NODE_DEBUG': '""',
+      'process.env.CLIENT_ID': '""',
+      'process.env.CLIENT_SECRET': '""',
+      'process.env.AIRCRAFT_PROJECT_PREFIX': '"a380x"',
+      'process.env.AIRCRAFT_VARIANT': '"A380-842"',
+    },
+    // Errors in a panel gauge are otherwise invisible: report ours, and a successful load,
+    // to the bridge, which logs any request it does not recognise.
+    banner: {
+      js: [
+        `window.addEventListener('error',function(e){if(String(e.filename).indexOf('${tag}')>=0){fetch('http://127.0.0.1:8770/${tag}-error?'+encodeURIComponent(e.message+' @'+e.lineno+':'+e.colno));}});`,
+        `window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.stack?String(r.stack):'';if(s.indexOf('${tag}')>=0){fetch('http://127.0.0.1:8770/${tag}-error?'+encodeURIComponent(String(r&&r.message||r)+' | '+s.slice(0,300)));}});`,
+      ].join('\n'),
+    },
+    footer: { js: `fetch('http://127.0.0.1:8770/${tag}-loaded');` },
+    plugins: [scss, bridgeAmdb, fbwPatches],
+    // Absolute paths in FlyByWire's stylesheets are MSFS's own virtual file system, resolved
+    // by the simulator at run time (see relinkAssets).
+    external: ['/Fonts/*', '/Images/*'],
+    logLevel: 'warning',
+    legalComments: 'eof',
+  });
+  for (const f of [`${name}.js`, `${name}.css`]) {
+    relinkAssets(path.join(outDir, f), target);
+  }
+  // A file the filter above never matched would otherwise go unpatched without a word.
+  const unpatched = [...Object.keys(FBW_PATCHES), 'OANC/style-data.ts'].filter((k) => !patched.has(k));
+  if (unpatched.length) {
+    console.error(`never patched (the file was not bundled, or the filter missed it): ${unpatched.join(', ')}`);
+    process.exit(1);
+  }
+  const leftover = [...new Set(fs.readFileSync(path.join(outDir, `${name}.js`), 'utf8').match(/process\.env\.\w+/g) ?? [])];
+  if (leftover.length) {
+    console.error(`the bundle still reads ${leftover.join(', ')}: add them to \`define\` in build.mjs`);
+    process.exit(1);
+  }
+  writeLayout(target);
+  console.log(`built ${path.relative(process.cwd(), pkg)} from FlyByWire ${FBW_COMMIT.slice(0, 8)}`);
+}
+
 fetchFbw();
-copyAssets();
-await build({
-  absWorkingDir: here,
-  entryPoints: { 'oans-nd': path.join(here, 'src/instrument.tsx') },
-  outdir: outDir,
-  bundle: true,
-  format: 'iife',
-  // Approximately CoherentGT's WebKit, as FlyByWire targets it.
-  target: 'safari11',
-  jsxFactory: 'FSComponent.buildComponent',
-  jsxFragment: 'FSComponent.Fragment',
-  // FlyByWire's build fills these from its .env; the simulator has no `process`, so any
-  // left in the bundle throws the moment it loads (checked after the build).
-  define: {
-    DEBUG: 'false',
-    'process.env.NODE_ENV': '"production"',
-    'process.env.NODE_DEBUG': '""',
-    'process.env.CLIENT_ID': '""',
-    'process.env.CLIENT_SECRET': '""',
-    'process.env.AIRCRAFT_PROJECT_PREFIX': '"a380x"',
-    'process.env.AIRCRAFT_VARIANT': '"A380-842"',
-  },
-  // Errors in a panel gauge are otherwise invisible: report ours, and a successful load,
-  // to the bridge, which logs any request it does not recognise.
-  banner: {
-    js: [
-      `window.addEventListener('error',function(e){if(String(e.filename).indexOf('amdb-oans')>=0){fetch('http://127.0.0.1:8770/amdb-oans-error?'+encodeURIComponent(e.message+' @'+e.lineno+':'+e.colno));}});`,
-      `window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.stack?String(r.stack):'';if(s.indexOf('amdb-oans')>=0){fetch('http://127.0.0.1:8770/amdb-oans-error?'+encodeURIComponent(String(r&&r.message||r)+' | '+s.slice(0,300)));}});`,
-    ].join('\n'),
-  },
-  footer: { js: `fetch('http://127.0.0.1:8770/amdb-oans-loaded');` },
-  plugins: [scss, bridgeAmdb, fbwPatches],
-  // Absolute paths in FlyByWire's stylesheets are MSFS's own virtual file system, resolved
-  // by the simulator at run time (see relinkAssets).
-  external: ['/Fonts/*', '/Images/*'],
-  logLevel: 'warning',
-  legalComments: 'eof',
-});
-for (const f of ['oans-nd.js', 'oans-nd.css']) {
-  relinkAssets(path.join(outDir, f));
+for (const target of TARGETS) {
+  await buildTarget(target);
 }
-// A file the filter above never matched would otherwise go unpatched without a word.
-const unpatched = [...Object.keys(FBW_PATCHES), 'OANC/style-data.ts'].filter((k) => !patched.has(k));
-if (unpatched.length) {
-  console.error(`never patched (the file was not bundled, or the filter missed it): ${unpatched.join(', ')}`);
-  process.exit(1);
-}
-const leftover = [...new Set(fs.readFileSync(path.join(outDir, 'oans-nd.js'), 'utf8').match(/process\.env\.\w+/g) ?? [])];
-if (leftover.length) {
-  console.error(`the bundle still reads ${leftover.join(', ')}: add them to \`define\` in build.mjs`);
-  process.exit(1);
-}
-writeLayout();
-console.log(`built ${path.relative(process.cwd(), pkg)} from FlyByWire ${FBW_COMMIT.slice(0, 8)}`);
