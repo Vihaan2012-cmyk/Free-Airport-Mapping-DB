@@ -1,5 +1,13 @@
 # Changelog
 
+## A320 OANS 1.0.2 (2026-09-26, installer only)
+
+- When the installer finds no Fenix it can add the OANS to, its log (`a320-oans.log` in
+  `%LOCALAPPDATA%mdb-bridge`) now says which Community folders it looked in, every
+  `fnx*` folder there, and which of the Fenix files it changes each one has.
+- `A320 OANS.exe --install --community "<Community folder>"` adds it to a Community folder
+  named outright, for a simulator whose settings file the installer does not find.
+
 ## A320 OANS 1.0.1 (2026-09-26, installer only)
 
 - The Fenix's `layout.json` now lists the new sizes of the two files the OANS changes in

@@ -8,7 +8,9 @@
 //!
 //! Steps for the installer:
 //!
-//! * `--install`                 install the A320 OANS package and add it to the Fenix
+//! * `--install`                 install the A320 OANS package and add it to the Fenix;
+//!                               `--community PATH` (more than once if wanted) names the
+//!                               Community folder instead of finding it
 //! * `--start-with-sim on|off`   start (or stop starting) with Microsoft Flight Simulator
 //! * `--quit`                    ask a running copy to exit, and wait for it
 //! * `--uninstall`               remove the package, put the Fenix's files back, and the
@@ -85,7 +87,8 @@ mod app {
             return i32::from(!quit_running());
         }
         if has("--install") {
-            return install();
+            let named = args.windows(2).filter(|w| w[0] == "--community").map(|w| PathBuf::from(&w[1])).collect();
+            return install(named);
         }
         if has("--uninstall") {
             quit_running();
@@ -97,11 +100,23 @@ mod app {
         serve()
     }
 
-    fn install() -> i32 {
+    fn install(named: Vec<PathBuf>) -> i32 {
         let mut failed = false;
         let mut found = false;
-        for sim in desktop::detect_sims() {
+        let sims: Vec<desktop::Sim> = if named.is_empty() {
+            desktop::detect_sims()
+        } else {
+            named.into_iter().map(|community| desktop::Sim { name: "Community".to_string(), community }).collect()
+        };
+        if sims.is_empty() {
+            amdbgen::term::warn("No simulator settings (UserCfg.opt) found for MSFS 2020 or 2024; name the Community folder with --community");
+        }
+        for sim in sims {
+            amdbgen::term::info(&format!("{}: looking in {}", sim.name, sim.community.display()));
             if !desktop::a320_oans_fits(&sim.community) {
+                for line in desktop::fenix_diagnosis(&sim.community) {
+                    amdbgen::term::info(&format!("{}:   {line}", sim.name));
+                }
                 continue;
             }
             found = true;
