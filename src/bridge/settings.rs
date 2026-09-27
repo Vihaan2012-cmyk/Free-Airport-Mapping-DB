@@ -25,6 +25,12 @@ pub struct Settings {
     /// (iniBuilds A350, FlyByWire A380X). Needs administrator rights.
     #[serde(default)]
     pub navigraph_redirect: bool,
+    /// Redirect the Navigraph sign-in and charts hosts here, so the Fenix A320's tablet
+    /// shows the bridge's charts (its app cannot be patched). Needs administrator rights,
+    /// and while it is on every program's Navigraph sign-in on this computer reaches the
+    /// bridge.
+    #[serde(default)]
+    pub fenix_charts: bool,
     /// Install the X-Plane 12 moving map and serve its route when X-Plane is found.
     #[serde(default = "yes")]
     pub xplane: bool,
@@ -47,7 +53,7 @@ pub fn app_dir() -> PathBuf {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { version: 1, cache: true, cache_dir: app_dir().join("cache"), limit_mb: 2048, start_on_open: true, navigraph_redirect: false, xplane: true, community_2020: None, community_2024: None }
+        Settings { version: 1, cache: true, cache_dir: app_dir().join("cache"), limit_mb: 2048, start_on_open: true, navigraph_redirect: false, fenix_charts: false, xplane: true, community_2020: None, community_2024: None }
     }
 }
 

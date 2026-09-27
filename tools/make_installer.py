@@ -17,6 +17,7 @@ Setup's compiler on installer/amdb-bridge.iss, and packs the converter separatel
 Needs Rust and Inno Setup 6 (winget install JRSoftware.InnoSetup).
 """
 
+import filecmp
 import glob
 import json
 import os
@@ -75,6 +76,12 @@ def stage_webview2_loader():
     # is the one this compile actually produced.
     src = max(hits, key=os.path.getmtime)
     dst = os.path.join(ROOT, "target", "release", "WebView2Loader.dll")
+    # A copy of AMDB Bridge running from target/release holds the DLL open, and Windows
+    # will not let it be written over; when it is already the same file there is nothing
+    # to write.
+    if os.path.isfile(dst) and filecmp.cmp(src, dst, shallow=False):
+        print(f"already staged {dst}")
+        return
     shutil.copyfile(src, dst)
     print(f"staged {dst}")
 

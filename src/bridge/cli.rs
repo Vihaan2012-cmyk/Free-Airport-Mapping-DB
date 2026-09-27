@@ -497,9 +497,10 @@ fn serve(a: ServeArgs) -> Result<()> {
     let mut https = None;
     // Set up once (the desktop app's option, or `navigraph on`): the address already
     // points here and the certificate is trusted, so serve without touching either.
-    let persistent = !a.no_hosts && super::desktop::navigraph_ready();
+    let persistent = !a.no_hosts && (super::desktop::navigraph_ready() || super::desktop::fenix_charts_ready());
     if persistent {
-        let m = tls::ensure(domain)?;
+        // One certificate for every Navigraph name, whichever of them point here.
+        let m = tls::ensure_for(domain, &super::navigraph_domains(true))?;
         https = Some((a.https_port, m.cert_pem, m.key_pem));
         crate::term::info(&format!("{domain} already points here; serving it on port {}", a.https_port));
     } else if !a.no_hosts {

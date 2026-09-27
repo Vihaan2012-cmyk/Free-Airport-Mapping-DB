@@ -14,13 +14,15 @@ use std::time::Instant;
 pub struct Options {
     /// Redirect the Navigraph AMDB host here (needs administrator rights).
     pub navigraph_redirect: bool,
+    /// Redirect the Fenix A320 tablet's Navigraph hosts here (needs administrator rights).
+    pub fenix_charts: bool,
     /// Install the X-Plane moving map when X-Plane 12 is found.
     pub xplane: bool,
 }
 
 impl Options {
     pub fn from_settings(s: &Settings) -> Options {
-        Options { navigraph_redirect: s.navigraph_redirect, xplane: s.xplane }
+        Options { navigraph_redirect: s.navigraph_redirect, fenix_charts: s.fenix_charts, xplane: s.xplane }
     }
 }
 
@@ -28,6 +30,8 @@ pub struct Running {
     handle: ServerHandle,
     /// Serving the A350 and A380X through the Navigraph address.
     pub redirected: bool,
+    /// Serving the Fenix A320's tablet through Navigraph's sign-in and charts addresses.
+    pub fenix_charts: bool,
     pub http_port: u16,
     pub started: Instant,
 }
@@ -49,21 +53,28 @@ pub fn elevated() -> bool {
     hosts::writable()
 }
 
-/// A redirect left in the hosts file by `amdb-bridge serve` that did not stop cleanly (a
-/// crash, a killed process) while the app's A350/A380X option is off. While it is there,
-/// aircraft that use the Navigraph API reach nothing, so it is removed when possible.
+/// A redirect left in the hosts file (by `amdb-bridge serve` that did not stop cleanly, a
+/// crash, a killed process) for an option that is off: the A350/A380X map host, or the
+/// Fenix tablet's. While it is there, programs that use those Navigraph addresses reach
+/// nothing, so it is removed when possible, keeping the other option's hosts.
 pub fn clear_stale_redirect(settings: &Settings) -> Option<String> {
-    let domain = super::NAVIGRAPH_AMDB_DOMAIN;
-    if settings.navigraph_redirect || !hosts::is_installed(domain) {
+    let a350 = hosts::is_installed(super::NAVIGRAPH_AMDB_DOMAIN);
+    let fenix = super::NAVIGRAPH_EFB_DOMAINS.iter().any(|d| hosts::is_installed(d));
+    let stale_a350 = a350 && !settings.navigraph_redirect;
+    let stale_fenix = fenix && !settings.fenix_charts;
+    if !stale_a350 && !stale_fenix {
         return None;
     }
     if hosts::writable() {
-        return Some(match hosts::remove() {
+        return Some(match desktop::setup_redirects(a350 && !stale_a350, fenix && !stale_fenix) {
             Ok(_) => "Removed a Navigraph redirect left behind by an earlier run".to_string(),
             Err(e) => format!("A Navigraph redirect was left behind by an earlier run and could not be removed: {e:#}"),
         });
     }
-    Some("A Navigraph redirect was left behind by an earlier run, so aircraft using Navigraph's own maps cannot reach them. Tick and untick the A350/A380X option to remove it.".to_string())
+    let which = if stale_a350 { "A350/A380X" } else { "Fenix A320 tablet charts" };
+    Some(format!(
+        "A Navigraph redirect was left behind by an earlier run, so programs using those Navigraph addresses cannot reach them. Tick and untick the {which} option to remove it."
+    ))
 }
 
 /// Fail early, in plain words, when another program is already listening on `port`.
@@ -99,21 +110,29 @@ pub fn start(settings: &Settings, opts: &Options) -> Result<Running> {
     // Before any of the slow work, so a second copy fails in a moment, not ten seconds.
     port_free(http_port)?;
     let mut https = None;
-    let mut redirected = false;
-    if opts.navigraph_redirect {
-        if !desktop::navigraph_ready() && hosts::writable() {
-            desktop::setup_navigraph(true)?;
-        }
-        if desktop::navigraph_ready() {
-            port_free(super::DEFAULT_HTTPS_PORT)?;
-            let m = tls::ensure(domain)?;
-            https = Some((super::DEFAULT_HTTPS_PORT, m.cert_pem, m.key_pem));
-            redirected = true;
-            for note in desktop::patch_a350_everywhere() {
-                crate::term::success(&note);
-            }
-        } else {
-            crate::term::warn("A350/A380X support is not set up on this computer; untick and tick its option to set it up");
+    if opts.navigraph_redirect && !desktop::navigraph_ready() && hosts::writable() {
+        desktop::setup_navigraph(true)?;
+    }
+    if opts.fenix_charts && !desktop::fenix_charts_ready() && hosts::writable() {
+        desktop::setup_fenix_charts(true)?;
+    }
+    let redirected = opts.navigraph_redirect && desktop::navigraph_ready();
+    let fenix_charts = opts.fenix_charts && desktop::fenix_charts_ready();
+    if opts.navigraph_redirect && !redirected {
+        crate::term::warn("A350/A380X support is not set up on this computer; untick and tick its option to set it up");
+    }
+    if opts.fenix_charts && !fenix_charts {
+        crate::term::warn("The Fenix A320's tablet charts are not set up on this computer; untick and tick their option to set them up");
+    }
+    if redirected || fenix_charts {
+        port_free(super::DEFAULT_HTTPS_PORT)?;
+        // One certificate for every Navigraph name, whichever of them point here.
+        let m = tls::ensure_for(domain, &super::navigraph_domains(true))?;
+        https = Some((super::DEFAULT_HTTPS_PORT, m.cert_pem, m.key_pem));
+    }
+    if redirected {
+        for note in desktop::patch_a350_everywhere() {
+            crate::term::success(&note);
         }
     }
     crate::term::info(&format!("Storage: {}", describe_storage(settings)));
@@ -121,6 +140,9 @@ pub fn start(settings: &Settings, opts: &Options) -> Result<Running> {
     let handle = server::start(store, Listen { http_port: Some(http_port), https })?;
     if redirected {
         crate::term::success("Serving the iniBuilds A350 and FlyByWire A380X too");
+    }
+    if fenix_charts {
+        crate::term::success("Serving the Fenix A320's tablet charts too");
     }
     if opts.xplane {
         if let Some(root) = crate::sources::xplane::local::detect_install() {
@@ -139,5 +161,5 @@ pub fn start(settings: &Settings, opts: &Options) -> Result<Running> {
         }
     }
     crate::term::success("Ready: load your aircraft");
-    Ok(Running { handle, redirected, http_port, started: Instant::now() })
+    Ok(Running { handle, redirected, fenix_charts, http_port, started: Instant::now() })
 }

@@ -224,6 +224,33 @@ fn setup_navigraph(on: bool, relaunched: bool) -> i32 {
     i32::from(!done)
 }
 
+/// `--setup-fenix-charts on|off`: the Fenix A320's tablet charts, for the installer and
+/// the option. Asks Windows for administrator rights when this copy does not have them.
+fn setup_fenix_charts(on: bool, relaunched: bool) -> i32 {
+    if instance::is_elevated() || relaunched {
+        // As above: an elevated copy never starts another.
+        if let Err(e) = desktop::setup_fenix_charts(on) {
+            amdbgen::term::error(&format!("Fenix A320 tablet charts setup failed: {e:#}. If security software protects the hosts file, allow AMDB Bridge to change it and try again."));
+            return 1;
+        }
+    } else if !instance::run_elevated(if on { "--setup-fenix-charts on --relaunched" } else { "--setup-fenix-charts off --relaunched" }, true) {
+        amdbgen::term::warn("Administrator permission was not given, so the Fenix A320's tablet charts were not changed");
+        return 1;
+    }
+    let done = desktop::fenix_charts_ready() == on;
+    if done {
+        let mut s = Settings::load().unwrap_or_default();
+        s.fenix_charts = on;
+        let _ = s.save();
+        amdbgen::term::success(if on {
+            "Fenix A320 tablet charts set up: its Navigraph sign-in now links to AMDB Bridge"
+        } else {
+            "Fenix A320 tablet charts removed: its tablet uses Navigraph again"
+        });
+    }
+    i32::from(!done)
+}
+
 fn quit_running() -> i32 {
     i32::from(!instance::ask_to_quit(Duration::from_secs(15)))
 }
@@ -240,7 +267,8 @@ pub fn main() -> i32 {
         || has("--uninstall")
         || has("--quit")
         || has("--run-at-login")
-        || has("--setup-navigraph");
+        || has("--setup-navigraph")
+        || has("--setup-fenix-charts");
     install_sink(&shared, !headless);
 
     if has("--quit") {
@@ -279,6 +307,9 @@ pub fn main() -> i32 {
     }
     if let Some(i) = args.iter().position(|a| a == "--setup-navigraph") {
         return setup_navigraph(args.get(i + 1).map_or(true, |v| v != "off"), relaunched);
+    }
+    if let Some(i) = args.iter().position(|a| a == "--setup-fenix-charts") {
+        return setup_fenix_charts(args.get(i + 1).map_or(true, |v| v != "off"), relaunched);
     }
     if let Some(i) = args.iter().position(|a| a == "--run-at-login") {
         let on = args.get(i + 1).map_or(true, |v| v != "off");
@@ -336,8 +367,9 @@ struct Inventory {
 }
 
 /// Build the list. `redirect` is the A350/A380X option, `serving_redirect` whether the
-/// redirect is in place right now.
-fn take_inventory(redirect: bool, serving_redirect: bool, xplane_on: bool) -> Inventory {
+/// redirect is in place right now; `fenix_charts` and `serving_fenix` the same for the
+/// Fenix A320's tablet.
+fn take_inventory(redirect: bool, serving_redirect: bool, fenix_charts: bool, serving_fenix: bool, xplane_on: bool) -> Inventory {
     let mut rows: Vec<[String; 3]> = Vec::new();
     let mut tablets: Vec<bool> = Vec::new();
     let sims = desktop::detect_sims();
@@ -376,6 +408,16 @@ fn take_inventory(redirect: bool, serving_redirect: bool, xplane_on: bool) -> In
                 MapState::Installed(v) => format!("On (v{v})"),
             };
             rows.push([sim.name.clone(), "Fenix A320: A320 OANS".into(), status]);
+            let charts = if serving_fenix {
+                "From the bridge"
+            } else if fenix_charts && desktop::fenix_charts_ready() {
+                "From the bridge when serving"
+            } else if fenix_charts {
+                "Not set up: tick its option again"
+            } else {
+                "Its own (Navigraph): tick its option below"
+            };
+            rows.push([sim.name.clone(), "Fenix A320: tablet charts".into(), charts.into()]);
         }
         for (pkg, _, on) in amdbgen::bridge::patcher::scan_charts(&sim.community) {
             tablets.push(on);
@@ -503,6 +545,7 @@ struct Ui {
     opt_sim: nwg::CheckBox,
     opt_xplane: nwg::CheckBox,
     opt_a320_oans: nwg::CheckBox,
+    opt_fenix_charts: nwg::CheckBox,
     opt_redirect: nwg::CheckBox,
     opt_cache: nwg::CheckBox,
     folder: nwg::TextInput,
@@ -576,7 +619,7 @@ impl App {
 
         nwg::Window::builder()
             .flags(nwg::WindowFlags::WINDOW | nwg::WindowFlags::MINIMIZE_BOX)
-            .size((640, 845))
+            .size((640, 868))
             .center(true)
             .title("AMDB Bridge")
             .icon(Some(&ui.icon))
@@ -654,35 +697,36 @@ impl App {
         ui.chart_draw.set_enabled(false);
 
         nwg::Label::builder().parent(w).text("Options").font(Some(&ui.font_header)).position((20, 512)).size((600, 22)).build(&mut ui.options_header)?;
-        let opts: [(&mut nwg::CheckBox, &str); 7] = [
+        let opts: [(&mut nwg::CheckBox, &str); 8] = [
             (&mut ui.opt_start, "Start serving as soon as AMDB Bridge opens"),
             (&mut ui.opt_login, "Open AMDB Bridge in the notification area when Windows starts"),
             (&mut ui.opt_sim, "Open AMDB Bridge when Microsoft Flight Simulator starts"),
             (&mut ui.opt_xplane, "Install the X-Plane 12 moving map when serving starts"),
             (&mut ui.opt_a320_oans, "Add the A320 OANS moving map to the Fenix A320's captain navigation display"),
+            (&mut ui.opt_fenix_charts, "Show AMDB Bridge's charts on the Fenix A320's tablet (asks for administrator permission once)"),
             (&mut ui.opt_redirect, "Also serve the iniBuilds A350 and FlyByWire A380X (asks for administrator permission once)"),
             (&mut ui.opt_cache, "Keep built airports on disk, so they load instantly next time"),
         ];
         for (i, (cb, text)) in opts.into_iter().enumerate() {
             nwg::CheckBox::builder().parent(w).text(text).position((20, 536 + i as i32 * 23)).size((600, 22)).build(cb)?;
         }
-        nwg::TextInput::builder().parent(w).readonly(true).position((40, 699)).size((340, 25)).build(&mut ui.folder)?;
-        nwg::Button::builder().parent(w).text("Change…").position((386, 697)).size((90, 29)).build(&mut ui.folder_change)?;
-        nwg::Label::builder().parent(w).text("Limit").h_align(nwg::HTextAlign::Right).position((484, 702)).size((40, 22)).build(&mut ui.limit_label)?;
-        nwg::TextInput::builder().parent(w).align(nwg::HTextAlign::Right).limit(7).placeholder_text(Some("none")).position((530, 699)).size((58, 25)).build(&mut ui.limit)?;
-        nwg::Label::builder().parent(w).text("MB").position((594, 702)).size((26, 22)).build(&mut ui.limit_unit)?;
+        nwg::TextInput::builder().parent(w).readonly(true).position((40, 722)).size((340, 25)).build(&mut ui.folder)?;
+        nwg::Button::builder().parent(w).text("Change…").position((386, 720)).size((90, 29)).build(&mut ui.folder_change)?;
+        nwg::Label::builder().parent(w).text("Limit").h_align(nwg::HTextAlign::Right).position((484, 725)).size((40, 22)).build(&mut ui.limit_label)?;
+        nwg::TextInput::builder().parent(w).align(nwg::HTextAlign::Right).limit(7).placeholder_text(Some("none")).position((530, 722)).size((58, 25)).build(&mut ui.limit)?;
+        nwg::Label::builder().parent(w).text("MB").position((594, 725)).size((26, 22)).build(&mut ui.limit_unit)?;
 
         // Activity
-        nwg::Label::builder().parent(w).text("Activity").font(Some(&ui.font_header)).position((20, 739)).size((200, 22)).build(&mut ui.activity_header)?;
-        nwg::Button::builder().parent(w).text("Aircraft report").font(Some(&ui.font_small)).position((258, 736)).size((124, 26)).build(&mut ui.collect)?;
-        nwg::Button::builder().parent(w).text("Airports folder").font(Some(&ui.font_small)).position((388, 736)).size((124, 26)).build(&mut ui.open_folder)?;
-        nwg::Button::builder().parent(w).text("Save log").font(Some(&ui.font_small)).position((518, 736)).size((102, 26)).build(&mut ui.open_log)?;
+        nwg::Label::builder().parent(w).text("Activity").font(Some(&ui.font_header)).position((20, 762)).size((200, 22)).build(&mut ui.activity_header)?;
+        nwg::Button::builder().parent(w).text("Aircraft report").font(Some(&ui.font_small)).position((258, 759)).size((124, 26)).build(&mut ui.collect)?;
+        nwg::Button::builder().parent(w).text("Airports folder").font(Some(&ui.font_small)).position((388, 759)).size((124, 26)).build(&mut ui.open_folder)?;
+        nwg::Button::builder().parent(w).text("Save log").font(Some(&ui.font_small)).position((518, 759)).size((102, 26)).build(&mut ui.open_log)?;
         nwg::TextBox::builder()
             .parent(w)
             .readonly(true)
             .flags(nwg::TextBoxFlags::VISIBLE | nwg::TextBoxFlags::VSCROLL | nwg::TextBoxFlags::AUTOVSCROLL | nwg::TextBoxFlags::TAB_STOP)
             .font(Some(&ui.font_small))
-            .position((20, 767))
+            .position((20, 790))
             .size((600, 66))
             .build(&mut ui.log)?;
 
@@ -858,6 +902,8 @@ impl App {
                     self.option_xplane();
                 } else if handle == ui.opt_a320_oans.handle {
                     self.option_a320_oans();
+                } else if handle == ui.opt_fenix_charts.handle {
+                    self.option_fenix_charts();
                 } else if handle == ui.opt_redirect.handle {
                     self.option_redirect();
                 } else if handle == ui.opt_cache.handle {
@@ -1365,14 +1411,20 @@ impl App {
     }
 
     fn refresh_inventory(&self) {
-        let (redirect, serving_redirect, xplane_on) = {
+        let (redirect, serving_redirect, fenix_charts, serving_fenix, xplane_on) = {
             let st = self.state.borrow();
-            (st.settings.navigraph_redirect, st.running.as_ref().map_or(false, |r| r.redirected), st.settings.xplane)
+            (
+                st.settings.navigraph_redirect,
+                st.running.as_ref().map_or(false, |r| r.redirected),
+                st.settings.fenix_charts,
+                st.running.as_ref().map_or(false, |r| r.fenix_charts),
+                st.settings.xplane,
+            )
         };
         self.ui.refresh.set_enabled(false);
         let shared = self.shared.clone();
         std::thread::spawn(move || {
-            let inv = take_inventory(redirect, serving_redirect, xplane_on);
+            let inv = take_inventory(redirect, serving_redirect, fenix_charts, serving_fenix, xplane_on);
             *shared.inventory.lock().unwrap() = Some(inv);
             shared.wake();
         });
@@ -1497,6 +1549,7 @@ impl App {
         ui.opt_a320_oans.set_check_state(checked(installed));
         ui.opt_a320_oans.set_enabled(installed || (fenix && desktop::bundled_a320_oans().is_some()));
         ui.opt_redirect.set_check_state(checked(s.navigraph_redirect));
+        ui.opt_fenix_charts.set_check_state(checked(s.fenix_charts));
         ui.opt_cache.set_check_state(checked(s.cache));
         ui.folder.set_text(&s.cache_dir.display().to_string());
         ui.limit.set_text(&if s.limit_mb == 0 { String::new() } else { s.limit_mb.to_string() });
@@ -1617,6 +1670,41 @@ impl App {
             return;
         }
         self.state.borrow_mut().settings.navigraph_redirect = on;
+        self.save();
+        let serving = self.state.borrow().phase == Phase::Serving;
+        if serving {
+            // Restart so the change applies now rather than on the next start.
+            self.toggle_serving();
+            self.start_serving(true);
+        }
+        self.refresh_inventory();
+    }
+
+    fn option_fenix_charts(&self) {
+        let on = is_checked(&self.ui.opt_fenix_charts);
+        if on {
+            let choice = nwg::modal_message(
+                &self.ui.window,
+                &nwg::MessageParams {
+                    title: "Charts on the Fenix A320's tablet",
+                    content: "The Fenix A320's tablet signs in to Navigraph for its charts, and its app cannot be patched the way other tablets are. To show AMDB Bridge's charts on it instead, AMDB Bridge points Navigraph's sign-in and charts addresses at this computer and installs a local certificate. The tablet then links with the code AMDB, with nothing to type on a website.\n\nWhile this is on, every program on this computer that signs in to Navigraph reaches AMDB Bridge instead, the Navigraph Charts app included. Untick it, or uninstall AMDB Bridge, to put everything back.\n\nWindows asks for administrator permission once. Keep AMDB Bridge running when you fly the Fenix.",
+                    buttons: nwg::MessageButtons::OkCancel,
+                    icons: nwg::MessageIcons::Info,
+                },
+            );
+            if choice != nwg::MessageChoice::Ok {
+                self.ui.opt_fenix_charts.set_check_state(checked(false));
+                return;
+            }
+        }
+        // The setup runs as a separate elevated copy; this one waits for it.
+        let code = setup_fenix_charts(on, false);
+        self.drain_lines_only();
+        if code != 0 {
+            self.ui.opt_fenix_charts.set_check_state(checked(!on));
+            return;
+        }
+        self.state.borrow_mut().settings.fenix_charts = on;
         self.save();
         let serving = self.state.borrow().phase == Phase::Serving;
         if serving {

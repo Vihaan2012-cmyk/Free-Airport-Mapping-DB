@@ -678,32 +678,71 @@ pub fn navigraph_ready() -> bool {
     super::hosts::is_installed(domain) && super::tls::data_dir().join("ca.pem").is_file() && super::tls::is_trusted()
 }
 
-/// Set up (or take down) A350/A380X support. Needs administrator rights, and is done
-/// once rather than every time serving starts: the address stays pointed here while
-/// the option is on, and the app then serves those aircraft as a normal user.
-pub fn setup_navigraph(on: bool) -> Result<()> {
-    setup_navigraph_with(on, false)
+/// The Fenix A320's tablet charts are set up on this computer: the three hosts its flight
+/// bag calls point here and the certificate that answers for them is trusted.
+pub fn fenix_charts_ready() -> bool {
+    super::NAVIGRAPH_EFB_DOMAINS.iter().all(|d| super::hosts::is_installed(d)) && super::tls::data_dir().join("ca.pem").is_file() && super::tls::is_trusted()
 }
 
-/// The same, optionally covering the hosts the Fenix A320's flight bag calls as well.
+/// Set up (or take down) A350/A380X support. Needs administrator rights, and is done
+/// once rather than every time serving starts: the address stays pointed here while
+/// the option is on, and the app then serves those aircraft as a normal user. The Fenix
+/// tablet's hosts are left as they are.
+pub fn setup_navigraph(on: bool) -> Result<()> {
+    setup_redirects(on, fenix_hosts_redirected())
+}
+
+/// Set up (or take down) the Fenix A320's tablet charts, leaving A350/A380X support as it is.
 ///
 /// It is the one flight bag that cannot be patched -- its web app is served out of an
 /// encrypted bundle by its own local gateway and exists nowhere on disk -- so the only
 /// way to answer it is to be the address it calls.
 ///
-/// This is deliberately not what `navigraph on` does by default. The map's own host
-/// serves one aircraft feature; these three include the sign-in, and while they are
-/// redirected every program on the machine that resolves them reaches this bridge, not
-/// only the aeroplane. That is a bigger thing to switch on than a moving map, so it is
-/// asked for separately and says so.
-///
-/// One certificate carries every name, because a server presents one certificate per
-/// connection whichever host was asked for, and it is signed by the authority already in
-/// the store rather than by a new one each time.
+/// This is its own option, not part of A350/A380X support. The map's own host serves one
+/// aircraft feature; these three include the sign-in, and while they are redirected every
+/// program on the machine that resolves them reaches this bridge, not only the aeroplane.
+/// That is a bigger thing to switch on than a moving map, so it is asked for separately
+/// and says so.
+pub fn setup_fenix_charts(on: bool) -> Result<()> {
+    setup_redirects(super::hosts::is_installed(super::NAVIGRAPH_AMDB_DOMAIN), on)
+}
+
+/// `amdb-bridge navigraph on|off [--efb]`: on adds the map's host, and the flight bag's
+/// with `--efb` (keeping them if they are already there); off takes every one away.
 pub fn setup_navigraph_with(on: bool, with_efb: bool) -> Result<()> {
-    let domains = super::navigraph_domains(with_efb);
     if on {
-        let m = super::tls::ensure_for(super::NAVIGRAPH_AMDB_DOMAIN, &domains)?;
+        setup_redirects(true, with_efb || fenix_hosts_redirected())
+    } else {
+        setup_redirects(false, false)
+    }
+}
+
+/// Any of the Fenix tablet's hosts points here now.
+fn fenix_hosts_redirected() -> bool {
+    super::NAVIGRAPH_EFB_DOMAINS.iter().any(|d| super::hosts::is_installed(d))
+}
+
+/// Point exactly these hosts at this computer: the map's for the A350/A380X, the flight
+/// bag's three for the Fenix. The hosts file is rewritten as one block, so asking for one
+/// set never quietly drops the other; with neither, the block and the certificate go.
+/// Needs administrator rights.
+///
+/// One certificate carries every name whichever are redirected, because a server presents
+/// one certificate per connection whichever host was asked for, and it is signed by the
+/// authority already in the store rather than by a new one each time.
+pub fn setup_redirects(a350: bool, fenix: bool) -> Result<()> {
+    let mut domains = Vec::new();
+    if a350 {
+        domains.push(super::NAVIGRAPH_AMDB_DOMAIN);
+    }
+    if fenix {
+        domains.extend(super::NAVIGRAPH_EFB_DOMAINS);
+    }
+    if domains.is_empty() {
+        super::hosts::remove()?;
+        super::tls::untrust()?;
+    } else {
+        let m = super::tls::ensure_for(super::NAVIGRAPH_AMDB_DOMAIN, &super::navigraph_domains(true))?;
         // A newly made authority has the same name as the one it replaces, so the store
         // would report it installed and refuse everything it signs. The old one goes
         // first. This is the ordinary case on a machine set up before the authority's key
@@ -714,9 +753,6 @@ pub fn setup_navigraph_with(on: bool, with_efb: bool) -> Result<()> {
         super::tls::trust(&m)?;
         super::hosts::install_all(&domains)?;
         allow_port_443();
-    } else {
-        super::hosts::remove()?;
-        super::tls::untrust()?;
     }
     // Run with sudo, the certificate files were created as root in the user's folder.
     super::platform::return_to_user(&super::platform::data_dir());

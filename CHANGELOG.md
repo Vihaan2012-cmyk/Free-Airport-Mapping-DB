@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.2.8 (2026-09-27)
+
+**The Fenix A320's tablet charts, as an option.**
+
+- **Show AMDB Bridge's charts on the Fenix A320's tablet**: a new option in AMDB Bridge
+  and a task in its installer (off unless ticked). It points the three Navigraph hosts
+  the Fenix's tablet calls (sign-in, charts, cycle) at the bridge, so the tablet links
+  with the code `AMDB` and shows the bridge's charts. Until now this was only
+  `amdb-bridge navigraph on --efb`. Its own flag for scripts: `--setup-fenix-charts on|off`.
+- Fixed: turning the A350/A380X option on or off rewrote the hosts file with the map's
+  host alone, which silently took the Fenix tablet's hosts away with it; a bridge that
+  started with the A350/A380X option off removed them too. Each option now keeps the
+  other's hosts, and the bridge serves HTTPS for either.
+- The certificate the bridge serves always carries every Navigraph name it may answer
+  for, so switching the Fenix option on never needs a new one.
+- The aircraft list shows a **Fenix A320: tablet charts** row.
+
 ## 1.2.7 (2026-09-26) · A320 OANS 1.0.5 · Airport Map 1.0.0
 
 **Taxi routes, an OANS window for any aircraft, and BTV that knows a high-speed exit.**
