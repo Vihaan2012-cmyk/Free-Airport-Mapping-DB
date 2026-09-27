@@ -202,7 +202,7 @@ impl Store {
                     kept.push(f);
                 }
             }
-            layers.insert(*l, kept);
+            layers.insert(*l, super::compat::drawable_polygons(kept));
         }
         let network = super::taxi::Network::build(&raw_edges, &raw_nodes);
         Ok(AirportData { icao: icao.to_string(), frame, manifest, layers, network })

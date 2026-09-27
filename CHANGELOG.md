@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.2.8 (2026-09-27)
+## 1.2.8 (2026-09-27) · A320 OANS 1.0.6
 
 **The Fenix A320's tablet charts, as an option.**
 
@@ -16,6 +16,19 @@
 - The certificate the bridge serves always carries every Navigraph name it may answer
   for, so switching the Fenix option on never needs a new one.
 - The aircraft list shows a **Fenix A320: tablet charts** row.
+
+**A320 OANS 1.0.6: airports drawn whole.**
+
+- Fixed: parts of airports missing on the OANS, such as runway 04R and whole taxiway
+  areas at KBOS. Pavement built from X-Plane's scenery can have outlines that fold back
+  over themselves (at KBOS six of ten runway pieces and a third of the taxiways), and the
+  simulator's display renderer leaves such shapes out. The bridge now serves every
+  polygon as clean parts, rebuilt from the area its outline covers, each with an id of
+  its own; this applies to every airport as served, with no rebuild needed.
+- Fixed: big white triangles over the airport at 1 NM and beyond. There the OANS draws
+  the runways merged into one shape, and the grass they enclose is a hole in it, which it
+  filled white instead of leaving empty. Polygons are now drawn with their holes cut out
+  (buildings keep their courtyards too).
 
 ## 1.2.7 (2026-09-26) · A320 OANS 1.0.5 · Airport Map 1.0.0
 

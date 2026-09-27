@@ -203,6 +203,14 @@ const bridgeAmdb = {
 const FBW_PATCHES = {
   // Building names run along the building's long axis instead of flat across the map.
   'OANC/Oanc.tsx': [
+    // A polygon is drawn as one path, its holes the other way round from its outline, so
+    // the nonzero fill leaves them empty. Drawn one path per ring, every hole was filled:
+    // at 1 NM and beyond, where the runways are drawn merged, the grass they enclose came
+    // out as white triangles (KBOS), and buildings lost their courtyards.
+    [
+      "          for (const outline of polygon.coordinates) {\n            const toCachePath = new Path2D();\n\n            toCachePath.moveTo(outline[0][0], outline[0][1] * -1);\n\n            for (let i = 1; i < outline.length; i++) {\n              if (i === outline.length - 1) {\n                toCachePath.closePath();\n              } else {\n                const point = outline[i];\n                toCachePath.lineTo(point[0], point[1] * -1);\n              }\n            }\n\n            paths.push(toCachePath);\n          }\n",
+      "          const toCachePath = new Path2D();\n          polygon.coordinates.forEach((outline, ring) => {\n            let area = 0;\n            for (let i = 0; i < outline.length - 1; i++) {\n              area += outline[i][0] * outline[i + 1][1] - outline[i + 1][0] * outline[i][1];\n            }\n            const points = area > 0 === (ring === 0) ? outline : outline.slice().reverse();\n            toCachePath.moveTo(points[0][0], points[0][1] * -1);\n            for (let i = 1; i < points.length - 1; i++) {\n              toCachePath.lineTo(points[i][0], points[i][1] * -1);\n            }\n            toCachePath.closePath();\n          });\n          paths.push(toCachePath);\n",
+    ],
     [
       '            position: labelPosition,\n            rotation: undefined,\n            associatedFeature: feature,\n',
       '            position: labelPosition,\n            rotation: feature.properties.feattype === FeatureType.VerticalPolygonalStructure ? fenixBuildingAxisBearing(feature) : undefined,\n            associatedFeature: feature,\n',

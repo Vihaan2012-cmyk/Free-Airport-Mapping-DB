@@ -625,6 +625,59 @@ pub fn search_row(idarpt: &str, iata: Option<&str>, name: &str, lat: f64, lon: f
     })
 }
 
+/// Polygons the simulator's displays can draw.
+///
+/// CoherentGT, which draws the aircraft's displays, drops or garbles a polygon whose
+/// outline crosses or doubles back on itself -- two parts joined by a zero-width strip, a
+/// fold -- where a browser fills it; and FlyByWire's OANS draws no multipolygons at all.
+/// Pavement built from X-Plane's scenery has such outlines (at KBOS, six of ten runway
+/// pieces and a third of the taxiways), which left runways and taxiways missing on the
+/// display. So an invalid polygon is rebuilt as the area its outline fills, by the nonzero
+/// rule a browser fills it by, and every multipolygon is served as one feature per part,
+/// each with an id of its own: the OANS caches each drawing by its id.
+pub fn drawable_polygons(feats: Vec<AmdbFeature>) -> Vec<AmdbFeature> {
+    use geo::algorithm::bool_ops::{BooleanOps, FillRule, OpType};
+    use geo::{Area, Validation};
+    use geo_types::{Geometry, MultiPolygon, Polygon};
+    let clean = |p: &Polygon<f64>| -> Vec<Polygon<f64>> {
+        if p.is_valid() {
+            vec![p.clone()]
+        } else {
+            p.boolean_op_with_fill_rule(&MultiPolygon::<f64>::new(vec![]), OpType::Union, FillRule::NonZero).0
+        }
+    };
+    let mut out = Vec::with_capacity(feats.len());
+    let mut extra = 0u64;
+    for f in feats {
+        let parts: Vec<Polygon<f64>> = match &f.geom {
+            Geometry::Polygon(p) if p.is_valid() => {
+                out.push(f);
+                continue;
+            }
+            Geometry::Polygon(p) => clean(p),
+            Geometry::MultiPolygon(mp) => mp.0.iter().flat_map(|p| clean(p)).collect(),
+            _ => {
+                out.push(f);
+                continue;
+            }
+        };
+        // Slivers left where an outline ran back along itself.
+        for (k, part) in parts.into_iter().filter(|p| p.unsigned_area() > 0.05).enumerate() {
+            let mut g = f.clone();
+            g.geom = Geometry::Polygon(part);
+            if k > 0 {
+                // Ids are the layer's number times a million plus a sequence number well
+                // below 900,000, so the parts' ids never meet the layer's own.
+                extra += 1;
+                let id = g.props.get("id").and_then(Value::as_u64).unwrap_or(0);
+                g.props.insert("id".into(), Value::from(id - id % 1_000_000 + 900_000 + extra));
+            }
+            out.push(g);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -712,5 +765,27 @@ mod tests {
         let mut sign = AmdbFeature::new(Layer::AerodromeSign, Point::new(0.0, 0.0));
         assert!(!convert(&mut sign, 0, &Thresholds::default()));
         assert_eq!(NAVIGRAPH_LAYERS.len(), 36);
+    }
+
+    #[test]
+    fn folded_outlines_are_split_into_drawable_parts() {
+        use geo_types::{LineString, Polygon};
+        // Two squares joined by a strip of zero width, the way X-Plane pavement leaves a
+        // runway's two sides of a crossing: the ring runs out along one edge and back.
+        let ring = LineString::from(vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (10.0, 20.0), (10.0, 30.0), (0.0, 30.0), (0.0, 20.0), (10.0, 20.0), (10.0, 10.0), (0.0, 10.0), (0.0, 0.0)]);
+        let mut folded = AmdbFeature::new(Layer::RunwayElement, Polygon::new(ring, vec![]));
+        folded.set("id", 7);
+        let mut fine = AmdbFeature::new(Layer::RunwayElement, Polygon::new(LineString::from(vec![(50.0, 0.0), (60.0, 0.0), (60.0, 10.0), (50.0, 0.0)]), vec![]));
+        fine.set("id", 8);
+        let out = drawable_polygons(vec![folded, fine]);
+        assert_eq!(out.len(), 3, "the folded one in two parts, the fine one as it was");
+        let ids: std::collections::HashSet<u64> = out.iter().map(|f| f.props["id"].as_u64().unwrap()).collect();
+        assert_eq!(ids.len(), 3, "each part an id of its own");
+        use geo::{Area, Validation};
+        for f in &out {
+            let geo_types::Geometry::Polygon(p) = &f.geom else { panic!("a polygon") };
+            assert!(p.is_valid());
+            assert!(p.unsigned_area() > 1.0);
+        }
     }
 }
