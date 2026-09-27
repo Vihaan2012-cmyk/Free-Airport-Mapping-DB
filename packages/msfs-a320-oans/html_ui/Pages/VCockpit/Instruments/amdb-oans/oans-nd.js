@@ -77945,19 +77945,20 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           if (usePathCache && cachedPaths) {
             paths = cachedPaths;
           } else {
-            for (const outline of polygon2.coordinates) {
-              const toCachePath = new Path2D();
-              toCachePath.moveTo(outline[0][0], outline[0][1] * -1);
-              for (let i2 = 1; i2 < outline.length; i2++) {
-                if (i2 === outline.length - 1) {
-                  toCachePath.closePath();
-                } else {
-                  const point2 = outline[i2];
-                  toCachePath.lineTo(point2[0], point2[1] * -1);
-                }
+            const toCachePath = new Path2D();
+            polygon2.coordinates.forEach((outline, ring) => {
+              let area = 0;
+              for (let i2 = 0; i2 < outline.length - 1; i2++) {
+                area += outline[i2][0] * outline[i2 + 1][1] - outline[i2 + 1][0] * outline[i2][1];
               }
-              paths.push(toCachePath);
-            }
+              const points = area > 0 === (ring === 0) ? outline : outline.slice().reverse();
+              toCachePath.moveTo(points[0][0], points[0][1] * -1);
+              for (let i2 = 1; i2 < points.length - 1; i2++) {
+                toCachePath.lineTo(points[i2][0], points[i2][1] * -1);
+              }
+              toCachePath.closePath();
+            });
+            paths.push(toCachePath);
             pathCache.set("".concat(feature2.properties.id, "-").concat(feature2.properties.feattype), paths);
           }
           for (const path of paths) {
