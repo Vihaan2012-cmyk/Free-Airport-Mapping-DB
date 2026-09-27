@@ -290,7 +290,7 @@ mod app {
             s
         });
         // Only the A320 OANS: no Navigraph redirect, no X-Plane.
-        let opts = service::Options { navigraph_redirect: false, xplane: false };
+        let opts = service::Options { navigraph_redirect: false, fenix_charts: false, xplane: false };
         let running = match service::start(&settings, &opts) {
             Ok(r) => r,
             Err(e) => {

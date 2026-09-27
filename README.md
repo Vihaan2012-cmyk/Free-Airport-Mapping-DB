@@ -287,6 +287,27 @@ under the GPL-3.0, like FlyByWire's aircraft, and credits them in its `README.tx
 carries none of FlyByWire's fonts or images: the font is Airbus's B612 (SIL Open Font
 License) and the flag and cross symbols are its own.
 
+### Charts on the Fenix A320's tablet
+
+The Fenix's tablet signs in to Navigraph for its charts, and unlike the other tablets its
+app cannot be patched: it is served from an encrypted bundle by the Fenix's own gateway.
+So AMDB Bridge answers it by being the addresses it calls. The option **Show AMDB
+Bridge's charts on the Fenix A320's tablet** (or the installer task of the same name, or
+`AMDB Bridge.exe --setup-fenix-charts on`) points these at this computer in the hosts
+file, with a local certificate that covers them:
+
+```
+127.0.0.1 identity.api.navigraph.com # amdb-bridge   the sign-in
+127.0.0.1 api.navigraph.com # amdb-bridge            the charts and airports
+127.0.0.1 charts.api.navigraph.com # amdb-bridge     the chart cycle
+```
+
+The tablet then links with the code `AMDB`, with nothing to type on a website. While it
+is on, every program on the computer that signs in to Navigraph reaches the bridge, the
+Navigraph Charts app included; untick it, or uninstall AMDB Bridge, to put it back. It
+is separate from the A350/A380X option, whose one host (`amdb.api.navigraph.com`) the
+A320 does not use, and turning either on or off keeps the other's hosts.
+
 ## Airport Map: the OANS in a toolbar window (MSFS)
 
 The same FlyByWire A380X OANS in a window of its own on the simulator's toolbar, for any

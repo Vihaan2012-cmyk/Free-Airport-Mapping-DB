@@ -50,6 +50,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "a220map"; Description: "Install the airport moving map for the Synaptic A220 into Microsoft Flight Simulator 2020 and 2024"; GroupDescription: "Simulators:"
 Name: "a320oans"; Description: "Add the A320 OANS airport moving map to the Fenix A320's captain navigation display"; GroupDescription: "Simulators:"
 Name: "a350"; Description: "Set up the iniBuilds A350 and FlyByWire A380X airport maps (Windows asks for administrator permission)"; GroupDescription: "Simulators:"
+Name: "fenixcharts"; Description: "Show AMDB Bridge's charts on the Fenix A320's tablet (Windows asks for administrator permission; while on, Navigraph sign-in on this computer goes to AMDB Bridge)"; GroupDescription: "Simulators:"; Flags: unchecked
 Name: "startup"; Description: "Open AMDB Bridge in the notification area when Windows starts"; GroupDescription: "Starting up:"; Flags: unchecked
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
@@ -75,6 +76,7 @@ Filename: "{app}\{#AppExe}"; Parameters: "--install-a320-oans"; StatusMsg: "Addi
 ; Unticked, a copy already in the simulator is still brought up to this version.
 Filename: "{app}\{#AppExe}"; Parameters: "--update-a320-oans"; StatusMsg: "Updating the A320 OANS..."; Tasks: not a320oans; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Parameters: "--setup-navigraph on"; StatusMsg: "Setting up the A350 and A380X..."; Tasks: a350; Flags: runhidden waituntilterminated
+Filename: "{app}\{#AppExe}"; Parameters: "--setup-fenix-charts on"; StatusMsg: "Setting up the Fenix A320's tablet charts..."; Tasks: fenixcharts; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Parameters: "--run-at-login on"; Tasks: startup; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Description: "Open AMDB Bridge now"; Flags: postinstall nowait skipifsilent
 
