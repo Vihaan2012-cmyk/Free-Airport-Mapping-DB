@@ -221,6 +221,12 @@ fn country_hint(src: &SourceAirport, entry: &Option<crate::sources::index::Index
 }
 
 fn prepare(cfg: &Config, idx: &AirportIndex, icao: &str) -> Result<Prepared> {
+    prepare_with(cfg, idx, icao, cfg.faa_amdb)
+}
+
+/// `prepare`, with or without the FAA's airport mapping, which only adds to what is
+/// inside the airport and so is not needed to know where the airport is.
+fn prepare_with(cfg: &Config, idx: &AirportIndex, icao: &str, faa_amdb: bool) -> Result<Prepared> {
     let icao = icao.to_uppercase();
     let mut src = SourceAirport::new(&icao);
     let entry = idx.get(&icao).cloned();
@@ -241,7 +247,7 @@ fn prepare(cfg: &Config, idx: &AirportIndex, icao: &str) -> Result<Prepared> {
     }
     // FAA airport mapping (US only): hotspots always, pavement and buildings only when
     // no scenery was found, so real scenery is never duplicated. Never fatal.
-    if cfg.faa_amdb && crate::sources::faa_amdb::covers(&icao, country_hint(&src, &entry).as_deref()) {
+    if faa_amdb && crate::sources::faa_amdb::covers(&icao, country_hint(&src, &entry).as_deref()) {
         let no_scenery = src.pavements.is_empty() && src.runways.is_empty();
         let no_windsock = !src.point_structures.iter().any(|p| p.kind == crate::model::codes::pntsttyp::WINDSOCK);
         match crate::sources::faa_amdb::fetch(&cfg.http, &cfg.cache, &icao, no_scenery, no_windsock) {
@@ -524,7 +530,11 @@ pub fn take_osm_missing(icao: &str) -> bool {
 /// With `only`, an airport none of the files has anything in the box of is saved as having
 /// no OpenStreetMap data, so building it asks the servers nothing either: for a run whose
 /// files cover the world, where that means OSM has nothing there.
-pub fn fill_osm_from_extracts(cfg: &Config, icaos: &[String], pbfs: &[std::path::PathBuf], only: bool) -> Result<()> {
+///
+/// With `wait`, a file still being downloaded is waited for: it is taken as complete once
+/// its `.md5` (Geofabrik publishes one per file, fetched after it) is beside it. So a run
+/// can start working out the airports' areas while the extracts are still coming.
+pub fn fill_osm_from_extracts(cfg: &Config, icaos: &[String], pbfs: &[std::path::PathBuf], only: bool, wait: bool) -> Result<()> {
     if cfg.cache.root().is_none() {
         return Err(anyhow!("reading an OSM extract needs the download cache, where each airport's share is kept"));
     }
@@ -537,7 +547,7 @@ pub fn fill_osm_from_extracts(cfg: &Config, icaos: &[String], pbfs: &[std::path:
     term::start(&format!("Working out the OpenStreetMap area of {} airport{}", todo.len(), if todo.len() == 1 { "" } else { "s" }));
     let targets: Vec<osm::extract::Target> = todo
         .par_iter()
-        .filter_map(|icao| match prepare(cfg, &idx, icao) {
+        .filter_map(|icao| match prepare_with(cfg, &idx, icao, false) {
             Ok(p) => Some(osm::extract::Target { icao: p.icao, bbox: p.bbox }),
             Err(e) => {
                 log::warn!("{icao}: {e:#}");
@@ -549,6 +559,17 @@ pub fn fill_osm_from_extracts(cfg: &Config, icaos: &[String], pbfs: &[std::path:
     for pbf in pbfs {
         if targets.is_empty() {
             break;
+        }
+        if wait {
+            let md5 = std::path::PathBuf::from(format!("{}.md5", pbf.display()));
+            let mut told = false;
+            while !(pbf.is_file() && md5.is_file()) {
+                if !told {
+                    term::info(&format!("Waiting for {} to finish downloading ({} beside it marks it done)", pbf.display(), md5.file_name().unwrap_or_default().to_string_lossy()));
+                    told = true;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(20));
+            }
         }
         term::start(&format!("Reading {} for {} airport{}", pbf.display(), fmt_n(targets.len()), if targets.len() == 1 { "" } else { "s" }));
         let t0 = std::time::Instant::now();
