@@ -16,7 +16,9 @@
   Airports outside every file are downloaded as usual.
 - `--osm-pbf-only`: nothing is downloaded from OpenStreetMap; an airport in none of the
   files is built without it. `--osm-pbf-wait`: start while the extracts are still
-  downloading, and read each once its `.md5` is beside it.
+  downloading, and read each once its `.md5` is beside it; the airports of the files
+  already read are built meanwhile, a batch at a time, instead of all of them waiting
+  for the last and largest file.
 - **FAA airport mapping no longer holds up a big build.** Which airports the FAA maps at
   all (65 with hotspots, 186 with pavement) is asked once per layer and kept a week, so
   the other twenty thousand American airports and heliports are not asked about. The
