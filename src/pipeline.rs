@@ -280,7 +280,21 @@ fn prepare_with(cfg: &Config, idx: &AirportIndex, icao: &str, faa_amdb: bool) ->
             (s - dlat, w - dlon, n + dlat, e + dlon)
         }
         _ => {
-            let dlat = cfg.radius_km / 111.195;
+            // How far to look for an outline or a runway depends on what is being looked
+            // for. A heliport is its pad, at the point; a small field's runway crosses a
+            // box half its length wide even when the point is at one end, and a way that
+            // crosses the box is kept whole. Kilometres more is only the town around it:
+            // for the twenty-odd thousand American strips and heliports, tens of millions
+            // of buildings read out of the extract and thrown away again, and forty
+            // gigabytes of memory to do it.
+            let radius_km = match entry.as_ref().and_then(|e| e.kind.as_deref()) {
+                Some("heliport") => 0.5,
+                Some("seaplane_base") | Some("balloonport") => 1.0,
+                Some("small_airport") | Some("closed") => 1.5,
+                _ => cfg.radius_km,
+            }
+            .min(cfg.radius_km);
+            let dlat = radius_km / 111.195;
             let dlon = dlat / lat.to_radians().cos().max(0.2);
             (lat - dlat, lon - dlon, lat + dlat, lon + dlon)
         }
