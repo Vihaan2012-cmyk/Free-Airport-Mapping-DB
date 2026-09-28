@@ -41,13 +41,31 @@ fn poly_from(ctx: &Ctx, outer: &[Coord<f64>], holes: &[Vec<Coord<f64>>]) -> Opti
     ops::tidy_polygon(&Polygon::new(ext, ints))
 }
 
+/// How far around the reference point an airport reaches when nothing else says.
+const NOTHING_KNOWN_M: f64 = 400.0;
+
 /// Airport extent: OSM aerodrome polygon(s) and X-Plane boundary, unioned with a
 /// margin around all pavement so nearby structures are kept.
 pub fn compute_extent(ctx: &mut Ctx) {
     let mut polys: Vec<Polygon<f64>> = Vec::new();
+    let mut pts: Vec<Coord<f64>> = Vec::new();
+    for p in ctx.pavement_mp.0.iter().chain(ctx.runway_mp.0.iter()) {
+        pts.extend(p.exterior().0.iter().copied());
+    }
+    pts.extend(ctx.stands_local.iter().map(|s| s.pos));
+    pts.extend(ctx.src.stands.iter().map(|s| ctx.p(s.pos)));
+    let hull = ops::hull(&pts);
+    // OpenStreetMap's outlines are every aerodrome and heliport in the area asked for. This
+    // one's are those around its reference point or its pavement; with no pavement to go
+    // by, those close to the point. A hospital's heliport two kilometres off is not it.
+    let arp = Point::new(0.0, 0.0);
+    let near_arp = ops::circle(Coord { x: 0.0, y: 0.0 }, NOTHING_KNOWN_M, 32);
     for a in ctx.src.areas.iter().filter(|a| a.kind == AreaKind::Aerodrome) {
         if let Some(p) = poly_from(ctx, &a.outer, &a.holes) {
-            polys.push(p);
+            let ours = p.intersects(&arp) || hull.as_ref().map_or_else(|| p.intersects(&near_arp), |h| h.intersects(&p));
+            if ours {
+                polys.push(p);
+            }
         }
     }
     if let Some(b) = &ctx.src.boundary {
@@ -55,17 +73,24 @@ pub fn compute_extent(ctx: &mut Ctx) {
             polys.push(p);
         }
     }
-    let mut pts: Vec<Coord<f64>> = Vec::new();
-    for p in ctx.pavement_mp.0.iter().chain(ctx.runway_mp.0.iter()) {
-        pts.extend(p.exterior().0.iter().copied());
-    }
-    pts.extend(ctx.stands_local.iter().map(|s| s.pos));
-    pts.extend(ctx.src.stands.iter().map(|s| ctx.p(s.pos)));
-    if let Some(h) = ops::hull(&pts) {
+    if let Some(h) = hull {
         polys.extend(ops::buffer_polygon(&h, ctx.opts.extent_margin_m).0);
     }
+    // A heliport is its pads: the same margin around each. Only its own, near its
+    // reference point -- OpenStreetMap asked for kilometres around also brings every
+    // hospital roof in town.
+    for h in &ctx.src.helipads {
+        let c = ctx.p(h.pos);
+        if c.x.hypot(c.y) <= NOTHING_KNOWN_M {
+            polys.push(ops::circle(c, ctx.opts.extent_margin_m, 32));
+        }
+    }
+    // Nothing says where the airport is but its reference point. A few hundred metres
+    // around it: the OpenStreetMap asked for is kilometres wide so that an outline or a
+    // runway can be found, and kept whole it is the town's every roof -- a rooftop
+    // heliport in San Juan came out as half the city.
     if polys.is_empty() {
-        polys.push(ops::circle(Coord { x: 0.0, y: 0.0 }, 2500.0, 32));
+        polys.push(ops::circle(Coord { x: 0.0, y: 0.0 }, NOTHING_KNOWN_M, 32));
     }
     ctx.extent = ops::union_all(&polys);
 }
@@ -223,9 +248,18 @@ pub fn build(ctx: &mut Ctx) {
         let idrwy = l.runway.as_ref().and_then(|r| ctx.runways.iter().find(|g| g.idents.iter().any(|i| i.eq_ignore_ascii_case(r))).map(|g| g.idrwy.clone()));
         ctx.push(AmdbFeature::new(Layer::AerodromeSurfaceLighting, Point(c)).with("lstype", l.kind).with("brngtrue", opt(l.heading_deg)).with("angle", opt(l.glideslope_deg)).with("idthr", opt(l.runway.clone())).with("idrwy", opt(idrwy)).with("name", opt(l.name.clone())).with("source", l.source));
     }
-    // Helipads.
+    // Helipads. The pads OpenStreetMap drew as areas were laid down with the pavement,
+    // before there was an extent to hold them to; those off the aerodrome go now.
+    if let Some(pads) = ctx.out.get_mut(&Layer::FinalApproachAndTakeOffArea) {
+        pads.retain(|f| f.get_str("source") != Some(source::OSM) || extent.0.iter().any(|e| e.intersects(&f.geom)));
+    }
     for h in &ctx.src.helipads {
         let c = ctx.p(h.pos);
+        // OpenStreetMap's pads are every one in the area asked for, the hospitals' included;
+        // only those on the aerodrome are its own.
+        if h.source == source::OSM && !ops::mp_contains_point(&extent, c) {
+            continue;
+        }
         let (len, wid) = if h.length_m > 1.0 && h.width_m > 1.0 { (h.length_m, h.width_m) } else { (25.0, 25.0) };
         let osm_area = ctx.src.areas.iter().find(|a| a.kind == AreaKind::Helipad && a.name == Some(h.ident.clone())).and_then(|a| poly_from(ctx, &a.outer, &a.holes));
         let fato = osm_area.unwrap_or_else(|| ops::rect_centered(c, h.heading_deg, len, wid));

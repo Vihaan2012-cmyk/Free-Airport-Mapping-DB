@@ -361,6 +361,23 @@ fn render<C: Canvas>(dir: &Path, make: impl FnOnce(f32, f32) -> Result<C>) -> Re
             }
         }
     }
+    // No runway: a heliport, or a field only its buildings mark. The chart is framed on
+    // what it draws -- pads and pavement first, then anything -- not on the kilometres of
+    // OpenStreetMap asked for to look for a runway, which left it a speck mid-page.
+    for group in [helipads.iter().chain(&taxiways).chain(&aprons).collect::<Vec<_>>(), buildings.iter().chain(&stands).chain(&towers).chain(&roads).collect()] {
+        if ext[0] != f64::MAX {
+            break;
+        }
+        for f in group {
+            grow(&mut ext, &frame, &f.geom);
+        }
+    }
+    if ext[0] != f64::MAX {
+        // Too small a frame blows a single pad up to fill the page; at least 600 m across.
+        let (cx, cy) = ((ext[0] + ext[2]) / 2.0, (ext[1] + ext[3]) / 2.0);
+        let (hw, hh) = (((ext[2] - ext[0]) / 2.0).max(300.0), ((ext[3] - ext[1]) / 2.0).max(300.0));
+        ext = [cx - hw, cy - hh, cx + hw, cy + hh];
+    }
     if ext[0] == f64::MAX {
         let b = manifest.bbox.unwrap_or([manifest.arp[1] - 0.02, manifest.arp[0] - 0.02, manifest.arp[1] + 0.02, manifest.arp[0] + 0.02]);
         let a = frame.forward(b[0], b[1]);
