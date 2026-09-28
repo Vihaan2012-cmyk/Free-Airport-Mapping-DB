@@ -633,6 +633,10 @@ pub struct BuildArgs {
     /// rather than downloading it (for files that cover the world).
     #[arg(long = "osm-pbf-only")]
     osm_pbf_only: bool,
+    /// With --osm-pbf: wait for each file still downloading (done once its .md5 is beside
+    /// it), so the build can start while the extracts are still coming.
+    #[arg(long = "osm-pbf-wait")]
+    osm_pbf_wait: bool,
     /// FAA NASR enrichment: auto (US airports only), off, or a path to the CSV zip/dir.
     #[arg(long, default_value = "auto")]
     faa: String,
@@ -715,6 +719,7 @@ impl BuildArgs {
             overpass: None,
             osm_pbf: Vec::new(),
             osm_pbf_only: false,
+            osm_pbf_wait: false,
             faa: "off".into(),
             overrides: PathBuf::from("overrides"),
             radius_km: 5.0,
@@ -899,9 +904,11 @@ fn open_in_browser(p: &Path) {
     }
 }
 
-/// After a build: previews and zips for the airports that were built.
+/// After a build: previews and zips for the airports that were built, several airports
+/// at a time. A batch run calls it after every batch, so charts appear as the build goes.
 fn post_build(a: &BuildArgs, built: &[String]) {
-    for icao in built {
+    use rayon::prelude::*;
+    built.par_iter().for_each(|icao| {
         let folder = a.out.join(icao);
         if a.chart {
             if let Err(e) = chart_pdf(&folder, None) {
@@ -919,7 +926,7 @@ fn post_build(a: &BuildArgs, built: &[String]) {
                 Err(e) => term::warn(&format!("[{icao}] zip: {e:#}")),
             }
         }
-    }
+    });
 }
 
 fn build_cmd(a: BuildArgs) -> Result<()> {
@@ -955,6 +962,14 @@ fn build_cmd(a: BuildArgs) -> Result<()> {
         if !skipped.is_empty() {
             term::info(&format!("Skipping {} already built airport(s)", skipped.len()));
         }
+        // An airport built before without its chart gets one now, without being rebuilt.
+        if a.chart && !a.dry_run {
+            let no_chart: Vec<String> = skipped.iter().filter(|i| !a.out.join(i).join("chart.pdf").is_file()).cloned().collect();
+            if !no_chart.is_empty() {
+                term::info(&format!("Drawing airport diagrams for {} already built airport(s)", no_chart.len()));
+                post_build(&BuildArgs { viewer: false, zip: false, ..a.clone() }, &no_chart);
+            }
+        }
     }
     if icaos.is_empty() {
         if selected > 0 {
@@ -979,14 +994,28 @@ fn build_cmd(a: BuildArgs) -> Result<()> {
             }
         }
     }
+    // The few airports the FAA maps are fetched on a thread of their own and built last,
+    // so nothing else waits on the FAA and they find their answers already in the cache.
+    let _faa = if cfg.faa_amdb {
+        let mapped = crate::sources::faa_amdb::mapped_airports(&cfg.cache);
+        let (rest, faa): (Vec<String>, Vec<String>) = icaos.drain(..).partition(|i| !mapped.contains(&i.to_uppercase()));
+        if !faa.is_empty() {
+            term::info(&format!("{} airport(s) with FAA airport mapping: fetching it on the side and building them last", faa.len()));
+        }
+        icaos = rest.into_iter().chain(faa.iter().cloned()).collect();
+        Some(crate::sources::faa_amdb::prefetch(cfg.cache.clone(), faa))
+    } else {
+        None
+    };
     // Extracts are read once for the whole selection, before the batches that build it.
     if !a.osm_pbf.is_empty() {
-        pipeline::fill_osm_from_extracts(&cfg, &icaos, &a.osm_pbf, a.osm_pbf_only)?;
+        pipeline::fill_osm_from_extracts(&cfg, &icaos, &a.osm_pbf, a.osm_pbf_only, a.osm_pbf_wait)?;
     }
     let chunk = if a.fail_fast && a.chunk == 0 { 1 } else { a.chunk };
     let mut summary = Summary::default();
     if chunk == 0 || chunk >= icaos.len() {
         summary = pipeline::run(&cfg, &icaos)?;
+        post_build(&a, &summary.built);
     } else {
         let total = icaos.len().div_ceil(chunk);
         for (n, part) in icaos.chunks(chunk).enumerate() {
@@ -994,6 +1023,7 @@ fn build_cmd(a: BuildArgs) -> Result<()> {
                 term::info(&format!("Batch {}/{}: {}", n + 1, total, part.join(" ")));
             }
             let s = pipeline::run(&cfg, part)?;
+            post_build(&a, &s.built);
             summary.built.extend(s.built);
             summary.failed.extend(s.failed);
             if a.fail_fast && !summary.failed.is_empty() {
@@ -1002,7 +1032,6 @@ fn build_cmd(a: BuildArgs) -> Result<()> {
             }
         }
     }
-    post_build(&a, &summary.built);
     if let Some(rp) = &a.report {
         let report = serde_json::json!({
             "generated": chrono::Utc::now().to_rfc3339(),

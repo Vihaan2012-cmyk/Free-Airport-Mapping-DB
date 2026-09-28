@@ -14,6 +14,16 @@
   Swiss file read for all 67 of its airports in 8 s. The first pass records where each
   block is and which ids it holds, so the other two read only the blocks they need.
   Airports outside every file are downloaded as usual.
+- `--osm-pbf-only`: nothing is downloaded from OpenStreetMap; an airport in none of the
+  files is built without it. `--osm-pbf-wait`: start while the extracts are still
+  downloading, and read each once its `.md5` is beside it.
+- **FAA airport mapping no longer holds up a big build.** Which airports the FAA maps at
+  all (65 with hotspots, 186 with pavement) is asked once per layer and kept a week, so
+  the other twenty thousand American airports and heliports are not asked about. The
+  ones it does map are fetched on a thread of their own and built last, by which time
+  their answers are waiting.
+- `--chart` draws each batch's airport diagrams as it finishes, several at once, and
+  draws one for an airport `--skip-existing` passes over that does not have one yet.
 - AMDB Build List takes `.osm.pbf` extracts dropped with the list.
 - `--osm both` spreads a batch across the map API and the two fastest Overpass mirrors,
   not two sources.

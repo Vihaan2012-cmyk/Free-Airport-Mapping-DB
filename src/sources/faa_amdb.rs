@@ -44,9 +44,73 @@ fn query_url(layer: &str, icao: &str) -> String {
     format!("{BASE}/{layer}/FeatureServer/0/query?where=ICAO_ID%3D%27{}%27&outFields=*&outSR=4326&f=geojson", icao.to_uppercase())
 }
 
+/// The airports a layer has any feature for, asked once per layer (distinct ICAO_IDs) and
+/// kept for a week. The FAA maps a couple of hundred airports; asking every US airport
+/// and heliport of a big batch about every layer cost tens of thousands of requests that
+/// all came back empty. None when the service will not say, and each airport is asked.
+fn covered(http: &Http, cache: &Cache, name: &str) -> Option<std::sync::Arc<std::collections::HashSet<String>>> {
+    use std::collections::{HashMap, HashSet};
+    use std::sync::{Arc, Mutex, OnceLock};
+    type Once = Arc<OnceLock<Option<Arc<HashSet<String>>>>>;
+    // One slot a layer, so every worker that asks while the list is coming waits for the
+    // one request rather than making its own.
+    static KNOWN: OnceLock<Mutex<HashMap<String, Once>>> = OnceLock::new();
+    let slot = KNOWN.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap().entry(name.to_string()).or_default().clone();
+    slot.get_or_init(|| {
+        let path = cache.path(&format!("faa-amdb/_covered/{name}.json"));
+        let fresh = path.as_ref().and_then(|p| std::fs::metadata(p).ok()).and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|age| age.as_secs() < 7 * 24 * 3600);
+        let from_disk = if fresh { path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok()) } else { None };
+        let ids = from_disk.or_else(|| {
+            let mut ids = Vec::new();
+            let mut offset = 0;
+            loop {
+                let url = format!("{BASE}/{name}/FeatureServer/0/query?where=1%3D1&outFields=ICAO_ID&returnDistinctValues=true&returnGeometry=false&resultOffset={offset}&f=json");
+                let v: Value = http.get_text(&url).ok().and_then(|t| serde_json::from_str(&t).ok())?;
+                if v.get("error").is_some() {
+                    return None;
+                }
+                let page: Vec<String> = v.get("features")?.as_array()?.iter().filter_map(|f| f.get("attributes")?.get("ICAO_ID")?.as_str().map(|s| s.trim().to_uppercase())).collect();
+                offset += page.len();
+                let more = v.get("exceededTransferLimit").and_then(Value::as_bool).unwrap_or(false) && !page.is_empty();
+                ids.extend(page);
+                if !more {
+                    break;
+                }
+            }
+            if let Some(p) = &path {
+                if let Some(dir) = p.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                let _ = std::fs::write(p, serde_json::to_string(&ids).unwrap_or_default());
+            }
+            Some(ids)
+        });
+        let set = ids.map(|v| Arc::new(v.into_iter().filter(|s| !s.is_empty()).collect::<HashSet<String>>()));
+        if let Some(s) = &set {
+            crate::term::info(&format!("FAA {name}: {} airports mapped", s.len()));
+        }
+        set
+    })
+    .clone()
+}
+
+/// Every layer the FAA publishes for airports, by the name its service goes by.
+const LAYERS: [&str; 5] = ["AM_Hotspot", "AM_Wind_Indicator", "AM_Taxiway", "AM_Apron", "AM_Building"];
+
+/// The airports the FAA maps anything at all for, out of the coverage lists. Empty when
+/// the service will not say, in which case nothing is known to be worth putting last.
+pub fn mapped_airports(cache: &Cache) -> std::collections::HashSet<String> {
+    let http = Http::new(60, 100);
+    LAYERS.iter().filter_map(|name| covered(&http, cache, name)).flat_map(|s| s.iter().cloned().collect::<Vec<_>>()).collect()
+}
+
 /// One layer as GeoJSON features. Missing layers and transport errors are not fatal:
-/// the caller logs and carries on with whatever the other sources gave.
+/// the caller logs and carries on with whatever the other sources gave. An airport the
+/// layer is known to have nothing for is not asked about.
 fn layer(http: &Http, cache: &Cache, icao: &str, name: &str) -> Result<Vec<Value>> {
+    if covered(http, cache, name).is_some_and(|set| !set.contains(&icao.to_uppercase())) {
+        return Ok(Vec::new());
+    }
     let key = format!("faa-amdb/{}/{}.json", icao.to_uppercase(), name);
     let text = cache.get_or_fetch_text(&key, || {
         crate::term::step(Some(icao), &format!("GET FAA {name}"));
@@ -98,6 +162,27 @@ fn point(f: &Value) -> Option<LonLat> {
         geo_types::Geometry::Point(p) => Some(p.0),
         _ => None,
     }
+}
+
+/// Every layer the FAA has for the airports of a batch that it maps at all, fetched on a
+/// thread of its own with its own connection, so a big batch never waits on the FAA:
+/// by the time a worker reaches one of these airports its answers are in the cache.
+/// The rest of the batch the coverage lists already answer without a request.
+pub fn prefetch(cache: Cache, icaos: Vec<String>) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let http = Http::new(60, 100);
+        let wanted: Vec<String> = icaos.into_iter().map(|i| i.to_uppercase()).filter(|i| covers(i, None)).collect();
+        let mut n = 0usize;
+        for name in LAYERS {
+            let Some(set) = covered(&http, &cache, name) else { continue };
+            for icao in wanted.iter().filter(|i| set.contains(*i)) {
+                if layer(&http, &cache, icao, name).is_ok() {
+                    n += 1;
+                }
+            }
+        }
+        crate::term::info(&format!("FAA airport mapping fetched ahead: {n} layer(s)"));
+    })
 }
 
 /// Fetch what the FAA publishes for this airport.
