@@ -170,9 +170,11 @@ amdbgen build --all --type large,medium,small --skip-existing --format geojson -
   --osm-pbf north-america-latest.osm.pbf --osm-pbf south-america-latest.osm.pbf --no-gateway
 ```
 
-Measured on all 67 Swiss airports: 37 s in all (the 550 MB extract read in 14 s, the
-build 5 s), 15 s with `--no-gateway`, against a download of 3 to 10 s per airport from
-the servers; the same features as a download, but for an edit made since the extract.
+Measured on all 67 Swiss airports: the 550 MB extract read in 8 s and the airports built
+in 2 s (with `--no-gateway`), against a download of 3 to 10 s per airport from the
+servers; the same features as a download, but for an edit made since the extract. The
+first read decodes the whole file (about 150 MB/s); the other two read only the blocks
+holding what they look for.
 Continent files are better than countries: a country's file is cut at its border, and
 airports on it (Geneva, Basel) lose their far side. Memory grows with the airports in a
 file (about 1 GB for 67 in dense Switzerland); `--continent europe` and friends split a

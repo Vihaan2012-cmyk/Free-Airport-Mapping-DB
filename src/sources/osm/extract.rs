@@ -198,29 +198,68 @@ fn deg(e7: i32) -> f64 {
 /// Blocks decoded at a time: enough to keep every core busy, few enough to hold in memory.
 const BATCH: usize = 128;
 
+/// A decoded block and where in the file it starts.
+struct Block {
+    offset: u64,
+    data: PrimitiveBlock,
+}
+
+fn decode(pbf: &Path, blobs: Vec<osmpbf::Blob>) -> Result<Vec<Block>> {
+    blobs
+        .into_par_iter()
+        .map(|b| Ok(Block { offset: b.offset().map_or(0, |o| o.0), data: b.to_primitiveblock().map_err(|e| anyhow!("{}: {e}", pbf.display()))? }))
+        .collect()
+}
+
 /// Every data block of the file in order, decoded in parallel a batch at a time. `f` says
 /// whether to go on.
-fn blocks(pbf: &Path, mut f: impl FnMut(&[PrimitiveBlock]) -> Result<bool>) -> Result<()> {
-    let reader = BlobReader::from_path(pbf).with_context(|| format!("open {}", pbf.display()))?;
+fn blocks(pbf: &Path, mut f: impl FnMut(&[Block]) -> Result<bool>) -> Result<()> {
+    let reader = BlobReader::seekable_from_path(pbf).with_context(|| format!("open {}", pbf.display()))?;
     let mut batch = Vec::with_capacity(BATCH);
-    let mut flush = |batch: &mut Vec<osmpbf::Blob>| -> Result<bool> {
-        let decoded: Vec<PrimitiveBlock> = std::mem::take(batch).into_par_iter().map(|b| b.to_primitiveblock()).collect::<std::result::Result<_, _>>().map_err(|e| anyhow!("{}: {e}", pbf.display()))?;
-        f(&decoded)
-    };
     for blob in reader {
         let blob = blob.map_err(|e| anyhow!("{}: {e}", pbf.display()))?;
         if blob.get_type() != BlobType::OsmData {
             continue;
         }
         batch.push(blob);
-        if batch.len() == BATCH && !flush(&mut batch)? {
+        if batch.len() == BATCH && !f(&decode(pbf, std::mem::take(&mut batch))?)? {
             return Ok(());
         }
     }
     if !batch.is_empty() {
-        flush(&mut batch)?;
+        f(&decode(pbf, batch)?)?;
     }
     Ok(())
+}
+
+/// Only the blocks starting at `offsets` (in file order), decoded in parallel a batch at
+/// a time: the later passes need a few blocks of the file, not all of it.
+fn blocks_at(pbf: &Path, offsets: &[u64], mut f: impl FnMut(&[Block])) -> Result<()> {
+    let mut reader = BlobReader::seekable_from_path(pbf).with_context(|| format!("open {}", pbf.display()))?;
+    for chunk in offsets.chunks(BATCH) {
+        let blobs = chunk.iter().map(|&o| reader.blob_from_offset(osmpbf::ByteOffset(o)).map_err(|e| anyhow!("{}: {e}", pbf.display()))).collect::<Result<Vec<_>>>()?;
+        f(&decode(pbf, blobs)?);
+    }
+    Ok(())
+}
+
+/// Where each block of one kind is, and the ids it holds (a sorted file's blocks hold
+/// consecutive ranges).
+#[derive(Default)]
+struct BlockIndex(Vec<(u64, i64, i64)>);
+
+impl BlockIndex {
+    /// The blocks holding any of `ids` (sorted).
+    fn holding(&self, ids: &[i64]) -> Vec<u64> {
+        self.0
+            .iter()
+            .filter(|&&(_, lo, hi)| {
+                let i = ids.partition_point(|&x| x < lo);
+                i < ids.len() && ids[i] <= hi
+            })
+            .map(|&(o, _, _)| o)
+            .collect()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -273,21 +312,26 @@ pub fn fill_cache(pbf: &Path, targets: &[Target], cache: &Cache, log: &dyn Fn(&s
     let t0 = std::time::Instant::now();
     let mut seen_blocks = 0usize;
 
-    // Pass 1: nodes in the boxes, the ways that touch them, the relations that use those.
+    // Pass 1: nodes in the boxes, the ways that touch them, the relations that use those;
+    // and where every node and way block is, with the ids it holds, for the later passes.
+    let mut node_blocks = BlockIndex::default();
+    let mut way_blocks = BlockIndex::default();
     blocks(pbf, |batch| {
         for b in batch {
-            if let Some(k) = kind(b) {
+            if let Some(k) = kind(&b.data) {
                 if k < last {
                     return Err(anyhow!("{} is not sorted (nodes, then ways, then relations): sort it with `osmium sort` first", pbf.display()));
                 }
                 last = k;
             }
         }
-        let node_parts: Vec<(Vec<(i64, i32, i32)>, Vec<(i64, i32, i32, Tags)>)> = batch
+        type NodePart = (Vec<(i64, i32, i32)>, Vec<(i64, i32, i32, Tags)>, (u64, i64, i64));
+        let node_parts: Vec<NodePart> = batch
             .par_iter()
-            .filter(|b| kind(b) == Some(Kind::Nodes))
-            .map(|b| {
+            .filter(|b| kind(&b.data) == Some(Kind::Nodes))
+            .map(|blk| {
                 let (mut ins, mut tagged) = (Vec::new(), Vec::new());
+                let (mut lo, mut hi) = (i64::MAX, i64::MIN);
                 // Inside a box, and which: an airport with no node inside is not in the file.
                 let mark = |lat: i32, lon: i32| -> bool {
                     let mut any = false;
@@ -297,50 +341,61 @@ pub fn fill_cache(pbf: &Path, targets: &[Target], cache: &Cache, log: &dyn Fn(&s
                     }
                     any
                 };
-                for g in b.groups() {
+                for g in blk.data.groups() {
                     for n in g.dense_nodes() {
-                        let (lat, lon) = (n.decimicro_lat(), n.decimicro_lon());
+                        let (id, lat, lon) = (n.id(), n.decimicro_lat(), n.decimicro_lon());
+                        lo = lo.min(id);
+                        hi = hi.max(id);
                         if mark(lat, lon) {
-                            ins.push((n.id(), lat, lon));
+                            ins.push((id, lat, lon));
                             let t: Vec<(&str, &str)> = n.tags().collect();
                             if !t.is_empty() && wanted_node(&t) {
-                                tagged.push((n.id(), lat, lon, owned(&t)));
+                                tagged.push((id, lat, lon, owned(&t)));
                             }
                         }
                     }
                     for n in g.nodes() {
-                        let (lat, lon) = (n.decimicro_lat(), n.decimicro_lon());
+                        let (id, lat, lon) = (n.id(), n.decimicro_lat(), n.decimicro_lon());
+                        lo = lo.min(id);
+                        hi = hi.max(id);
                         if mark(lat, lon) {
-                            ins.push((n.id(), lat, lon));
+                            ins.push((id, lat, lon));
                             let t: Vec<(&str, &str)> = n.tags().collect();
                             if !t.is_empty() && wanted_node(&t) {
-                                tagged.push((n.id(), lat, lon, owned(&t)));
+                                tagged.push((id, lat, lon, owned(&t)));
                             }
                         }
                     }
                 }
-                (ins, tagged)
+                (ins, tagged, (blk.offset, lo, hi))
             })
             .collect();
-        for (ins, tagged) in node_parts {
+        for (ins, tagged, at) in node_parts {
             inside.nodes.extend(ins);
             tagged_nodes.extend(tagged);
+            node_blocks.0.push(at);
         }
-        if !sealed && batch.iter().any(|b| kind(b).is_some_and(|k| k > Kind::Nodes)) {
+        if !sealed && batch.iter().any(|b| kind(&b.data).is_some_and(|k| k > Kind::Nodes)) {
             inside.seal();
             sealed = true;
             log(&format!("{} nodes inside the airports' boxes, in {}", inside.nodes.len(), crate::term::human_secs(t0.elapsed().as_secs_f64())));
         }
-        let way_parts: Vec<(Vec<KeptWay>, Vec<i64>)> = batch
+        type WayPart = (Vec<KeptWay>, Vec<i64>, (u64, i64, i64));
+        let way_parts: Vec<WayPart> = batch
             .par_iter()
-            .filter(|b| kind(b) == Some(Kind::Ways))
-            .map(|b| {
+            .filter(|b| kind(&b.data) == Some(Kind::Ways))
+            .map(|blk| {
                 let (mut kept, mut touch) = (Vec::new(), Vec::new());
-                for w in b.groups().flat_map(|g| g.ways()) {
-                    let refs: Vec<i64> = w.refs().collect();
-                    if !refs.iter().any(|&r| inside.get(r).is_some()) {
+                let (mut lo, mut hi) = (i64::MAX, i64::MIN);
+                for w in blk.data.groups().flat_map(|g| g.ways()) {
+                    lo = lo.min(w.id());
+                    hi = hi.max(w.id());
+                    // Nearly every way in a file touches no airport: find that out from the
+                    // refs as they are decoded, without collecting them.
+                    if !w.refs().any(|r| inside.get(r).is_some()) {
                         continue;
                     }
+                    let refs: Vec<i64> = w.refs().collect();
                     let t: Vec<(&str, &str)> = w.tags().collect();
                     if wanted_area_or_line(&t, true) {
                         kept.push(KeptWay { id: w.id(), refs, tags: owned(&t) });
@@ -348,20 +403,21 @@ pub fn fill_cache(pbf: &Path, targets: &[Target], cache: &Cache, log: &dyn Fn(&s
                         touch.push(w.id());
                     }
                 }
-                (kept, touch)
+                (kept, touch, (blk.offset, lo, hi))
             })
             .collect();
-        for (kept, touch) in way_parts {
+        for (kept, touch, at) in way_parts {
             touching.extend(kept.iter().map(|w| w.id));
             touching.extend(touch);
             ways.extend(kept);
+            way_blocks.0.push(at);
         }
         let rel_parts: Vec<Vec<KeptRelation>> = batch
             .par_iter()
-            .filter(|b| kind(b) == Some(Kind::Relations))
-            .map(|b| {
+            .filter(|b| kind(&b.data) == Some(Kind::Relations))
+            .map(|blk| {
                 let mut kept = Vec::new();
-                for r in b.groups().flat_map(|g| g.relations()) {
+                for r in blk.data.groups().flat_map(|g| g.relations()) {
                     let t: Vec<(&str, &str)> = r.tags().collect();
                     if !wanted_area_or_line(&t, false) {
                         continue;
@@ -398,60 +454,72 @@ pub fn fill_cache(pbf: &Path, targets: &[Target], cache: &Cache, log: &dyn Fn(&s
     drop(touching);
     log(&format!("first read done in {}: {} ways, {} relations", crate::term::human_secs(t0.elapsed().as_secs_f64()), ways.len(), relations.len()));
 
-    // Pass 2: the member ways the kept relations need that were not kept for their own tags.
+    // Pass 2: the member ways the kept relations need that were not kept for their own
+    // tags, from the way blocks that hold their ids only.
+    let t2 = std::time::Instant::now();
     let have: HashSet<i64> = ways.iter().map(|w| w.id).collect();
-    let mut wanted_members: HashSet<i64> = relations.iter().flat_map(|r| r.members.iter().filter(|m| m.kind == 'w').map(|m| m.id)).filter(|id| !have.contains(id)).collect();
+    let mut members: Vec<i64> = relations.iter().flat_map(|r| r.members.iter().filter(|m| m.kind == 'w').map(|m| m.id)).filter(|id| !have.contains(id)).collect();
     drop(have);
-    if !wanted_members.is_empty() {
-        let n = wanted_members.len();
-        blocks(pbf, |batch| {
-            if batch.iter().any(|b| kind(b) == Some(Kind::Relations)) && !batch.iter().any(|b| kind(b) == Some(Kind::Ways)) {
-                return Ok(false);
-            }
+    members.sort_unstable();
+    members.dedup();
+    if !members.is_empty() {
+        let at = way_blocks.holding(&members);
+        let found_before = ways.len();
+        blocks_at(pbf, &at, |batch| {
             let found: Vec<KeptWay> = batch
                 .par_iter()
-                .filter(|b| kind(b) == Some(Kind::Ways))
-                .flat_map_iter(|b| {
-                    b.groups()
+                .flat_map_iter(|blk| {
+                    blk.data
+                        .groups()
                         .flat_map(|g| g.ways())
-                        .filter(|w| wanted_members.contains(&w.id()))
+                        .filter(|w| members.binary_search(&w.id()).is_ok())
                         .map(|w| KeptWay { id: w.id(), refs: w.refs().collect(), tags: owned(&w.tags().collect::<Vec<_>>()) })
                         .collect::<Vec<_>>()
                 })
                 .collect();
-            for w in found {
-                wanted_members.remove(&w.id);
-                ways.push(w);
-            }
-            Ok(!wanted_members.is_empty())
+            ways.extend(found);
         })?;
-        log(&format!("member ways: {} of {n} found", n - wanted_members.len()));
+        log(&format!(
+            "member ways: {} of {} found, from {} of {} way blocks, in {}",
+            ways.len() - found_before,
+            members.len(),
+            at.len(),
+            way_blocks.0.len(),
+            crate::term::human_secs(t2.elapsed().as_secs_f64())
+        ));
     }
 
-    // Pass 3: nodes of kept ways that lie outside every box.
+    // Pass 3: nodes of kept ways that lie outside every box, from the node blocks that
+    // hold their ids only.
+    let t3 = std::time::Instant::now();
     let mut outside: HashMap<i64, (i32, i32)> = HashMap::new();
-    let missing: HashSet<i64> = ways.iter().flat_map(|w| w.refs.iter().copied()).filter(|&r| inside.get(r).is_none()).collect();
+    let mut missing: Vec<i64> = ways.iter().flat_map(|w| w.refs.iter().copied()).filter(|&r| inside.get(r).is_none()).collect();
+    missing.sort_unstable();
+    missing.dedup();
     if !missing.is_empty() {
-        let n = missing.len();
-        blocks(pbf, |batch| {
+        let at = node_blocks.holding(&missing);
+        blocks_at(pbf, &at, |batch| {
             let found: Vec<(i64, i32, i32)> = batch
                 .par_iter()
-                .filter(|b| kind(b) == Some(Kind::Nodes))
-                .flat_map_iter(|b| {
+                .flat_map_iter(|blk| {
                     let mut v = Vec::new();
-                    for g in b.groups() {
-                        v.extend(g.dense_nodes().filter(|n| missing.contains(&n.id())).map(|n| (n.id(), n.decimicro_lat(), n.decimicro_lon())));
-                        v.extend(g.nodes().filter(|n| missing.contains(&n.id())).map(|n| (n.id(), n.decimicro_lat(), n.decimicro_lon())));
+                    for g in blk.data.groups() {
+                        v.extend(g.dense_nodes().filter(|n| missing.binary_search(&n.id()).is_ok()).map(|n| (n.id(), n.decimicro_lat(), n.decimicro_lon())));
+                        v.extend(g.nodes().filter(|n| missing.binary_search(&n.id()).is_ok()).map(|n| (n.id(), n.decimicro_lat(), n.decimicro_lon())));
                     }
                     v
                 })
                 .collect();
-            for (id, lat, lon) in found {
-                outside.insert(id, (lat, lon));
-            }
-            Ok(!batch.iter().any(|b| kind(b).is_some_and(|k| k > Kind::Nodes)) && outside.len() < n)
+            outside.extend(found.into_iter().map(|(id, lat, lon)| (id, (lat, lon))));
         })?;
-        log(&format!("nodes outside the boxes: {} of {n} found", outside.len()));
+        log(&format!(
+            "nodes outside the boxes: {} of {} found, from {} of {} node blocks, in {}",
+            outside.len(),
+            missing.len(),
+            at.len(),
+            node_blocks.0.len(),
+            crate::term::human_secs(t3.elapsed().as_secs_f64())
+        ));
     }
 
     // Each airport's share: the ways with a node in its box, the relations using those,
@@ -496,6 +564,7 @@ pub fn fill_cache(pbf: &Path, targets: &[Target], cache: &Cache, log: &dyn Fn(&s
         }
     }
 
+    let t4 = std::time::Instant::now();
     let outside_file = touched.iter().filter(|t| !t.load(std::sync::atomic::Ordering::Relaxed)).count();
     let stats = Stats { airports: targets.len() - outside_file, outside_file, nodes: inside.nodes.len() + outside.len(), ways: ways.len(), relations: relations.len() };
     targets.par_iter().enumerate().try_for_each(|(a, t)| -> Result<()> {
@@ -527,6 +596,7 @@ pub fn fill_cache(pbf: &Path, targets: &[Target], cache: &Cache, log: &dyn Fn(&s
         }
         std::fs::write(&path, serde_json::to_string(&st)?).with_context(|| format!("write {}", path.display()))
     })?;
+    log(&format!("{} airports saved in {}", stats.airports, crate::term::human_secs(t4.elapsed().as_secs_f64())));
     Ok(stats)
 }
 

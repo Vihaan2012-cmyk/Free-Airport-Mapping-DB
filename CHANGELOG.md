@@ -10,9 +10,10 @@
   that scale. Three passes over each file (nodes in the airports' boxes and the ways and
   relations using them; the outline ways of multipolygons; the nodes of ways running out
   of a box), each airport's share saved where a download of it would be. Same features as
-  a download (ELLX: 2,415 against 2,416, one fence edited since the extract); all 67 Swiss
-  airports in 37 s end to end, the 550 MB file read in 14 s. Airports outside every file
-  are downloaded as usual.
+  a download (ELLX: 2,415 against 2,416, one fence edited since the extract); the 550 MB
+  Swiss file read for all 67 of its airports in 8 s. The first pass records where each
+  block is and which ids it holds, so the other two read only the blocks they need.
+  Airports outside every file are downloaded as usual.
 - AMDB Build List takes `.osm.pbf` extracts dropped with the list.
 - `--osm both` spreads a batch across the map API and the two fastest Overpass mirrors,
   not two sources.
