@@ -286,6 +286,25 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard:
     }
 }
 
+/// Build every airport in a list file (a CSV with an `icao` column, as `amdbgen list --csv`
+/// writes, or codes one a line) into the saved airports folder, largest first as the file
+/// has them, skipping those already built: `prefetch --from-file` for the desktop app,
+/// which has the file and not the command line. Progress goes to the log. Returns how
+/// many airports the file named.
+pub fn build_list(settings: &Settings, file: &Path) -> Result<usize> {
+    let mut cfg = config(&DataArgs::default(), settings);
+    // As a bulk build: the map API and Overpass taking turns, four airports at a time.
+    cfg.osm = OsmMode::Both;
+    cfg.osm_parallel = 4;
+    let icaos = crate::pipeline::read_icao_file(file)?;
+    if icaos.is_empty() {
+        return Err(anyhow!("{} names no airports (it needs an `icao` column, or one code a line)", file.display()));
+    }
+    let label = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| file.display().to_string());
+    run_bulk(&cfg, &icaos, false, &label, None);
+    Ok(icaos.len())
+}
+
 #[derive(Args, Clone)]
 struct ServeArgs {
     #[command(flatten)]

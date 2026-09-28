@@ -22,6 +22,10 @@
   time it is loaded, at most once an hour.
 - The default OpenStreetMap source now falls back to the Overpass servers, as its help
   always said it did; before, one throttled server meant no OSM data at all.
+- **Build a list…** in AMDB Bridge's Activity section: pick a list of airports (a CSV
+  with an `icao` column, as `amdbgen list --csv` writes, or codes one a line) and the
+  app builds them in the background, skipping those already built, with progress and
+  the time left in the log. The same as `amdb-bridge prefetch --from-file`.
 - **A320 OANS:** it no longer loads every airport the route passes within 20 NM of. The
   A380X decides by its flight phase, which the Fenix does not set, so it took itself to be
   on the ground all flight; it now switches airports on the ground or below 5,000 ft
