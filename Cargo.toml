@@ -49,7 +49,8 @@ geo = "0.33"
 geo-types = { version = "0.7", features = ["serde"] }
 ureq = { version = "3", features = ["json"] }
 zip = { version = "6", default-features = false, features = ["deflate"] }
-flate2 = "1"
+# zlib-rs: the fast pure-Rust inflate, which reading OSM extracts spends most of its time in.
+flate2 = { version = "1", features = ["zlib-rs"] }
 pdf-writer = "0.12"
 base64 = "0.23"
 csv = "1"
