@@ -189,11 +189,12 @@ export class FenixBtv implements Instrument {
   private publishArm(armed: boolean, canArm: boolean): void {
     if (this.published.armed !== armed) {
       this.published.armed = armed;
-      this.pub.pub('amdb_btv_armed', armed, false, true);
+      // Synced, so the first officer's ARM BTV button shows it and can be pressed too.
+      this.pub.pub('amdb_btv_armed', armed, true, true);
     }
     if (this.published.canArm !== canArm) {
       this.published.canArm = canArm;
-      this.pub.pub('amdb_btv_can_arm', canArm, false, true);
+      this.pub.pub('amdb_btv_can_arm', canArm, true, true);
     }
   }
 

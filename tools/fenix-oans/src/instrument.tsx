@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0
 //
 // FlyByWire's A380X OANS (https://github.com/flybywiresim/aircraft, GPL-3.0) running as an
-// overlay on the Fenix A320 Captain ND. The OANS, its control panel, the context menu and
-// the erase dialogs are FlyByWire's own components (see OansDisplay); what the A380X's
-// systems would feed them comes from FenixOansPublisher.
+// overlay on a Fenix A320 ND: the captain's, or the first officer's when panel.cfg loads
+// this gauge with `?Index=2`. The OANS, its control panel, the context menu and the erase
+// dialogs are FlyByWire's own components (see OansDisplay); what the A380X's systems would
+// feed them comes from FenixOansPublisher.
+//
+// There is one BTV: the captain's side brakes (FenixBtv), and tells the first officer's
+// side what it is doing so both NDs show it. Either side's exit pick reaches it, as
+// FlyByWire's OANS shares a picked exit between its two sides.
 
-import { Clock, FSComponent, InstrumentBackplane } from '@microsoft/msfs-sdk';
+import { Clock, ConsumerSubject, FSComponent, InstrumentBackplane, Subscribable } from '@microsoft/msfs-sdk';
 import { ArincEventBus, BtvSimvarPublisher, FmsOansData, FmsOansSimvarPublisher } from '@flybywiresim/fbw-sdk';
 import { RopRowOansPublisher } from '@flybywiresim/msfs-avionics-common';
 import { ResetPanelSimvarPublisher } from '@a380x/MsfsAvionicsCommon/providers/ResetPanelPublisher';
@@ -30,19 +35,25 @@ function btvClass(s: BtvStatus): string {
   return `${colour} FontIntermediate MiddleAlign`;
 }
 
+/** What the captain's side tells the first officer's side about BTV. */
+interface BtvShared {
+  amdb_btv_status: BtvStatus;
+}
+
+const BTV_IDLE: BtvStatus = { state: BtvState.Off, exit: null, metres: null, missed: false };
+
 class AmdbFenixOans extends BaseInstrument {
   private readonly bus = new ArincEventBus();
 
   private readonly backplane = new InstrumentBackplane();
 
-  private readonly fenix = new FenixOansPublisher(this.bus);
+  // Made once the side is known: BaseInstrument reads `Index` from the gauge's address in
+  // its own connectedCallback.
+  private fenix!: FenixOansPublisher;
 
-  private readonly btv = new FenixBtv(this.bus);
+  private display!: OansDisplay;
 
-  private readonly display = new OansDisplay(this.bus);
-
-  /** The taxi route the bridge keeps, drawn when it is for the airport shown. */
-  private readonly taxiRoute = new TaxiRouteFeed(this.bus, () => this.display.airport());
+  private taxiRoute!: TaxiRouteFeed;
 
   /**
    * Display pixels per layout pixel. The display is laid out at 768 x 768, as Fenix's ND
@@ -61,6 +72,13 @@ class AmdbFenixOans extends BaseInstrument {
 
   public connectedCallback(): void {
     super.connectedCallback();
+    const side = this.instrumentIndex === 2 ? 'R' : 'L';
+    const captain = side === 'L';
+    reportOnce(`nd-side-${side}`);
+    this.fenix = new FenixOansPublisher(this.bus, side);
+    this.display = new OansDisplay(this.bus, side);
+    this.taxiRoute = new TaxiRouteFeed(this.bus, () => this.display.airport());
+
     this.backplane.addInstrument('fenix', this.fenix);
     this.fenix.onUiCommand = (name) => {
       reportOnce(`command-${name}`);
@@ -78,19 +96,28 @@ class AmdbFenixOans extends BaseInstrument {
     this.backplane.addPublisher('rop-row-oans', new RopRowOansPublisher(this.bus));
     this.backplane.addPublisher('btv', new BtvSimvarPublisher(this.bus));
     this.backplane.addPublisher('resetPanel', new ResetPanelSimvarPublisher(this.bus));
-    this.backplane.addInstrument('btv-braking', this.btv);
-    this.backplane.init();
 
-    // The BTV exit picked on the map, also for tools outside the simulator.
-    const fms = this.bus.getSubscriber<FmsOansData>();
-    fms.on('oansExitCoordinates').handle((c) => {
-      SimVar.SetSimVarValue('L:AMDB_BTV_EXIT_LAT', 'degrees', c.lat);
-      SimVar.SetSimVarValue('L:AMDB_BTV_EXIT_LON', 'degrees', c.long);
-    });
-    fms.on('oansSelectedExit').handle((exit) => {
-      SimVar.SetSimVarValue('L:AMDB_BTV_EXIT_SELECTED', 'number', exit ? 1 : 0);
-      reportOnce(`btv-exit-${exit ?? 'cleared'}`);
-    });
+    let btvStatus: Subscribable<BtvStatus>;
+    if (captain) {
+      const btv = new FenixBtv(this.bus);
+      this.backplane.addInstrument('btv-braking', btv);
+      btvStatus = btv.status;
+      btv.status.sub((s) => this.bus.getPublisher<BtvShared>().pub('amdb_btv_status', s, true, true), true);
+
+      // The BTV exit picked on the map, also for tools outside the simulator.
+      const fms = this.bus.getSubscriber<FmsOansData>();
+      fms.on('oansExitCoordinates').handle((c) => {
+        SimVar.SetSimVarValue('L:AMDB_BTV_EXIT_LAT', 'degrees', c.lat);
+        SimVar.SetSimVarValue('L:AMDB_BTV_EXIT_LON', 'degrees', c.long);
+      });
+      fms.on('oansSelectedExit').handle((exit) => {
+        SimVar.SetSimVarValue('L:AMDB_BTV_EXIT_SELECTED', 'number', exit ? 1 : 0);
+        reportOnce(`btv-exit-${exit ?? 'cleared'}`);
+      });
+    } else {
+      btvStatus = ConsumerSubject.create(this.bus.getSubscriber<BtvShared>().on('amdb_btv_status'), BTV_IDLE);
+    }
+    this.backplane.init();
 
     const content = document.getElementById('OANS_CONTENT') as HTMLElement;
     this.display.render(content);
@@ -98,8 +125,8 @@ class AmdbFenixOans extends BaseInstrument {
     // BTV's state, at the top of the ND whether the OANS is showing or not.
     FSComponent.render(
       <svg class="amdb-btv" viewBox="0 0 768 768">
-        <text x={384} y={60} class={this.btv.status.map(btvClass)}>
-          {this.btv.status.map(btvText)}
+        <text x={384} y={60} class={btvStatus.map(btvClass)}>
+          {btvStatus.map(btvText)}
         </text>
       </svg>,
       content,
@@ -108,11 +135,14 @@ class AmdbFenixOans extends BaseInstrument {
 
   public onInteractionEvent(args: string[]): void {
     super.onInteractionEvent(args);
-    this.fenix.command(args[0]);
+    this.fenix?.command(args[0]);
   }
 
   public Update(): void {
     super.Update();
+    if (!this.display) {
+      return;
+    }
     this.fitToDisplay();
     this.taxiRoute.update();
     this.backplane.onUpdate();

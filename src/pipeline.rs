@@ -487,13 +487,14 @@ impl OsmSource {
 }
 
 /// Every source usable for one airport: the map API, then the airport's regional
-/// Overpass instance when it has one, then the worldwide Overpass pool.
+/// Overpass instance when it has one, then the worldwide Overpass pool. The map API
+/// mode keeps Overpass as its fallback, as it always said it did.
 fn osm_pool(cfg: &Config, country: Option<&str>) -> Vec<OsmSource> {
     let mut pool = Vec::new();
     if matches!(cfg.osm, OsmMode::OsmApi | OsmMode::Both) {
         pool.push(OsmSource::MapApi);
     }
-    if matches!(cfg.osm, OsmMode::Overpass | OsmMode::Both) {
+    if matches!(cfg.osm, OsmMode::OsmApi | OsmMode::Overpass | OsmMode::Both) {
         pool.extend(osm::overpass::endpoints_for(country, 0, &cfg.overpass_mirrors).into_iter().map(OsmSource::Overpass));
     }
     if pool.is_empty() {
@@ -502,8 +503,27 @@ fn osm_pool(cfg: &Config, country: Option<&str>) -> Vec<OsmSource> {
     pool
 }
 
+/// Airports built without OpenStreetMap because no source answered in time.
+static OSM_MISSING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Whether `icao` was just built without OpenStreetMap (asked once: it is then forgotten).
+pub fn take_osm_missing(icao: &str) -> bool {
+    let mut v = OSM_MISSING.lock().unwrap();
+    let before = v.len();
+    v.retain(|i| !i.eq_ignore_ascii_case(icao));
+    v.len() != before
+}
+
 /// Run the pipeline for a list of ICAOs.
 pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
+    run_with_osm_budget(cfg, icaos, None)
+}
+
+/// The same, giving each airport's OpenStreetMap step at most `osm_budget`: for an
+/// aircraft waiting on the answer, an airport built now without OSM's buildings and roads
+/// (its runways, taxiways and stands come from other sources) is worth more than a whole
+/// one after minutes behind a throttled or queued server.
+pub fn run_with_osm_budget(cfg: &Config, icaos: &[String], osm_budget: Option<std::time::Duration>) -> Result<Summary> {
     let idx = load_index(cfg)?;
     let summary = Mutex::new(Summary::default());
     // Entries for index.json are collected here and merged under a lock at the end, so
@@ -626,17 +646,28 @@ pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
                             used = from.to_string();
                         } else {
                             let pool = osm_pool(cfg, p.country.as_deref());
-                            // Alternate between the two fastest sources (the map API and the
-                            // first Overpass endpoint), then fall back through the rest.
-                            // Congested mirrors are a backstop, never anyone's first choice.
+                            // "both" and "overpass" alternate between their two fastest
+                            // sources (the map API and the first Overpass endpoint, or the
+                            // first two endpoints); the map API mode always starts with the
+                            // map API. Everything else is a fallback: congested mirrors are
+                            // a backstop, never anyone's first choice.
                             let fast = pool.len().min(2);
-                            let primary = if fast == 0 { 0 } else { k % fast };
+                            let primary = if fast == 0 || matches!(cfg.osm, OsmMode::OsmApi) { 0 } else { k % fast };
                             let order: Vec<usize> = std::iter::once(primary).chain((0..pool.len()).filter(|j| *j != primary)).collect();
+                            let deadline = osm_budget.map(|b| t0 + b);
                             for &i in &order {
                                 let Some(src) = pool.get(i) else { continue };
+                                // Within a budget, each request also gives up when it does.
+                                let left = deadline.map(|d| d.saturating_duration_since(std::time::Instant::now()));
+                                if left.is_some_and(|l| l.as_secs() < 2) {
+                                    last = Err(anyhow!("no OpenStreetMap source answered within {}s", osm_budget.unwrap_or_default().as_secs()));
+                                    break;
+                                }
+                                let short = left.map(|l| crate::sources::http::Http::new(l.as_secs().max(2), 250));
+                                let http = short.as_ref().unwrap_or(&cfg.http);
                                 let attempt = match src {
-                                    OsmSource::MapApi => osm::osmapi::fetch(&cfg.http, &cfg.cache, &p.icao, p.bbox),
-                                    OsmSource::Overpass(url) => osm::overpass::fetch(&cfg.http, &cfg.cache, std::slice::from_ref(url), &p.icao, p.bbox),
+                                    OsmSource::MapApi => osm::osmapi::fetch(http, &cfg.cache, &p.icao, p.bbox, deadline),
+                                    OsmSource::Overpass(url) => osm::overpass::fetch(http, &cfg.cache, std::slice::from_ref(url), &p.icao, p.bbox, deadline),
                                 };
                                 match attempt {
                                     Ok(s) => {
@@ -658,6 +689,10 @@ pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
                             }
                             Err(e) => {
                                 log::warn!("{}: no OSM source answered: {e:#}", p.icao);
+                                if osm_budget.is_some() {
+                                    term::warn(&format!("[{}] OpenStreetMap did not answer in time: built without its buildings and roads for now", p.icao));
+                                    OSM_MISSING.lock().unwrap().push(p.icao.clone());
+                                }
                                 None
                             }
                         };

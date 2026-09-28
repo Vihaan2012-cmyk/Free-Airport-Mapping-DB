@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.2.9 (2026-09-28) · A320 OANS 1.0.7
+
+**The first officer's ND, and destination airports that load on arrival.**
+
+- **A320 OANS on the first officer's ND too.** The same OANS on the Fenix's F/O ND,
+  zoomed with the F/O's own range knob (anticlockwise past 10, as on the captain's side),
+  following the F/O's own ND mode. Each side keeps its own zoom (`L:AMDB_OANS_ZOOM` and
+  `L:AMDB_OANS_ZOOM_FO`; H events `AMDB_OANS_FO_TOGGLE`, `_RANGE_DEC`, `_RANGE_INC`). There
+  is one BTV: an exit picked on either side is the one it brakes for, and both NDs show
+  its state. An installed A320 OANS adds the F/O side when the bridge next starts;
+  restart the simulator after that, for the knob.
+- **Fixed: the departure airport stayed on the display on arrival, and the map froze**,
+  on every aircraft. An aircraft asks for its destination as it approaches; if the
+  bridge had not built it yet it built it there and then, and when OpenStreetMap was
+  throttling (it asks for waits of up to two minutes a tile, and a busy airport has
+  several) that took many minutes, while the aircraft kept or froze on the airport it
+  had. Now OpenStreetMap gets 25 seconds when an aircraft is waiting; past that the
+  airport is served at once without OSM's buildings and roads (its runways, taxiways
+  and stands come from X-Plane and the other sources), and OSM is tried again the next
+  time it is loaded, at most once an hour.
+- The default OpenStreetMap source now falls back to the Overpass servers, as its help
+  always said it did; before, one throttled server meant no OSM data at all.
+- **A320 OANS:** it no longer loads every airport the route passes within 20 NM of. The
+  A380X decides by its flight phase, which the Fenix does not set, so it took itself to be
+  on the ground all flight; it now switches airports on the ground or below 5,000 ft
+  above it. A load that fails is retried, instead of leaving the map frozen.
+
 ## 1.2.8 (2026-09-27) · A320 OANS 1.0.6
 
 **The Fenix A320's tablet charts, as an option.**

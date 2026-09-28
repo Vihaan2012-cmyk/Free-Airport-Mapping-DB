@@ -933,34 +933,61 @@ const FENIX_OANS_MARK: &str = "//amdb-bridge-fenix-oans";
 /// gauge paths resolve -- Fenix never had anything here, so nothing is overridden.
 const FENIX_OANS_GAUGE_PATH: &str = "amdb-oans/oans-shell.html";
 const FENIX_OANS_ND_PATH: &str = "amdb-oans/oans-nd.html";
-/// The Captain ND's block is found by its texture, not its number.
-const FENIX_ND_TEXTURE: &str = "texture=$A320_ND_Captain";
+/// Each ND's block, found by its texture rather than its number, and the gauge the OANS
+/// adds to it: the captain's, and the first officer's, which is the same gauge told it is
+/// the second (`Index=2`, the way Asobo numbers a second instrument).
+const FENIX_NDS: [(&str, &str); 2] = [("texture=$A320_ND_Captain", "amdb-oans/oans-nd.html"), ("texture=$A320_ND_FO", "amdb-oans/oans-nd.html?Index=2")];
 
-/// Add both OANS gauges to Fenix's panel.cfg text: the invisible manager as a new
-/// `[VCockpitNN]` block, and the ND overlay stacked after the Captain ND's own gauge on
-/// the same texture (the way Fenix stacks its PFD over its weather radar). Only what is
-/// missing is added. None when both are already there, or when either anchor is not
-/// found (a panel.cfg shape this bridge does not know).
+/// Add the OANS gauges to Fenix's panel.cfg text: the invisible manager as a new
+/// `[VCockpitNN]` block, and an ND overlay stacked after each ND's own gauge on the same
+/// texture (the way Fenix stacks its PFD over its weather radar), each ND drawn sharp.
+/// Only what is missing is added. None when all is already there, or when an anchor this
+/// needs is not found (a panel.cfg shape this bridge does not know). The captain's ND must
+/// be there; the first officer's is added to when it is.
 pub fn patch_fenix_oans_text(text: &str) -> Option<String> {
     let mut out = text.to_string();
     if !out.contains(FENIX_OANS_GAUGE_PATH) {
         out = add_fenix_manager_block(&out)?;
     }
-    if !out.contains(FENIX_OANS_ND_PATH) {
-        out = add_fenix_nd_overlay(&out)?;
-    }
-    if !fenix_nd_is_sharp(&out) {
-        out = sharpen_fenix_nd(&out)?;
+    for (i, (texture, gauge)) in FENIX_NDS.iter().enumerate() {
+        if fenix_nd_block(&out, texture).is_none() {
+            if i == 0 {
+                return None;
+            }
+            continue;
+        }
+        if !fenix_nd_has_overlay(&out, texture, gauge) {
+            out = add_fenix_nd_overlay(&out, texture, gauge)?;
+        }
+        if !fenix_nd_is_sharp(&out, texture) {
+            out = sharpen_fenix_nd(&out, texture)?;
+        }
     }
     (out != text).then_some(out)
 }
 
-/// The captain ND's `[VCockpit..]` block: its start and end in the text.
-fn fenix_nd_block(text: &str) -> Option<(usize, usize)> {
-    let tex = text.find(FENIX_ND_TEXTURE)?;
+/// An ND's `[VCockpit..]` block, by its texture line: its start and end in the text.
+fn fenix_nd_block(text: &str, texture: &str) -> Option<(usize, usize)> {
+    let tex = text.find(texture)?;
     let start = text[..tex].rfind("\n[").map_or(0, |i| i + 1);
     let end = text[tex..].find("\n[").map_or(text.len(), |i| tex + i);
     Some((start, end))
+}
+
+/// The ND's block already has this OANS gauge (the captain's and the first officer's
+/// differ only after the path, so the comma after it is part of the match).
+fn fenix_nd_has_overlay(text: &str, texture: &str, gauge: &str) -> bool {
+    fenix_nd_block(text, texture).is_some_and(|(s, e)| text[s..e].contains(&format!("={gauge},")))
+}
+
+/// Every ND in the text has its OANS gauge and is drawn sharp.
+fn fenix_nds_patched(text: &str) -> bool {
+    FENIX_NDS.iter().enumerate().all(|(i, (texture, gauge))| {
+        if fenix_nd_block(text, texture).is_none() {
+            return i > 0;
+        }
+        fenix_nd_has_overlay(text, texture, gauge) && fenix_nd_is_sharp(text, texture)
+    })
 }
 
 /// A `key=W,H` line's two numbers, spaces allowed.
@@ -970,17 +997,17 @@ fn fenix_pair(block: &str, key: &str) -> Option<(u32, u32)> {
     Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
 }
 
-/// The captain ND is drawn at twice the pixels of its layout, for sharp OANS text. Fenix's
-/// own ND scales itself to it, and so does the OANS.
-fn fenix_nd_is_sharp(text: &str) -> bool {
-    let Some((start, end)) = fenix_nd_block(text) else { return false };
+/// The ND is drawn at twice the pixels of its layout, for sharp OANS text. Fenix's own ND
+/// scales itself to it, and so does the OANS.
+fn fenix_nd_is_sharp(text: &str, texture: &str) -> bool {
+    let Some((start, end)) = fenix_nd_block(text, texture) else { return false };
     let block = &text[start..end];
     matches!((fenix_pair(block, "size_mm"), fenix_pair(block, "pixel_size")), (Some((w, h)), Some((pw, ph))) if pw >= 2 * w && ph >= 2 * h)
 }
 
-/// Render the captain ND's texture at twice its layout size (768 -> 1536).
-fn sharpen_fenix_nd(text: &str) -> Option<String> {
-    let (start, end) = fenix_nd_block(text)?;
+/// Render an ND's texture at twice its layout size (768 -> 1536).
+fn sharpen_fenix_nd(text: &str, texture: &str) -> Option<String> {
+    let (start, end) = fenix_nd_block(text, texture)?;
     let block = &text[start..end];
     let (w, h) = fenix_pair(block, "size_mm")?;
     let line_at = block.lines().scan(0, |at, l| {
@@ -994,11 +1021,9 @@ fn sharpen_fenix_nd(text: &str) -> Option<String> {
     Some(format!("{}{}{}", &text[..from], sharp, &text[from + line.len()..]))
 }
 
-/// Stack the ND overlay after the last gauge in the Captain ND's block, at that block's size.
-fn add_fenix_nd_overlay(text: &str) -> Option<String> {
-    let tex = text.find(FENIX_ND_TEXTURE)?;
-    let start = text[..tex].rfind("\n[").map_or(0, |i| i + 1);
-    let end = text[tex..].find("\n[").map_or(text.len(), |i| tex + i);
+/// Stack the OANS gauge after the last gauge in an ND's block, at that block's size.
+fn add_fenix_nd_overlay(text: &str, texture: &str, gauge: &str) -> Option<String> {
+    let (start, end) = fenix_nd_block(text, texture)?;
     let block = &text[start..end];
     let mut next = 0u32;
     let mut from = 0;
@@ -1012,7 +1037,7 @@ fn add_fenix_nd_overlay(text: &str) -> Option<String> {
     }
     let size = block.lines().find_map(|l| l.trim().strip_prefix("size_mm=")).map(|s| s.replace(' ', "")).unwrap_or_else(|| "768,768".to_string());
     let at = start + block.trim_end().len();
-    let line = format!("\n{FENIX_OANS_MARK}\nhtmlgauge{next:02}={FENIX_OANS_ND_PATH}, 0,0,{size}");
+    let line = format!("\n{FENIX_OANS_MARK}\nhtmlgauge{next:02}={gauge}, 0,0,{size}");
     Some(format!("{}{}{}", &text[..at], line, &text[at..]))
 }
 
@@ -1049,22 +1074,48 @@ fn add_fenix_manager_block(text: &str) -> Option<String> {
 
 const FENIX_KNOB_ANCHOR: &str = "<ANIM_NAME>EFIS_1_Range_Selector_Knob</ANIM_NAME>";
 const FENIX_KNOB_MARK: &str = "<!--amdb-bridge-fenix-oans-->";
-const FENIX_KNOB_DEC: &str = "(L:AMDB_OANS_ZOOM) 0 &gt; if{ (L:AMDB_OANS_ZOOM) 1 + 5 min (&gt;L:AMDB_OANS_ZOOM) } els{ (L:S_FCU_EFIS1_ND_ZOOM) 0 &gt; if{ (L:S_FCU_EFIS1_ND_ZOOM) 1 - (&gt;L:S_FCU_EFIS1_ND_ZOOM) } els{ 1 (&gt;L:AMDB_OANS_ZOOM) } }";
-const FENIX_KNOB_INC: &str = "(L:AMDB_OANS_ZOOM) 0 &gt; if{ (L:AMDB_OANS_ZOOM) 1 - (&gt;L:AMDB_OANS_ZOOM) } els{ (L:S_FCU_EFIS1_ND_ZOOM) 1 + 5 min (&gt;L:S_FCU_EFIS1_ND_ZOOM) }";
+/// The first officer's knob: the same code on EFIS 2, with its own OANS variable
+/// (L:AMDB_OANS_ZOOM_FO), so each side zooms its own OANS.
+const FENIX_FO_KNOB_ANCHOR: &str = "<ANIM_NAME>EFIS_2_Range_Selector_Knob</ANIM_NAME>";
+const FENIX_FO_KNOB_MARK: &str = "<!--amdb-bridge-fenix-oans-fo-->";
 
-/// Give the Captain range knob its OANS positions. None when already done, or when the
-/// knob is not where this bridge expects it.
+/// The knob's INC_CODE and DEC_CODE for one side: its EFIS number and OANS variable.
+fn fenix_knob_code(efis: u8, zoom: &str) -> (String, String) {
+    let nd = format!("L:S_FCU_EFIS{efis}_ND_ZOOM");
+    let inc = format!("({zoom}) 0 &gt; if{{ ({zoom}) 1 - (&gt;{zoom}) }} els{{ ({nd}) 1 + 5 min (&gt;{nd}) }}");
+    let dec = format!("({zoom}) 0 &gt; if{{ ({zoom}) 1 + 5 min (&gt;{zoom}) }} els{{ ({nd}) 0 &gt; if{{ ({nd}) 1 - (&gt;{nd}) }} els{{ 1 (&gt;{zoom}) }} }}");
+    (inc, dec)
+}
+
+/// Give the range knobs their OANS positions: the captain's, and the first officer's when
+/// the file has it. None when both are already done, or when the captain's knob is not
+/// where this bridge expects it.
 pub fn patch_fenix_knob_text(text: &str) -> Option<String> {
-    if text.contains(FENIX_KNOB_MARK) {
-        return None;
+    let mut out = text.to_string();
+    for (anchor, mark, efis, zoom) in [(FENIX_KNOB_ANCHOR, FENIX_KNOB_MARK, 1, "L:AMDB_OANS_ZOOM"), (FENIX_FO_KNOB_ANCHOR, FENIX_FO_KNOB_MARK, 2, "L:AMDB_OANS_ZOOM_FO")] {
+        if out.contains(mark) {
+            continue;
+        }
+        let Some(at) = out.find(anchor) else {
+            if efis == 1 {
+                return None;
+            }
+            continue;
+        };
+        let close = at + out[at..].find("</UseTemplate>")?;
+        let line = out[..at].rfind('\n').map_or(0, |i| i + 1);
+        let indent = out[line..at].to_string();
+        let close_line = out[..close].rfind('\n').map_or(0, |i| i + 1);
+        let (inc, dec) = fenix_knob_code(efis, zoom);
+        let added = format!("{indent}{mark}\n{indent}<INC_CODE>{inc}</INC_CODE>\n{indent}<DEC_CODE>{dec}</DEC_CODE>\n");
+        out = format!("{}{}{}", &out[..close_line], added, &out[close_line..]);
     }
-    let at = text.find(FENIX_KNOB_ANCHOR)?;
-    let close = at + text[at..].find("</UseTemplate>")?;
-    let line = text[..at].rfind('\n').map_or(0, |i| i + 1);
-    let indent = &text[line..at];
-    let close_line = text[..close].rfind('\n').map_or(0, |i| i + 1);
-    let added = format!("{indent}{FENIX_KNOB_MARK}\n{indent}<INC_CODE>{FENIX_KNOB_INC}</INC_CODE>\n{indent}<DEC_CODE>{FENIX_KNOB_DEC}</DEC_CODE>\n");
-    Some(format!("{}{}{}", &text[..close_line], added, &text[close_line..]))
+    (out != text).then_some(out)
+}
+
+/// Both range knobs (the first officer's when the file has it) have their OANS positions.
+fn fenix_knobs_patched(text: &str) -> bool {
+    text.contains(FENIX_KNOB_MARK) && (!text.contains(FENIX_FO_KNOB_ANCHOR) || text.contains(FENIX_FO_KNOB_MARK))
 }
 
 /// The two Fenix files the OANS needs changed: panel.cfg for the gauges, the cockpit
@@ -1084,8 +1135,8 @@ fn fenix_oans_files(pdir: &Path) -> [(PathBuf, &'static str); 4] {
 
 fn fenix_file_patched(kind: &str, text: &str) -> bool {
     match kind {
-        "panel.cfg" => text.contains(FENIX_OANS_GAUGE_PATH) && text.contains(FENIX_OANS_ND_PATH) && fenix_nd_is_sharp(text),
-        _ => text.contains(FENIX_KNOB_MARK),
+        "panel.cfg" => text.contains(FENIX_OANS_GAUGE_PATH) && text.contains(FENIX_OANS_ND_PATH) && fenix_nds_patched(text),
+        _ => fenix_knobs_patched(text),
     }
 }
 
@@ -1580,6 +1631,43 @@ bus.on('RequestNavigraphAccessToken',()=>{ return 'tok'; });";
         assert!(range.contains("<DEC_CODE>(L:AMDB_OANS_ZOOM) 0 &gt; if{"));
         assert!(!out[..out.find("EFIS_1_Range_Selector_Knob").unwrap()].contains("INC_CODE"), "the mode knob was changed");
         assert!(patch_fenix_knob_text(&out).is_none());
+    }
+
+    /// Both NDs, as the MSFS 2020 Fenix has them.
+    const FENIX_PANEL_BOTH: &str = "[VCockpit02]\nsize_mm=768,768\npixel_size=768,768\ntexture=$A320_ND_Captain\nhtmlgauge00=B, 0,0,768,768\n\n[VCockpit06]\nsize_mm=768,768\npixel_size=768,768\ntexture=$A320_ND_FO\nhtmlgauge00=F, 0,0,768,768\n\n[VCockpit15]\nsize_mm=1,1\ntexture=NO_TEXTURE\nhtmlgauge00=C, 0,0,1,1\n\n[VPainting01]\n";
+
+    #[test]
+    fn fenix_first_officer_nd_gets_its_own_oans() {
+        let out = patch_fenix_oans_text(FENIX_PANEL_BOTH).unwrap();
+        assert!(out.contains("htmlgauge00=B, 0,0,768,768\n//amdb-bridge-fenix-oans\nhtmlgauge01=amdb-oans/oans-nd.html, 0,0,768,768\n\n[VCockpit06]"));
+        assert!(out.contains("htmlgauge00=F, 0,0,768,768\n//amdb-bridge-fenix-oans\nhtmlgauge01=amdb-oans/oans-nd.html?Index=2, 0,0,768,768\n\n[VCockpit15]"));
+        assert_eq!(out.matches("pixel_size=1536,1536").count(), 2, "both NDs drawn sharp");
+        assert!(fenix_file_patched("panel.cfg", &out));
+        assert!(patch_fenix_oans_text(&out).is_none());
+        // One patched before the first officer's was: only that is added.
+        let captain_only = patch_fenix_oans_text(FENIX_PANEL).unwrap().replace("[VCockpit15]", "[VCockpit06]\nsize_mm=768,768\npixel_size=768,768\ntexture=$A320_ND_FO\nhtmlgauge00=F, 0,0,768,768\n\n[VCockpit15]");
+        assert!(!fenix_file_patched("panel.cfg", &captain_only));
+        let upgraded = patch_fenix_oans_text(&captain_only).unwrap();
+        assert_eq!(upgraded.matches("oans-nd.html, ").count(), 1);
+        assert_eq!(upgraded.matches("oans-nd.html?Index=2, ").count(), 1);
+        assert_eq!(upgraded.matches("oans-shell.html").count(), 1);
+    }
+
+    #[test]
+    fn fenix_first_officer_knob_gets_its_own_oans_positions() {
+        let xml = "\t\t\t<UseTemplate Name=\"K\">\n\t\t\t\t<ANIM_NAME>EFIS_1_Range_Selector_Knob</ANIM_NAME>\n\t\t\t\t<VAR_NAME>S_FCU_EFIS1_ND_ZOOM</VAR_NAME>\n\t\t\t</UseTemplate>\n\t\t\t<UseTemplate Name=\"K\">\n\t\t\t\t<ANIM_NAME>EFIS_2_Range_Selector_Knob</ANIM_NAME>\n\t\t\t\t<VAR_NAME>S_FCU_EFIS2_ND_ZOOM</VAR_NAME>\n\t\t\t</UseTemplate>\n";
+        let out = patch_fenix_knob_text(xml).unwrap();
+        let fo = &out[out.find("EFIS_2_Range_Selector_Knob").unwrap()..];
+        assert!(fo.contains("<!--amdb-bridge-fenix-oans-fo-->"));
+        assert!(fo.contains("<INC_CODE>(L:AMDB_OANS_ZOOM_FO) 0 &gt; if{ (L:AMDB_OANS_ZOOM_FO) 1 - (&gt;L:AMDB_OANS_ZOOM_FO) } els{ (L:S_FCU_EFIS2_ND_ZOOM) 1 + 5 min (&gt;L:S_FCU_EFIS2_ND_ZOOM) }</INC_CODE>"));
+        assert!(!fo.contains("EFIS1"), "the first officer's knob works the captain's range");
+        assert!(fenix_knobs_patched(&out));
+        assert!(patch_fenix_knob_text(&out).is_none());
+        // A captain-only file from before: the first officer's knob is added, once.
+        let captain_only = patch_fenix_knob_text(&xml.replace("EFIS_2_Range", "EFIS_X_Range")).unwrap().replace("EFIS_X_Range", "EFIS_2_Range");
+        assert!(!fenix_knobs_patched(&captain_only));
+        let upgraded = patch_fenix_knob_text(&captain_only).unwrap();
+        assert_eq!(upgraded.matches("<INC_CODE>").count(), 2);
     }
 
     #[test]

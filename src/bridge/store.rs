@@ -60,6 +60,25 @@ pub enum XpState {
 /// time they are asked for. 1.2.5: one runway exit line per exit and landing direction.
 const CURRENT_DATA_FROM: [u64; 3] = [1, 2, 5];
 
+/// How long an airport built for a waiting aircraft may spend on OpenStreetMap. OSM's
+/// map API, when it throttles, asks for waits of up to two minutes a tile, and a queued
+/// Overpass server can take longer still; an aircraft asks for its destination as it
+/// approaches and keeps showing the airport it has until the answer comes, so a slow
+/// answer left departure airports on the display after arrival. A busy airport normally
+/// takes 3 to 8 s.
+const OSM_BUDGET: std::time::Duration = std::time::Duration::from_secs(25);
+
+/// Beside an airport built without OpenStreetMap because it ran out of time.
+const OSM_PENDING: &str = "osm-pending";
+
+/// An airport built without OpenStreetMap, last tried more than an hour ago: build it
+/// again, and OSM gets another go. Within the hour it is served as it is, so an airport
+/// OSM keeps failing on costs one wait an hour, not one every load.
+fn osm_worth_retrying(dir: &std::path::Path) -> bool {
+    let Ok(meta) = std::fs::metadata(dir.join(OSM_PENDING)) else { return false };
+    meta.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age.as_secs() > 3600)
+}
+
 /// The generator an airport kept on disk was built by, when that is older than
 /// `CURRENT_DATA_FROM`.
 fn built_before_current_data(dir: &std::path::Path) -> Option<String> {
@@ -149,11 +168,20 @@ impl Store {
             crate::term::start(&format!("[{icao}] Built by {old}, before the current airport data: building it again"));
             let _ = std::fs::remove_dir_all(&dir);
         }
+        if osm_worth_retrying(&dir) {
+            crate::term::start(&format!("[{icao}] Built without OpenStreetMap last time: building it again with it"));
+            let _ = std::fs::remove_dir_all(&dir);
+        }
         if !dir.join("manifest.json").is_file() {
             crate::term::start(&format!("[{icao}] First request for {icao}: building it now"));
-            let summary = pipeline::run(&self.cfg, &[icao.clone()])?;
+            // An aircraft is waiting on this: OpenStreetMap gets a fixed time (see
+            // OSM_BUDGET), and the airport is marked to have it added later if it runs out.
+            let summary = pipeline::run_with_osm_budget(&self.cfg, &[icao.clone()], Some(OSM_BUDGET))?;
             if let Some((_, e)) = summary.failed.first() {
                 return Err(anyhow!("{icao}: build failed: {e}"));
+            }
+            if pipeline::take_osm_missing(&icao) {
+                let _ = std::fs::write(dir.join(OSM_PENDING), "OpenStreetMap did not answer in time; it is asked again when the airport is next loaded\n");
             }
         }
         let data = Arc::new(self.load_dir(&icao)?);
