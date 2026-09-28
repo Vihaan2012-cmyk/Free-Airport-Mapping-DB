@@ -520,7 +520,11 @@ pub fn take_osm_missing(icao: &str) -> bool {
 /// ones before did not cover. Airports whose OSM is already saved are left as they are.
 /// Each airport's area is the box building it would download, which comes from its
 /// X-Plane scenery: that is fetched (and saved, for the build) here, once.
-pub fn fill_osm_from_extracts(cfg: &Config, icaos: &[String], pbfs: &[std::path::PathBuf]) -> Result<()> {
+///
+/// With `only`, an airport none of the files has anything in the box of is saved as having
+/// no OpenStreetMap data, so building it asks the servers nothing either: for a run whose
+/// files cover the world, where that means OSM has nothing there.
+pub fn fill_osm_from_extracts(cfg: &Config, icaos: &[String], pbfs: &[std::path::PathBuf], only: bool) -> Result<()> {
     if cfg.cache.root().is_none() {
         return Err(anyhow!("reading an OSM extract needs the download cache, where each airport's share is kept"));
     }
@@ -562,7 +566,14 @@ pub fn fill_osm_from_extracts(cfg: &Config, icaos: &[String], pbfs: &[std::path:
         targets.retain(|t| !osm::has_cached(&cfg.cache, &t.icao));
     }
     if !targets.is_empty() {
-        term::warn(&format!("{} airport(s) are outside the extracts' areas: their OpenStreetMap is downloaded as usual when they are built", fmt_n(targets.len())));
+        if only {
+            for t in &targets {
+                osm::extract::save_empty(&cfg.cache, &t.icao)?;
+            }
+            term::info(&format!("{} airport(s) have nothing in the extracts: built without OpenStreetMap (--osm-pbf-only)", fmt_n(targets.len())));
+        } else {
+            term::warn(&format!("{} airport(s) are outside the extracts' areas: their OpenStreetMap is downloaded as usual when they are built", fmt_n(targets.len())));
+        }
     }
     Ok(())
 }

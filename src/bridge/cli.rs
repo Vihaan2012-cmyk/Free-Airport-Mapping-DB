@@ -318,7 +318,7 @@ fn build_list_with(mut cfg: Config, file: &Path, osm_pbf: &[PathBuf]) -> Result<
     let label = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| file.display().to_string());
     if !osm_pbf.is_empty() {
         let todo: Vec<String> = icaos.iter().filter(|i| !cfg.out.join(i.as_str()).join("manifest.json").is_file()).cloned().collect();
-        crate::pipeline::fill_osm_from_extracts(&cfg, &todo, osm_pbf)?;
+        crate::pipeline::fill_osm_from_extracts(&cfg, &todo, osm_pbf, false)?;
     }
     run_bulk(&cfg, &icaos, false, &label, None);
     Ok(icaos.len())

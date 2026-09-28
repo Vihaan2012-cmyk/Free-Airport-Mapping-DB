@@ -55,6 +55,15 @@ pub fn cache_key(icao: &str) -> String {
     format!("osm/extract/{}.json", icao.to_uppercase())
 }
 
+/// Save an airport as having no OpenStreetMap data, so building it asks nothing of the servers.
+pub fn save_empty(cache: &Cache, icao: &str) -> Result<()> {
+    let Some(path) = cache.path(&cache_key(icao)) else { return Ok(()) };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    }
+    std::fs::write(&path, serde_json::to_string(&Store::default())?).with_context(|| format!("write {}", path.display()))
+}
+
 // ---- which elements are wanted: the same as the Overpass query ------------------------
 
 fn tag<'a>(tags: &'a [(&str, &str)], k: &str) -> Option<&'a str> {
