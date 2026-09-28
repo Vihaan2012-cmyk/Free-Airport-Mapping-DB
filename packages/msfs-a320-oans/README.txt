@@ -1,13 +1,20 @@
 A320 OANS
 =========
 
-An airport moving map (OANS) on the Fenix A320's captain navigation display.
+An airport moving map (OANS) on the Fenix A320's navigation displays, the
+captain's and the first officer's.
 
-Turn the ND range knob anticlockwise past 10 to bring it up; keep turning for
+Turn an ND range knob anticlockwise past 10 to bring it up on that side's ND
+(each side zooms on its own); keep turning for
 5, 2, 1, 0.5 and 0.2 NM, and clockwise to go back to the ND. It shows in ARC,
 NAV and PLAN. Click the map for the context menu (flags, crosses, map data),
 drag to pan. The same actions are bindable as H:AMDB_OANS_TOGGLE,
-H:AMDB_OANS_RANGE_DEC and H:AMDB_OANS_RANGE_INC.
+H:AMDB_OANS_RANGE_DEC and H:AMDB_OANS_RANGE_INC, and for the first officer's
+side H:AMDB_OANS_FO_TOGGLE, H:AMDB_OANS_FO_RANGE_DEC and H:AMDB_OANS_FO_RANGE_INC.
+
+The airport shown follows the aircraft: on the ground, or below 5,000 ft above
+it, the nearest airport within 20 NM (the departure, then the destination on
+approach). Pick another on the MAP DATA page.
 
 Airport maps come from a bridge running on this computer while you fly: the
 "A320 OANS" program in the notification area (the standalone download starts

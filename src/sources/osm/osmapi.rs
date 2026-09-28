@@ -161,15 +161,18 @@ fn note_throttled() {
 struct Slot;
 
 impl Slot {
-    fn acquire() -> Slot {
+    fn acquire(deadline: Option<std::time::Instant>) -> Result<Slot> {
         let (m, cv) = &GATE;
         let mut n = m.lock().unwrap();
         while *n >= current_limit() {
+            if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                return Err(anyhow!("OSM API busy past the deadline"));
+            }
             // Re-check every second so a throttle window that expired lets more through.
             n = cv.wait_timeout(n, std::time::Duration::from_secs(1)).unwrap().0;
         }
         *n += 1;
-        Slot
+        Ok(Slot)
     }
 }
 
@@ -188,12 +191,13 @@ fn retry_after_secs(msg: &str) -> Option<u64> {
 }
 
 /// Fetch one tile; `Ok(None)` means "too many nodes, split further". A bandwidth
-/// throttle (HTTP 509 / 429) is obeyed: wait the time the server names, then retry.
-fn fetch_tile(http: &Http, b: BBox) -> Result<Option<String>> {
+/// throttle (HTTP 509 / 429) is obeyed: wait the time the server names, then retry --
+/// unless that would run past `deadline`, when the tile fails at once.
+fn fetch_tile(http: &Http, b: BBox, deadline: Option<std::time::Instant>) -> Result<Option<String>> {
     let mut waited = 0u64;
     for attempt in 0..10 {
         let result = {
-            let _slot = Slot::acquire();
+            let _slot = Slot::acquire(deadline)?;
             http.get_text_once(&url(b))
         };
         match result {
@@ -207,6 +211,9 @@ fn fetch_tile(http: &Http, b: BBox) -> Result<Option<String>> {
                 if throttled && attempt < 9 && waited < 600 {
                     note_throttled();
                     let secs = retry_after_secs(&msg).unwrap_or(15).clamp(2, 120) + WAIT_BUFFER_SECS;
+                    if deadline.is_some_and(|d| std::time::Instant::now() + std::time::Duration::from_secs(secs) > d) {
+                        return Err(anyhow!("OSM API throttled us, for {secs}s: past the deadline"));
+                    }
                     log::info!("OSM API throttled us; waiting {secs}s (asked + {WAIT_BUFFER_SECS}s buffer)");
                     std::thread::sleep(std::time::Duration::from_secs(secs));
                     waited += secs;
@@ -221,10 +228,10 @@ fn fetch_tile(http: &Http, b: BBox) -> Result<Option<String>> {
 
 /// Fetch everything in `bbox`, tiling as needed, into one merged store.
 pub fn fetch_bbox(http: &Http, bbox: BBox) -> Result<Store> {
-    fetch_bbox_scoped(http, bbox, None)
+    fetch_bbox_scoped(http, bbox, None, None)
 }
 
-pub fn fetch_bbox_scoped(http: &Http, bbox: BBox, scope: Option<&str>) -> Result<Store> {
+pub fn fetch_bbox_scoped(http: &Http, bbox: BBox, scope: Option<&str>, deadline: Option<std::time::Instant>) -> Result<Store> {
     crate::term::step(scope, &format!("GET {ENDPOINT} bbox {:.4},{:.4} to {:.4},{:.4}", bbox.1, bbox.0, bbox.3, bbox.2));
     let store = Arc::new(Mutex::new(Store::default()));
     let mut queue: Vec<(BBox, u32)> = vec![(bbox, 0)];
@@ -232,7 +239,7 @@ pub fn fetch_bbox_scoped(http: &Http, bbox: BBox, scope: Option<&str>) -> Result
     while !queue.is_empty() {
         let batch: Vec<(BBox, u32)> = queue.drain(..queue.len().min(MAX_CONCURRENT)).collect();
         let results: Vec<(BBox, u32, Result<Option<String>>)> = std::thread::scope(|sc| {
-            let hs: Vec<_> = batch.iter().map(|(b, d)| { let (b, d) = (*b, *d); sc.spawn(move || (b, d, fetch_tile(http, b))) }).collect();
+            let hs: Vec<_> = batch.iter().map(|(b, d)| { let (b, d) = (*b, *d); sc.spawn(move || (b, d, fetch_tile(http, b, deadline))) }).collect();
             hs.into_iter().map(|h| h.join().unwrap()).collect()
         });
         for (b, d, res) in results {
@@ -258,11 +265,12 @@ pub fn fetch_bbox_scoped(http: &Http, bbox: BBox, scope: Option<&str>) -> Result
     Ok(Arc::try_unwrap(store).map(|m| m.into_inner().unwrap()).unwrap_or_default())
 }
 
-/// Fetch (cached when a cache dir is configured) the store for an airport box.
-pub fn fetch(http: &Http, cache: &Cache, icao: &str, bbox: BBox) -> Result<Store> {
+/// Fetch (cached when a cache dir is configured) the store for an airport box, giving up
+/// at `deadline` when there is one.
+pub fn fetch(http: &Http, cache: &Cache, icao: &str, bbox: BBox, deadline: Option<std::time::Instant>) -> Result<Store> {
     let key = format!("osm/osmapi/{}.json", icao.to_uppercase());
     let text = cache.get_or_fetch_text(&key, || {
-        let st = fetch_bbox_scoped(http, bbox, Some(icao))?;
+        let st = fetch_bbox_scoped(http, bbox, Some(icao), deadline)?;
         if st.nodes.is_empty() {
             return Err(anyhow!("OSM API returned no nodes"));
         }

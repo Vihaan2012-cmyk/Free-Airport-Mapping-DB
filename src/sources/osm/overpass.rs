@@ -135,15 +135,20 @@ pub fn parse_json(text: &str) -> Result<Store> {
     Ok(st)
 }
 
-/// Fetch (cached) Overpass data for an airport bbox, trying each mirror in turn.
-pub fn fetch(http: &Http, cache: &Cache, mirrors: &[String], icao: &str, bbox: (f64, f64, f64, f64)) -> Result<Store> {
+/// Fetch (cached) Overpass data for an airport bbox, trying each mirror in turn, and
+/// giving up at `deadline` when there is one.
+pub fn fetch(http: &Http, cache: &Cache, mirrors: &[String], icao: &str, bbox: (f64, f64, f64, f64), deadline: Option<std::time::Instant>) -> Result<Store> {
     let key = format!("osm/overpass/{}.json", icao.to_uppercase());
     let q = query(bbox);
     let text = cache.get_or_fetch_text(&key, || {
         let mut last = None;
+        let late = |wait: u64| deadline.is_some_and(|d| std::time::Instant::now() + std::time::Duration::from_secs(wait) >= d);
         // A throttled (429) or busy mirror is skipped at once; the next mirror gets the query.
         for round in 0..3 {
             for m in mirrors {
+                if late(0) {
+                    return Err(last.unwrap_or_else(|| anyhow!("Overpass: past the deadline")));
+                }
                 match http.post_form_text_once(m, &[("data", q.as_str())]) {
                     Ok(t) => match parse_json(&t) {
                         Ok(_) => return Ok(t),
@@ -157,6 +162,9 @@ pub fn fetch(http: &Http, cache: &Cache, mirrors: &[String], icao: &str, bbox: (
                         last = Some(e);
                     }
                 }
+            }
+            if late(5 * (round + 1)) {
+                break;
             }
             std::thread::sleep(std::time::Duration::from_secs(5 * (round + 1)));
         }

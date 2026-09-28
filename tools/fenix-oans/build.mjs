@@ -203,6 +203,23 @@ const bridgeAmdb = {
 const FBW_PATCHES = {
   // Building names run along the building's long axis instead of flat across the map.
   'OANC/Oanc.tsx': [
+    // An airport whose data did not come (the bridge still building it, a timeout) left
+    // the map marked as loading for good: frozen on the airport it last drew, typically
+    // the departure at the destination. The load now fails cleanly and is tried again.
+    [
+      "    const data = await this.amdbClient.getAirportData(icao, includeLayers, undefined);\n    const wgs84ArpDat = await this.amdbClient.getAirportData(\n      icao,\n      [FeatureTypeString.AerodromeReferencePoint],\n      undefined,\n      AmdbProjection.Epsg4326,\n    );\n",
+      "    let data: any;\n    let wgs84ArpDat: any;\n    try {\n      data = await this.amdbClient.getAirportData(icao, includeLayers, undefined);\n      wgs84ArpDat = await this.amdbClient.getAirportData(\n        icao,\n        [FeatureTypeString.AerodromeReferencePoint],\n        undefined,\n        AmdbProjection.Epsg4326,\n      );\n    } catch (e) {\n      console.error(`[OANC](loadAirportMap) ${icao}: ${e}`);\n      this.amdbLoadFailed(icao, performanceModeUnload);\n      return;\n    }\n",
+    ],
+    // The same, for data without a reference point.
+    [
+      "      console.error('[OANC](loadAirportMap) Invalid airport data - aerodrome reference point not found');\n      return;\n",
+      "      console.error('[OANC](loadAirportMap) Invalid airport data - aerodrome reference point not found');\n      this.amdbLoadFailed(icao, performanceModeUnload);\n      return;\n",
+    ],
+    // The retry itself.
+    [
+      "  public async loadAirportMap(icao: string, performanceModeUnload: boolean = false) {\n",
+      "  /** Tries at loading each airport that failed, so a failure is retried a few times, not for ever. */\n  private amdbLoadFailures = new Map<string, number>();\n\n  /**\n   * A load that failed: the map is left loadable again (it was left marked as loading, and\n   * so frozen on whatever it last drew), and the same airport is asked for again shortly --\n   * AMDB Bridge may still be building it -- unless another has been loaded meanwhile.\n   */\n  private amdbLoadFailed(icao: string, performanceModeUnload: boolean) {\n    this.dataLoading = false;\n    this.airportLoading.set(false);\n    const tries = (this.amdbLoadFailures.get(icao) ?? 0) + 1;\n    this.amdbLoadFailures.set(icao, tries);\n    if (tries <= 6) {\n      setTimeout(() => {\n        if (!this.data && !this.dataLoading) {\n          this.loadAirportMap(icao, performanceModeUnload);\n        }\n      }, 10_000);\n    }\n  }\n\n  public async loadAirportMap(icao: string, performanceModeUnload: boolean = false) {\n",
+    ],
     // A polygon is drawn as one path, its holes the other way round from its outline, so
     // the nonzero fill leaves them empty. Drawn one path per ring, every hole was filled:
     // at 1 NM and beyond, where the runways are drawn merged, the grass they enclose came
@@ -245,6 +262,15 @@ function fenixBuildingAxisBearing(feature: Feature<Geometry>): number | undefine
   // BTV is armed from the MAP DATA page, in the place of LDG SHIFT, which FlyByWire keeps
   // disabled; the state comes from FenixBtv on the bus and lives in L:AMDB_BTV_ARM.
   'ND/OansControlPanel.tsx': [
+    // Which airport to show: FlyByWire reads the A380X's flight phase, which the Fenix
+    // never sets, so the OANS took every airport the route passed within 20 NM of as its
+    // own, loading one after another in cruise (each built by the bridge as it went). On
+    // the ground or below 5,000 ft above it the nearest airport within 20 NM is shown:
+    // the departure until it is left behind, the destination on approach.
+    [
+      "    if (![6, 7, 8, 9].includes(SimVar.GetSimVarValue('L:A32NX_FWC_FLIGHT_PHASE', SimVarValueType.Number))) {\n",
+      "    if (\n      SimVar.GetSimVarValue('SIM ON GROUND', SimVarValueType.Bool) ||\n      SimVar.GetSimVarValue('PLANE ALT ABOVE GROUND', SimVarValueType.Feet) < 5000\n    ) {\n",
+    ],
     [
       '                      <Button\n' +
         '                        label="LDG SHIFT"\n' +

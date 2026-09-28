@@ -257,8 +257,9 @@ amdb-bridge a320-oans status
 amdb-bridge a320-oans off      # remove it and put the Fenix's files back
 ```
 
-Turn the captain's ND range knob anticlockwise past 10 for the OANS, and on through 5,
-2, 1, 0.5 and 0.2 NM; clockwise goes back to the ND. It follows the ND mode (ARC, NAV,
+Turn either ND range knob anticlockwise past 10 for the OANS on that side's ND (the
+captain's and the first officer's each zoom on their own), and on through 5, 2, 1, 0.5
+and 0.2 NM; clockwise goes back to the ND. It follows the ND mode (ARC, NAV,
 PLAN). Click the map for the context menu, drag to pan. `H:AMDB_OANS_TOGGLE`,
 `H:AMDB_OANS_RANGE_DEC` and `H:AMDB_OANS_RANGE_INC` are there to bind to hardware.
 

@@ -68,7 +68,11 @@ export class OansDisplay {
 
   public readonly arcView = Subject.create(false);
 
-  constructor(private readonly bus: ArincEventBus) {}
+  /** `side` is the ND's, as FlyByWire's components name them: 'L' the captain's, 'R' the first officer's. */
+  constructor(
+    private readonly bus: ArincEventBus,
+    private readonly side: 'L' | 'R' = 'L',
+  ) {}
 
   /** The airport the OANS is showing, or null. */
   public airport(): string | null {
@@ -86,7 +90,7 @@ export class OansDisplay {
         <div class="oanc-container">
           <Oanc
             bus={this.bus}
-            side="L"
+            side={this.side}
             ref={this.oansRef}
             contextMenuVisible={this.contextMenuVisible}
             contextMenuX={this.contextMenuX}
@@ -134,7 +138,7 @@ export class OansDisplay {
         />
         <OansControlPanel
           bus={this.bus}
-          side="L"
+          side={this.side}
           isVisible={this.controlPanelVisible}
           togglePanel={() => this.controlPanelVisible.set(!this.controlPanelVisible.get())}
         />
@@ -218,7 +222,10 @@ export class OansDisplay {
 
   private wireFrame(): void {
     const sub = this.bus.getSubscriber<OansControlEvents & { groundSpeed: number; trueAirSpeed: number; ndMode: EfisNdMode; oansRange: number }>();
-    sub.on('nd_show_oans').handle(({ show }) => {
+    sub.on('nd_show_oans').handle(({ side, show }) => {
+      if (side !== this.side) {
+        return;
+      }
       this.shown.set(show);
       if (show) {
         this.placeForMode();
@@ -237,7 +244,7 @@ export class OansDisplay {
     });
     sub.on('oansRange').handle((index) => this.halfRange.set(String((a380EfisZoomRangeSettings[index] ?? 0) / 2)));
     sub.on('oans_answer_symbols_at_cursor').handle((symbols) => {
-      if (symbols.side === 'L') {
+      if (symbols.side === this.side) {
         this.eraseCrossIndex = symbols.cross;
         this.eraseFlagIndex = symbols.flag;
         this.contextMenuItems.set(this.contextMenu(symbols.cross !== null, symbols.flag !== null));
@@ -304,7 +311,7 @@ export class OansDisplay {
 
   public openContextMenu(x: number, y: number): void {
     reportOnce(`menu-opened-at-${Math.round(x)},${Math.round(y)}`);
-    this.bus.getPublisher<OansControlEvents>().pub('oans_query_symbols_at_cursor', { side: 'L', cursorPosition: [x, y] });
+    this.bus.getPublisher<OansControlEvents>().pub('oans_query_symbols_at_cursor', { side: this.side, cursorPosition: [x, y] });
     this.contextMenuAt = { x, y };
     this.contextMenuRef.instance.display(x, y);
     // Keep the whole menu on the display, whatever coordinates the press came with.

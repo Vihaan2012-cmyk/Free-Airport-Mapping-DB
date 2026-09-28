@@ -76417,6 +76417,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.pleaseWaitFlagVisible
       );
       this.oansPerformanceModeHide = Subject.create(false);
+      /**
+       *
+       * @param icao four letter ICAO code of airport to load
+       * @returns
+       */
+      /** Tries at loading each airport that failed, so a failure is retried a few times, not for ever. */
+      this.amdbLoadFailures = /* @__PURE__ */ new Map();
       this.lastLayerDrawnIndex = 0;
       this.lastFeatureDrawnIndex = 0;
       this.lastTime = 0;
@@ -76601,10 +76608,24 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.btvUtils.transmitRwyAheadAdvisory(false, "", true);
     }
     /**
-     *
-     * @param icao four letter ICAO code of airport to load
-     * @returns
+     * A load that failed: the map is left loadable again (it was left marked as loading, and
+     * so frozen on whatever it last drew), and the same airport is asked for again shortly --
+     * AMDB Bridge may still be building it -- unless another has been loaded meanwhile.
      */
+    amdbLoadFailed(icao, performanceModeUnload) {
+      var _a7;
+      this.dataLoading = false;
+      this.airportLoading.set(false);
+      const tries = ((_a7 = this.amdbLoadFailures.get(icao)) != null ? _a7 : 0) + 1;
+      this.amdbLoadFailures.set(icao, tries);
+      if (tries <= 6) {
+        setTimeout(() => {
+          if (!this.data && !this.dataLoading) {
+            this.loadAirportMap(icao, performanceModeUnload);
+          }
+        }, 1e4);
+      }
+    }
     async loadAirportMap(icao, performanceModeUnload = false) {
       var _a7, _b5, _c, _d, _e;
       this.dataLoading = true;
@@ -76636,13 +76657,21 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       includeLayers.push("parkingstandlocation" /* ParkingStandLocation */);
       includeLayers.push("paintedcenterline" /* PaintedCenterline */);
       includeLayers.push("runwaythreshold" /* RunwayThreshold */);
-      const data = await this.amdbClient.getAirportData(icao, includeLayers, void 0);
-      const wgs84ArpDat = await this.amdbClient.getAirportData(
-        icao,
-        ["aerodromereferencepoint" /* AerodromeReferencePoint */],
-        void 0,
-        "EPSG:4326" /* Epsg4326 */
-      );
+      let data;
+      let wgs84ArpDat;
+      try {
+        data = await this.amdbClient.getAirportData(icao, includeLayers, void 0);
+        wgs84ArpDat = await this.amdbClient.getAirportData(
+          icao,
+          ["aerodromereferencepoint" /* AerodromeReferencePoint */],
+          void 0,
+          "EPSG:4326" /* Epsg4326 */
+        );
+      } catch (e) {
+        console.error("[OANC](loadAirportMap) ".concat(icao, ": ").concat(e));
+        this.amdbLoadFailed(icao, performanceModeUnload);
+        return;
+      }
       const features = Object.values(data).reduce((acc, it) => {
         const features2 = it.features.map((f) => {
           if (f.properties.idthr || f.properties.idrwy) {
@@ -76663,6 +76692,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       const wgs84ReferencePoint = (_a7 = wgs84ArpDat.aerodromereferencepoint) == null ? void 0 : _a7.features[0];
       if (!wgs84ReferencePoint) {
         console.error("[OANC](loadAirportMap) Invalid airport data - aerodrome reference point not found");
+        this.amdbLoadFailed(icao, performanceModeUnload);
         return;
       }
       const refPointLat = wgs84ReferencePoint.geometry.coordinates[1];
@@ -79956,7 +79986,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       if (this.presentPosNotAvailable.get() || this.oansPerformanceModeAndMovedOutOfZoomRange.read() || this.manualAirportSelection === true && this.simTimeVar.get() - this.manualAirportSelectionTime < 600 || this.store.loadedAirport.get() !== this.store.selectedAirport.get() || this.store.airports.length === 0 || this.oansResetPulled.get()) {
         return;
       }
-      if (![6, 7, 8, 9].includes(SimVar.GetSimVarValue("L:A32NX_FWC_FLIGHT_PHASE", SimVarValueType.Number))) {
+      if (SimVar.GetSimVarValue("SIM ON GROUND", SimVarValueType.Bool) || SimVar.GetSimVarValue("PLANE ALT ABOVE GROUND", SimVarValueType.Feet) < 5e3) {
         const nearestAirports = this.store.airports.getArray().filter((ap) => distanceTo(this.presentPos.get(), { lat: ap.coordinates.lat, long: ap.coordinates.lon }) < 20);
         const sortedAirports = nearestAirports.sort(
           (a, b) => distanceTo(this.presentPos.get(), { lat: a.coordinates.lat, long: a.coordinates.lon }) - distanceTo(this.presentPos.get(), { lat: b.coordinates.lat, long: b.coordinates.lon })
@@ -80416,8 +80446,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
   }
   var OansDisplay = class {
-    constructor(bus) {
+    /** `side` is the ND's, as FlyByWire's components name them: 'L' the captain's, 'R' the first officer's. */
+    constructor(bus, side = "L") {
       this.bus = bus;
+      this.side = side;
       this.oansRef = FSComponent.createRef();
       this.rootRef = FSComponent.createRef();
       this.contextMenuRef = FSComponent.createRef();
@@ -80456,7 +80488,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           Oanc3,
           {
             bus: this.bus,
-            side: "L",
+            side: this.side,
             ref: this.oansRef,
             contextMenuVisible: this.contextMenuVisible,
             contextMenuX: this.contextMenuX,
@@ -80483,7 +80515,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           OansControlPanel,
           {
             bus: this.bus,
-            side: "L",
+            side: this.side,
             isVisible: this.controlPanelVisible,
             togglePanel: () => this.controlPanelVisible.set(!this.controlPanelVisible.get())
           }
@@ -80563,7 +80595,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     wireFrame() {
       const sub2 = this.bus.getSubscriber();
-      sub2.on("nd_show_oans").handle(({ show }) => {
+      sub2.on("nd_show_oans").handle(({ side, show }) => {
+        if (side !== this.side) {
+          return;
+        }
         this.shown.set(show);
         if (show) {
           this.placeForMode();
@@ -80585,7 +80620,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return this.halfRange.set(String(((_a7 = a380EfisZoomRangeSettings[index]) != null ? _a7 : 0) / 2));
       });
       sub2.on("oans_answer_symbols_at_cursor").handle((symbols) => {
-        if (symbols.side === "L") {
+        if (symbols.side === this.side) {
           this.eraseCrossIndex = symbols.cross;
           this.eraseFlagIndex = symbols.flag;
           this.contextMenuItems.set(this.contextMenu(symbols.cross !== null, symbols.flag !== null));
@@ -80648,7 +80683,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     openContextMenu(x, y) {
       var _a7;
       reportOnce("menu-opened-at-".concat(Math.round(x), ",").concat(Math.round(y)));
-      this.bus.getPublisher().pub("oans_query_symbols_at_cursor", { side: "L", cursorPosition: [x, y] });
+      this.bus.getPublisher().pub("oans_query_symbols_at_cursor", { side: this.side, cursorPosition: [x, y] });
       this.contextMenuAt = { x, y };
       this.contextMenuRef.instance.display(x, y);
       const menu = (_a7 = this.rootRef.getOrDefault()) == null ? void 0 : _a7.querySelector(".mfd-context-menu");
