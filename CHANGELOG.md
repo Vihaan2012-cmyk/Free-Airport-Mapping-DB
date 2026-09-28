@@ -33,6 +33,12 @@
   (166 buildings, 0.2 MB). Other aerodromes' and heliports' outlines in the area no longer
   join an airport's extent, and OpenStreetMap helipads off the aerodrome (the hospitals')
   are no longer its helipads. Airports with runways keep everything they had.
+- **OpenStreetMap is looked for over as much ground as the sort of airport needs.** With no
+  scenery to size it by, a heliport's area is 0.5 km around its point, a seaplane base's
+  1 km and a small field's 1.5 km (a runway crossing the box is still kept whole), not
+  3 km for all of them. Reading North America for 25,000 such airports kept 34 million
+  ways and 40 GB of memory; Switzerland's 89 airports read 3x fewer ways and build the
+  same, but for heliports no longer taking a neighbouring airfield's runway as their own.
 - The airport diagram of an airport with no runway is framed on what it draws, not on
   the area searched, which left it a speck in the middle of the page.
 - AMDB Build List takes `.osm.pbf` extracts dropped with the list.
