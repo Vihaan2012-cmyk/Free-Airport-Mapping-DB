@@ -514,6 +514,59 @@ pub fn take_osm_missing(icao: &str) -> bool {
     v.len() != before
 }
 
+/// Read OpenStreetMap for `icaos` from downloaded extracts (`.osm.pbf`) into the download
+/// cache, so building them asks nothing of the OSM servers: one read of each file for all
+/// the airports inside it, the files in turn (continents, say), each for the airports the
+/// ones before did not cover. Airports whose OSM is already saved are left as they are.
+/// Each airport's area is the box building it would download, which comes from its
+/// X-Plane scenery: that is fetched (and saved, for the build) here, once.
+pub fn fill_osm_from_extracts(cfg: &Config, icaos: &[String], pbfs: &[std::path::PathBuf]) -> Result<()> {
+    if cfg.cache.root().is_none() {
+        return Err(anyhow!("reading an OSM extract needs the download cache, where each airport's share is kept"));
+    }
+    let todo: Vec<&String> = icaos.iter().filter(|i| !osm::has_cached(&cfg.cache, i)).collect();
+    if todo.is_empty() {
+        term::info("Every selected airport already has its OpenStreetMap data saved");
+        return Ok(());
+    }
+    let idx = load_index(cfg)?;
+    term::start(&format!("Working out the OpenStreetMap area of {} airport{}", todo.len(), if todo.len() == 1 { "" } else { "s" }));
+    let targets: Vec<osm::extract::Target> = todo
+        .par_iter()
+        .filter_map(|icao| match prepare(cfg, &idx, icao) {
+            Ok(p) => Some(osm::extract::Target { icao: p.icao, bbox: p.bbox }),
+            Err(e) => {
+                log::warn!("{icao}: {e:#}");
+                None
+            }
+        })
+        .collect();
+    let mut targets = targets;
+    for pbf in pbfs {
+        if targets.is_empty() {
+            break;
+        }
+        term::start(&format!("Reading {} for {} airport{}", pbf.display(), fmt_n(targets.len()), if targets.len() == 1 { "" } else { "s" }));
+        let t0 = std::time::Instant::now();
+        let st = osm::extract::fill_cache(pbf, &targets, &cfg.cache, &|m| term::info(&format!("OSM extract: {m}")))?;
+        term::success(&format!(
+            "OpenStreetMap for {} airports read from {} in {} ({} nodes, {} ways, {} relations)",
+            fmt_n(st.airports),
+            pbf.file_name().unwrap_or_default().to_string_lossy(),
+            term::human_secs(t0.elapsed().as_secs_f64()),
+            fmt_n(st.nodes),
+            fmt_n(st.ways),
+            fmt_n(st.relations)
+        ));
+        // The next file is for the airports this one did not cover.
+        targets.retain(|t| !osm::has_cached(&cfg.cache, &t.icao));
+    }
+    if !targets.is_empty() {
+        term::warn(&format!("{} airport(s) are outside the extracts' areas: their OpenStreetMap is downloaded as usual when they are built", fmt_n(targets.len())));
+    }
+    Ok(())
+}
+
 /// Run the pipeline for a list of ICAOs.
 pub fn run(cfg: &Config, icaos: &[String]) -> Result<Summary> {
     run_with_osm_budget(cfg, icaos, None)
@@ -646,12 +699,13 @@ pub fn run_with_osm_budget(cfg: &Config, icaos: &[String], osm_budget: Option<st
                             used = from.to_string();
                         } else {
                             let pool = osm_pool(cfg, p.country.as_deref());
-                            // "both" and "overpass" alternate between their two fastest
-                            // sources (the map API and the first Overpass endpoint, or the
-                            // first two endpoints); the map API mode always starts with the
-                            // map API. Everything else is a fallback: congested mirrors are
-                            // a backstop, never anyone's first choice.
-                            let fast = pool.len().min(2);
+                            // "both" and "overpass" take turns between their three fastest
+                            // sources (the map API and the first two Overpass endpoints, or
+                            // the first three endpoints), so a bulk run spreads its load and
+                            // no one server throttles it; the map API mode always starts with
+                            // the map API. Everything else is a fallback: congested mirrors
+                            // are a backstop, never anyone's first choice.
+                            let fast = pool.len().min(3);
                             let primary = if fast == 0 || matches!(cfg.osm, OsmMode::OsmApi) { 0 } else { k % fast };
                             let order: Vec<usize> = std::iter::once(primary).chain((0..pool.len()).filter(|j| *j != primary)).collect();
                             let deadline = osm_budget.map(|b| t0 + b);

@@ -292,21 +292,22 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard:
 /// which has the file and not the command line. Progress goes to the log. Returns how
 /// many airports the file named.
 pub fn build_list(settings: &Settings, file: &Path) -> Result<usize> {
-    build_list_with(config(&DataArgs::default(), settings), file)
+    build_list_with(config(&DataArgs::default(), settings), file, &[])
 }
 
 /// The same for a program with no settings and nothing installed: the airports go into
 /// `airports` in `dir`, and the downloads and the airport index into `downloads` and
 /// `index` beside them, so everything it makes stays in the one folder. The status of the
-/// run is written to `dir` as `bulk-status.csv`.
-pub fn build_list_portable(file: &Path, dir: &Path) -> Result<usize> {
+/// run is written to `dir` as `bulk-status.csv`. With `osm_pbf`, downloaded OpenStreetMap
+/// extracts, OSM is read from them for the whole list first instead of being downloaded.
+pub fn build_list_portable(file: &Path, dir: &Path, osm_pbf: &[PathBuf]) -> Result<usize> {
     let data = DataArgs { out: Some(dir.join("airports")), cache: Some(dir.join("downloads")), ..DataArgs::default() };
     let mut cfg = config(&data, &Settings::default());
     cfg.index_cache = crate::cache::Cache::for_index_at(dir.join("index"));
-    build_list_with(cfg, file)
+    build_list_with(cfg, file, osm_pbf)
 }
 
-fn build_list_with(mut cfg: Config, file: &Path) -> Result<usize> {
+fn build_list_with(mut cfg: Config, file: &Path, osm_pbf: &[PathBuf]) -> Result<usize> {
     // As a bulk build: the map API and Overpass taking turns, four airports at a time.
     cfg.osm = OsmMode::Both;
     cfg.osm_parallel = 4;
@@ -315,6 +316,10 @@ fn build_list_with(mut cfg: Config, file: &Path) -> Result<usize> {
         return Err(anyhow!("{} names no airports (it needs an `icao` column, or one code a line)", file.display()));
     }
     let label = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| file.display().to_string());
+    if !osm_pbf.is_empty() {
+        let todo: Vec<String> = icaos.iter().filter(|i| !cfg.out.join(i.as_str()).join("manifest.json").is_file()).cloned().collect();
+        crate::pipeline::fill_osm_from_extracts(&cfg, &todo, osm_pbf)?;
+    }
     run_bulk(&cfg, &icaos, false, &label, None);
     Ok(icaos.len())
 }

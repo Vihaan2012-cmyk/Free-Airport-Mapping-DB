@@ -616,12 +616,19 @@ pub struct BuildArgs {
     /// Do not query the X-Plane Scenery Gateway.
     #[arg(long = "no-gateway")]
     no_gateway: bool,
-    /// OSM source: osmapi (default: direct OpenStreetMap API, Overpass fallback), overpass, or off.
+    /// OSM source: osmapi (default: direct OpenStreetMap API, Overpass fallback), overpass, both, or off.
     #[arg(long, default_value = "osmapi")]
     osm: String,
     /// Overpass mirror(s), comma separated.
     #[arg(long)]
     overpass: Option<String>,
+    /// Read OpenStreetMap for the selected airports from this downloaded extract first
+    /// (.osm.pbf: a region from download.geofabrik.de, or the planet), once, instead of
+    /// asking the servers airport by airport. Repeat it for several files (continents):
+    /// each is read for the airports the ones before did not cover. For big batches: the
+    /// servers are not meant for bulk downloads.
+    #[arg(long = "osm-pbf", value_name = "FILE")]
+    osm_pbf: Vec<PathBuf>,
     /// FAA NASR enrichment: auto (US airports only), off, or a path to the CSV zip/dir.
     #[arg(long, default_value = "auto")]
     faa: String,
@@ -702,6 +709,7 @@ impl BuildArgs {
             no_gateway: true,
             osm: "off".into(),
             overpass: None,
+            osm_pbf: Vec::new(),
             faa: "off".into(),
             overrides: PathBuf::from("overrides"),
             radius_km: 5.0,
@@ -965,6 +973,10 @@ fn build_cmd(a: BuildArgs) -> Result<()> {
                 term::step(Some(i), &format!("Removed {}", shown_path(&d)));
             }
         }
+    }
+    // Extracts are read once for the whole selection, before the batches that build it.
+    if !a.osm_pbf.is_empty() {
+        pipeline::fill_osm_from_extracts(&cfg, &icaos, &a.osm_pbf)?;
     }
     let chunk = if a.fail_fast && a.chunk == 0 { 1 } else { a.chunk };
     let mut summary = Summary::default();
