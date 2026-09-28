@@ -929,6 +929,28 @@ fn post_build(a: &BuildArgs, built: &[String]) {
     });
 }
 
+/// Build `list` in batches of `chunk` (all at once for 0), each batch's charts and the like
+/// drawn as it finishes. False when `--fail-fast` has stopped it. `of` is how many the
+/// whole run is building, for the progress line.
+fn build_batches(a: &BuildArgs, cfg: &Config, list: &[String], chunk: usize, summary: &mut Summary, of: usize) -> Result<bool> {
+    let size = if chunk == 0 { list.len().max(1) } else { chunk };
+    for part in list.chunks(size) {
+        if part.len() < of {
+            let done = summary.built.len() + summary.failed.len();
+            term::info(&format!("Batch of {} ({} of {} done): {}", part.len(), pipeline::fmt_n(done), pipeline::fmt_n(of), part.join(" ")));
+        }
+        let s = pipeline::run(cfg, part)?;
+        post_build(a, &s.built);
+        summary.built.extend(s.built);
+        summary.failed.extend(s.failed);
+        if a.fail_fast && !summary.failed.is_empty() {
+            term::warn("Stopping at the first failure (--fail-fast)");
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn build_cmd(a: BuildArgs) -> Result<()> {
     if let Some(j) = a.jobs {
         rayon::ThreadPoolBuilder::new().num_threads(j).build_global().ok();
@@ -1007,30 +1029,40 @@ fn build_cmd(a: BuildArgs) -> Result<()> {
     } else {
         None
     };
-    // Extracts are read once for the whole selection, before the batches that build it.
-    if !a.osm_pbf.is_empty() {
-        pipeline::fill_osm_from_extracts(&cfg, &icaos, &a.osm_pbf, a.osm_pbf_only, a.osm_pbf_wait)?;
-    }
     let chunk = if a.fail_fast && a.chunk == 0 { 1 } else { a.chunk };
     let mut summary = Summary::default();
-    if chunk == 0 || chunk >= icaos.len() {
-        summary = pipeline::run(&cfg, &icaos)?;
-        post_build(&a, &summary.built);
+    let total = icaos.len();
+    if a.osm_pbf.is_empty() {
+        build_batches(&a, &cfg, &icaos, chunk, &mut summary, total)?;
+    } else if !a.osm_pbf_wait {
+        // Extracts are read once for the whole selection, before the batches that build it.
+        pipeline::fill_osm_from_extracts(&cfg, &icaos, &a.osm_pbf, a.osm_pbf_only, false)?;
+        build_batches(&a, &cfg, &icaos, chunk, &mut summary, total)?;
     } else {
-        let total = icaos.len().div_ceil(chunk);
-        for (n, part) in icaos.chunks(chunk).enumerate() {
-            if total > 1 {
-                term::info(&format!("Batch {}/{}: {}", n + 1, total, part.join(" ")));
+        // Extracts still downloading: they are read on a thread of their own as each one
+        // arrives, and the airports whose OpenStreetMap is in are built meanwhile, a whole
+        // batch at a time, rather than all waiting for the last and largest file.
+        std::thread::scope(|s| -> Result<()> {
+            let filler = s.spawn(|| pipeline::fill_osm_from_extracts(&cfg, &icaos, &a.osm_pbf, a.osm_pbf_only, true));
+            let mut done: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut go = true;
+            while go && !filler.is_finished() {
+                let ready: Vec<String> = icaos.iter().filter(|i| !done.contains(*i) && crate::sources::osm::has_cached(&cfg.cache, i)).cloned().collect();
+                let n = if chunk == 0 { ready.len() } else { ready.len() / chunk * chunk };
+                if n == 0 {
+                    std::thread::sleep(std::time::Duration::from_secs(15));
+                    continue;
+                }
+                done.extend(ready[..n].iter().cloned());
+                go = build_batches(&a, &cfg, &ready[..n], chunk, &mut summary, total)?;
             }
-            let s = pipeline::run(&cfg, part)?;
-            post_build(&a, &s.built);
-            summary.built.extend(s.built);
-            summary.failed.extend(s.failed);
-            if a.fail_fast && !summary.failed.is_empty() {
-                term::warn("Stopping at the first failure (--fail-fast)");
-                break;
+            filler.join().map_err(|_| anyhow!("reading the OpenStreetMap extracts stopped unexpectedly"))??;
+            if go {
+                let rest: Vec<String> = icaos.iter().filter(|i| !done.contains(*i)).cloned().collect();
+                build_batches(&a, &cfg, &rest, chunk, &mut summary, total)?;
             }
-        }
+            Ok(())
+        })?;
     }
     if let Some(rp) = &a.report {
         let report = serde_json::json!({
