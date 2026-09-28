@@ -629,6 +629,10 @@ pub struct BuildArgs {
     /// servers are not meant for bulk downloads.
     #[arg(long = "osm-pbf", value_name = "FILE")]
     osm_pbf: Vec<PathBuf>,
+    /// With --osm-pbf: build airports the files have nothing for without OpenStreetMap,
+    /// rather than downloading it (for files that cover the world).
+    #[arg(long = "osm-pbf-only")]
+    osm_pbf_only: bool,
     /// FAA NASR enrichment: auto (US airports only), off, or a path to the CSV zip/dir.
     #[arg(long, default_value = "auto")]
     faa: String,
@@ -710,6 +714,7 @@ impl BuildArgs {
             osm: "off".into(),
             overpass: None,
             osm_pbf: Vec::new(),
+            osm_pbf_only: false,
             faa: "off".into(),
             overrides: PathBuf::from("overrides"),
             radius_km: 5.0,
@@ -976,7 +981,7 @@ fn build_cmd(a: BuildArgs) -> Result<()> {
     }
     // Extracts are read once for the whole selection, before the batches that build it.
     if !a.osm_pbf.is_empty() {
-        pipeline::fill_osm_from_extracts(&cfg, &icaos, &a.osm_pbf)?;
+        pipeline::fill_osm_from_extracts(&cfg, &icaos, &a.osm_pbf, a.osm_pbf_only)?;
     }
     let chunk = if a.fail_fast && a.chunk == 0 { 1 } else { a.chunk };
     let mut summary = Summary::default();
