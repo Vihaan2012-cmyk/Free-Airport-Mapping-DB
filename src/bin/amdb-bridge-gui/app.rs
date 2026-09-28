@@ -20,6 +20,9 @@ use std::time::{Duration, Instant};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const LOG_LINES: usize = 500;
 
+/// A list of airports is being built ("Build a list…"): one at a time.
+static LIST_BUILDING: AtomicBool = AtomicBool::new(false);
+
 /// Where the planning panel starts, and how wide the window is with and without it. The panel
 /// is built at this offset always and simply falls outside a narrow window, so showing it is a
 /// resize and not a rebuild.
@@ -555,6 +558,7 @@ struct Ui {
     limit_unit: nwg::Label,
 
     activity_header: nwg::Label,
+    build_list: nwg::Button,
     collect: nwg::Button,
     open_folder: nwg::Button,
     open_log: nwg::Button,
@@ -571,6 +575,7 @@ struct Ui {
     timer: nwg::AnimationTimer,
     notice: nwg::Notice,
     folder_dialog: nwg::FileDialog,
+    list_dialog: nwg::FileDialog,
 }
 
 pub struct App {
@@ -717,7 +722,8 @@ impl App {
         nwg::Label::builder().parent(w).text("MB").position((594, 725)).size((26, 22)).build(&mut ui.limit_unit)?;
 
         // Activity
-        nwg::Label::builder().parent(w).text("Activity").font(Some(&ui.font_header)).position((20, 762)).size((200, 22)).build(&mut ui.activity_header)?;
+        nwg::Label::builder().parent(w).text("Activity").font(Some(&ui.font_header)).position((20, 762)).size((100, 22)).build(&mut ui.activity_header)?;
+        nwg::Button::builder().parent(w).text("Build a list…").font(Some(&ui.font_small)).position((128, 759)).size((124, 26)).build(&mut ui.build_list)?;
         nwg::Button::builder().parent(w).text("Aircraft report").font(Some(&ui.font_small)).position((258, 759)).size((124, 26)).build(&mut ui.collect)?;
         nwg::Button::builder().parent(w).text("Airports folder").font(Some(&ui.font_small)).position((388, 759)).size((124, 26)).build(&mut ui.open_folder)?;
         nwg::Button::builder().parent(w).text("Save log").font(Some(&ui.font_small)).position((518, 759)).size((102, 26)).build(&mut ui.open_log)?;
@@ -743,6 +749,11 @@ impl App {
         nwg::Notice::builder().parent(w).build(&mut ui.notice)?;
         nwg::FileDialog::builder().title("Where should built airports be kept?").action(nwg::FileDialogAction::OpenDirectory).build(&mut ui.folder_dialog)?;
         nwg::FileDialog::builder().title("A simulator's Community folder").action(nwg::FileDialogAction::OpenDirectory).build(&mut ui.community_dialog)?;
+        nwg::FileDialog::builder()
+            .title("A list of airports to build")
+            .action(nwg::FileDialogAction::Open)
+            .filters("Airport lists (*.csv;*.txt)|All files (*.*)")
+            .build(&mut ui.list_dialog)?;
 
         // The Community folders window, opened from the simulators' header.
         nwg::Window::builder()
@@ -888,6 +899,8 @@ impl App {
                     let dir = self.state.borrow().settings.airports_dir();
                     let _ = std::fs::create_dir_all(&dir);
                     desktop::reveal(&dir);
+                } else if handle == ui.build_list.handle {
+                    self.build_from_list();
                 } else if handle == ui.collect.handle {
                     self.collect_report();
                 } else if handle == ui.open_log.handle {
@@ -1472,6 +1485,33 @@ impl App {
             *shared.report.lock().unwrap() = Some(result);
             shared.wake();
         });
+    }
+
+    /// Build every airport in a list file the user picks (a CSV with an `icao` column, as
+    /// `amdbgen list --csv` writes, or codes one a line), in the background, skipping those
+    /// already built. One list at a time; progress and the time left go to the log.
+    fn build_from_list(&self) {
+        if LIST_BUILDING.load(Ordering::Relaxed) {
+            nwg::modal_info_message(&self.ui.window, "Build a list", "A list is already being built: its progress is in the log below.");
+            return;
+        }
+        let _ = self.ui.list_dialog.set_default_folder(&desktop::downloads_dir().display().to_string());
+        if !self.ui.list_dialog.run(Some(&self.ui.window)) {
+            return;
+        }
+        let Ok(chosen) = self.ui.list_dialog.get_selected_item() else { return };
+        let file = PathBuf::from(chosen);
+        let settings = self.state.borrow().settings.clone();
+        LIST_BUILDING.store(true, Ordering::Relaxed);
+        amdbgen::term::info(&format!("Building the airports in {} (already built ones are skipped); you can keep flying meanwhile", file.display()));
+        std::thread::spawn(move || {
+            match amdbgen::bridge::cli::build_list(&settings, &file) {
+                Ok(n) => amdbgen::term::success(&format!("Done with the {n} airports in {}", file.file_name().unwrap_or_default().to_string_lossy())),
+                Err(e) => amdbgen::term::error(&format!("Could not build that list: {e:#}")),
+            }
+            LIST_BUILDING.store(false, Ordering::Relaxed);
+        });
+        self.drain_lines_only();
     }
 
     /// Put a copy of the log in Downloads, where it is easy to attach to a message.

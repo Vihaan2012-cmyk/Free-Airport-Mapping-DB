@@ -138,7 +138,8 @@ the file is a priority list). Ready-made lists are in `lists/`:
 India first, then the USA, then the rest by continent) and `three-plus-runways.csv`
 (365). `tools/make_build_list.py` without `--all` makes the shorter 2,572-airport list
 (large, International-named or 2+ runway airports plus one per country and state).
-`serve --from-file lists\airports-to-build.csv` serves and builds the list at once.
+`serve --from-file lists\airports-to-build.csv` serves and builds the list at once, and
+in the AMDB Bridge app **Build a list…** (in Activity) builds a list file you pick.
 `tools/make_build_list.py` regenerates it from `all-large-medium.csv`.
 
 ### Batch control
