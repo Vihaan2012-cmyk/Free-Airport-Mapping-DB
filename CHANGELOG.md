@@ -26,6 +26,15 @@
   their answers are waiting.
 - `--chart` draws each batch's airport diagrams as it finishes, several at once, and
   draws one for an airport `--skip-existing` passes over that does not have one yet.
+- **Heliports and fields with nothing but a reference point no longer come out as the
+  whole town.** With no runway, pavement or outline to go by, an airport reached the
+  full 2.5 km of OpenStreetMap asked for, so a rooftop heliport in San Juan had 23,000
+  buildings and 19 MB of layers; now it is its own pads, or 400 m around the point
+  (166 buildings, 0.2 MB). Other aerodromes' and heliports' outlines in the area no longer
+  join an airport's extent, and OpenStreetMap helipads off the aerodrome (the hospitals')
+  are no longer its helipads. Airports with runways keep everything they had.
+- The airport diagram of an airport with no runway is framed on what it draws, not on
+  the area searched, which left it a speck in the middle of the page.
 - AMDB Build List takes `.osm.pbf` extracts dropped with the list.
 - `--osm both` spreads a batch across the map API and the two fastest Overpass mirrors,
   not two sources.
