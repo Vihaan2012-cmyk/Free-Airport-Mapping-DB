@@ -32,6 +32,10 @@ path = "src/bin/amdb-navdata-gui.rs"
 name = "a320-oans"
 path = "src/bin/a320-oans.rs"
 
+[[bin]]
+name = "amdb-build-list"
+path = "src/bin/amdb-build-list.rs"
+
 [dependencies]
 tiny_http = { version = "0.12", features = ["ssl-rustls"] }
 rcgen = "0.14"

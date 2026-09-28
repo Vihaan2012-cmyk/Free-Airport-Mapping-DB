@@ -28,7 +28,13 @@ impl Cache {
     /// Always-on cache for the small worldwide index files (airport lists), refreshed daily.
     pub fn for_index(offline: bool) -> Self {
         let base = std::env::var("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."));
-        Self { root: Some(base.join("amdbgen").join("index")), offline, refresh: false, max_age: Some(std::time::Duration::from_secs(24 * 3600)) }
+        Self { offline, ..Self::for_index_at(base.join("amdbgen").join("index")) }
+    }
+
+    /// The same index cache in a folder of the caller's choosing (a portable program keeps
+    /// it beside itself).
+    pub fn for_index_at(root: PathBuf) -> Self {
+        Self { root: Some(root), offline: false, refresh: false, max_age: Some(std::time::Duration::from_secs(24 * 3600)) }
     }
 
     fn fresh(&self, p: &Path) -> bool {

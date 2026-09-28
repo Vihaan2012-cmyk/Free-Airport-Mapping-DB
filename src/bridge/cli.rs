@@ -292,7 +292,21 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard:
 /// which has the file and not the command line. Progress goes to the log. Returns how
 /// many airports the file named.
 pub fn build_list(settings: &Settings, file: &Path) -> Result<usize> {
-    let mut cfg = config(&DataArgs::default(), settings);
+    build_list_with(config(&DataArgs::default(), settings), file)
+}
+
+/// The same for a program with no settings and nothing installed: the airports go into
+/// `airports` in `dir`, and the downloads and the airport index into `downloads` and
+/// `index` beside them, so everything it makes stays in the one folder. The status of the
+/// run is written to `dir` as `bulk-status.csv`.
+pub fn build_list_portable(file: &Path, dir: &Path) -> Result<usize> {
+    let data = DataArgs { out: Some(dir.join("airports")), cache: Some(dir.join("downloads")), ..DataArgs::default() };
+    let mut cfg = config(&data, &Settings::default());
+    cfg.index_cache = crate::cache::Cache::for_index_at(dir.join("index"));
+    build_list_with(cfg, file)
+}
+
+fn build_list_with(mut cfg: Config, file: &Path) -> Result<usize> {
     // As a bulk build: the map API and Overpass taking turns, four airports at a time.
     cfg.osm = OsmMode::Both;
     cfg.osm_parallel = 4;

@@ -22,6 +22,11 @@
   time it is loaded, at most once an hour.
 - The default OpenStreetMap source now falls back to the Overpass servers, as its help
   always said it did; before, one throttled server meant no OSM data at all.
+- **AMDB Build List**, a program with nothing to install
+  (`AMDB-Build-List-<version>.zip`): drag a list of airports onto it and a window opens
+  and builds them, into an `airports` folder beside it (its downloads and airport index
+  beside that), skipping those already built, with `bulk-status.csv` saying how each
+  went.
 - **Build a list…** in AMDB Bridge's Activity section: pick a list of airports (a CSV
   with an `icao` column, as `amdbgen list --csv` writes, or codes one a line) and the
   app builds them in the background, skipping those already built, with progress and
