@@ -14,7 +14,7 @@ fn main() {
     // program built without it is scaled by Windows and comes out blurry.
     let resources: [(&str, &[&str]); 2] = [
         ("amdb-bridge-gui.rc", &["amdb-bridge-gui", "amdb-navdata-gui", "a320-oans"]),
-        ("amdb-bridge-cli.rc", &["amdb-bridge", "amdbgen", "amdb-navdata"]),
+        ("amdb-bridge-cli.rc", &["amdb-bridge", "amdbgen", "amdb-navdata", "amdb-build-list"]),
     ];
     if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnu") {
         for (rc, bins) in resources {
@@ -22,7 +22,7 @@ fn main() {
         }
     } else {
         embed_resource::compile_for("assets/amdb-bridge-gui.rc", ["amdb-bridge-gui", "amdb-navdata-gui", "a320-oans"], embed_resource::NONE).manifest_required().unwrap();
-        embed_resource::compile_for("assets/amdb-bridge-cli.rc", ["amdb-bridge", "amdbgen", "amdb-navdata"], embed_resource::NONE).manifest_optional().unwrap();
+        embed_resource::compile_for("assets/amdb-bridge-cli.rc", ["amdb-bridge", "amdbgen", "amdb-navdata", "amdb-build-list"], embed_resource::NONE).manifest_optional().unwrap();
     }
 }
 

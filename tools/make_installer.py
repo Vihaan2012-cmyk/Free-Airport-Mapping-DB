@@ -3,6 +3,8 @@
   dist/AMDB-Bridge-Setup-<version>.exe   everything, as an installer
   dist/AMDB-Navdata-Setup-<version>.exe  the converter on its own, as an installer
   dist/AMDB-Navdata-<version>.zip        the same, as a zip to unpack anywhere
+  dist/AMDB-Build-List-<version>.zip     build a list of airports by dropping it on an exe,
+                                         nothing installed
   dist/A320-OANS-Setup-<oans version>.exe  the Fenix A320 OANS on its own, with its own
                                          bridge; versioned as packages/msfs-a320-oans
   dist/AMDB-Airport-Map-Setup-<version>.exe  the Airport Map toolbar window, without a
@@ -105,7 +107,7 @@ def main():
     if not os.path.isfile(os.path.join(ROOT, "packages", "msfs-a320-oans", "html_ui", "Pages", "VCockpit", "Instruments", "amdb-oans", "oans-nd.js")):
         print("The A320 OANS is not built. Build it with:  cd tools/fenix-oans && npm install && node build.mjs")
         return 1
-    run(["cargo", "build", "--release", "--locked", "--bin", "amdb-bridge-gui", "--bin", "amdb-bridge", "--bin", "amdbgen", "--bin", "amdb-navdata", "--bin", "amdb-navdata-gui", "--bin", "a320-oans"])
+    run(["cargo", "build", "--release", "--locked", "--bin", "amdb-bridge-gui", "--bin", "amdb-bridge", "--bin", "amdbgen", "--bin", "amdb-navdata", "--bin", "amdb-navdata-gui", "--bin", "a320-oans", "--bin", "amdb-build-list"])
     stage_webview2_loader()
     run([compiler, f"/DAppVersion={v}", "/Q", os.path.join("installer", "amdb-bridge.iss")])
     run([compiler, f"/DAppVersion={v}", "/Q", os.path.join("installer", "amdb-navdata.iss")])
@@ -120,6 +122,8 @@ def main():
     print(f"\nBuilt {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
     z = navdata_zip(v)
     print(f"Built {z} ({os.path.getsize(z) / 1e6:.1f} MB)")
+    b = build_list_zip(v)
+    print(f"Built {b} ({os.path.getsize(b) / 1e6:.1f} MB)")
     n = os.path.join(ROOT, "dist", f"AMDB-Navdata-Setup-{v}.exe")
     print(f"Built {n} ({os.path.getsize(n) / 1e6:.1f} MB)")
     a = os.path.join(ROOT, "dist", f"A320-OANS-Setup-{oans}.exe")
@@ -129,6 +133,21 @@ def main():
     return 0
 
 NAVDATA_README = "AMDB Navdata {v}\n\nThe navigation-data converter on its own.\n\n  AMDB Navdata.exe   a window: tick the aeroplane, press Convert\n  amdb-navdata.exe   the same converter on the command line\n\nIt reads the navigation data Microsoft Flight Simulator already has on this computer\nand writes it into the database an add-on aircraft reads, so the aeroplane flies on\ncurrent data instead of whatever AIRAC cycle it shipped with.\n\nNothing is downloaded and nothing licensed is redistributed: the data is the\nsimulator's own, and it stays on this machine. The aircraft's database is never\noverwritten without a backup being kept beside it first.\n\n  See what would be written, touching nothing:\n    amdb-navdata --to dfd --from-sim --cycle 2609 --dry-run\n\n  Write a Navigraph-layout database (iniBuilds A350, Synaptic A220, PMDG 737 and 777):\n    amdb-navdata --to dfd --from-sim --cycle 2609 --out navdata.db3\n\n  Replace the Fenix A320's own, keeping a backup beside it:\n    amdb-navdata --to fenix --from-sim --cycle 2609 --in-place\n\n  amdb-navdata --help  for the rest.\n\nThe window reads FS2024. FS2020 gives more procedures, and the command line will\nread it: add --sim fs2020.\n\nThis is the same converter as `amdbgen navdata`, which the full AMDB Bridge installer\nstill carries. Take this one if the converter is all you want.\n\nNOT FOR REAL-WORLD NAVIGATION.\n"
+
+
+BUILD_LIST_README = 'AMDB Build List\n\nDrag a list of airports onto "AMDB Build List.exe". A window opens and builds every\nairport in the list, showing each one as it goes and the time left. Nothing to install.\n\n  - A list is a CSV with an "icao" column (like the build-missing files), or one\n    airport code per line.\n  - The airports go into the "airports" folder next to the program. Its downloads\n    and airport index go into "downloads" and "index" next to it too.\n  - bulk-status.csv, next to the program, says how each airport went.\n  - Airports already built are skipped, so if it stops, drop the same list again\n    and it carries on.\n  - Opened without a list, it asks you to drag one into its window.\n\nTo use the airports with AMDB Bridge, build straight into its folder instead with\n"Build a list..." in the AMDB Bridge app, or copy the airports into its airports\nfolder (the folder its Airports folder button opens).\n\nNOT FOR REAL-WORLD NAVIGATION.\n'
+
+
+def build_list_zip(v):
+    """The list builder on its own: one exe to drop a list of airports on, and a page on it."""
+    exe = os.path.join(ROOT, "target", "release", "amdb-build-list.exe")
+    out = os.path.join(ROOT, "dist", f"AMDB-Build-List-{v}.zip")
+    if os.path.exists(out):
+        os.remove(out)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        z.write(exe, "AMDB Build List/AMDB Build List.exe")
+        z.writestr("AMDB Build List/README.txt", BUILD_LIST_README.replace(chr(10), chr(13) + chr(10)))
+    return out
 
 
 def navdata_zip(v):
