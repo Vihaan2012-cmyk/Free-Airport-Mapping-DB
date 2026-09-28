@@ -151,7 +151,39 @@ Also: `amdbgen stats [ICAO...]`, `amdbgen zip --all`, `amdbgen clean EDDF`,
 `amdbgen layers`, `amdbgen codes`, `amdbgen validate out/EDDF`.
 
 Output flags: `--profile full|map`, `--layers a,b,c`, `--format geojson,pbf`,
-`--projection wgs84|metres`, `--osm osmapi|overpass|off`, `--faa off`, `-v`.
+`--projection wgs84|metres`, `--osm osmapi|overpass|both|off`, `--faa off`, `-v`.
+
+### Building thousands of airports
+
+For a big batch, don't download OpenStreetMap airport by airport: the OSM map API's
+policy forbids bulk downloading, and the public Overpass servers ask for no more than
+about 10,000 queries a day. Download OSM extracts once from
+[download.geofabrik.de](https://download.geofabrik.de) instead (continents, about 80 GB
+together, or the planet) and give them to the build with `--osm-pbf`. Each file is read
+once, in three passes, for every selected airport inside it, and building then asks
+nothing of the OSM servers. Airports outside every file given are downloaded as usual.
+
+```
+amdbgen build --all --type large,medium,small --skip-existing --format geojson --out "D:\OANS Cache\airports" ^
+  --osm-pbf africa-latest.osm.pbf --osm-pbf asia-latest.osm.pbf --osm-pbf australia-oceania-latest.osm.pbf ^
+  --osm-pbf central-america-latest.osm.pbf --osm-pbf europe-latest.osm.pbf ^
+  --osm-pbf north-america-latest.osm.pbf --osm-pbf south-america-latest.osm.pbf --no-gateway
+```
+
+Measured on all 67 Swiss airports: 37 s in all (the 550 MB extract read in 14 s, the
+build 5 s), 15 s with `--no-gateway`, against a download of 3 to 10 s per airport from
+the servers; the same features as a download, but for an edit made since the extract.
+Continent files are better than countries: a country's file is cut at its border, and
+airports on it (Geneva, Basel) lose their far side. Memory grows with the airports in a
+file (about 1 GB for 67 in dense Switzerland); `--continent europe` and friends split a
+run if it runs short.
+
+`--no-gateway` reads X-Plane scenery from your X-Plane 12 installation instead of the
+Gateway, one request less per airport: about 2.5 times faster for a big batch, and the
+same scenery as the Gateway for most airports (56 of 67 in Switzerland), older for some.
+
+The drag-and-drop **AMDB Build List** takes extracts too: drop the `.osm.pbf` files on it
+together with the list.
 
 ## Aircraft bridge (`amdb-bridge`)
 

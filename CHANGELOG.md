@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+**Building every airport: OpenStreetMap from downloaded extracts.**
+
+- `amdbgen build --osm-pbf <file.osm.pbf>` (repeat it for several files) reads
+  OpenStreetMap for the selected airports from Geofabrik extracts or the planet, once per
+  file, instead of downloading it airport by airport, which the servers do not allow at
+  that scale. Three passes over each file (nodes in the airports' boxes and the ways and
+  relations using them; the outline ways of multipolygons; the nodes of ways running out
+  of a box), each airport's share saved where a download of it would be. Same features as
+  a download (ELLX: 2,415 against 2,416, one fence edited since the extract); all 67 Swiss
+  airports in 37 s end to end, the 550 MB file read in 14 s. Airports outside every file
+  are downloaded as usual.
+- AMDB Build List takes `.osm.pbf` extracts dropped with the list.
+- `--osm both` spreads a batch across the map API and the two fastest Overpass mirrors,
+  not two sources.
+
 ## 1.2.9 (2026-09-28) · A320 OANS 1.0.7
 
 **The first officer's ND, and destination airports that load on arrival.**
