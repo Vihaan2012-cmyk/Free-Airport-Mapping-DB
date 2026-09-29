@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Charts are about 25 times smaller.** Terrain is painted once per square of the model,
+  merged into rectangles along the rows and down them, rather than every tint band
+  repainting all the ground under it with every band edge a polygon of its own: tens of
+  thousands of shapes a chart. Boston's 30 approach, departure and arrival charts: 24.5 MB
+  -> 1.0 MB (4.0 MB uncompressed, 0.42 MB in a 7z). Band edges follow the terrain model's
+  squares rather than being smoothed between them.
 - **Charts are 4-7 times smaller.** Every PDF page is compressed (FlateDecode) and its
   numbers written to the hundredth of a point rather than a float's full length: an
   airport diagram 586 KB -> 132 KB, an ILS chart 892 KB -> 133 KB, a STAR 2.1 MB ->
