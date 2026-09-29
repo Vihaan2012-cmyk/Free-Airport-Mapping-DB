@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## Unreleased · A330 OANS 1.0.0
+
+**A330 OANS: the airport moving map on the Headwind A330.**
+
+- FlyByWire's A380X OANS on both NDs of the Headwind A330-900 (MSFS 2020), a product of
+  its own: Community package `amdb-a330-oans`, installer `A330-OANS-Setup`, and its own
+  notification-area program that serves the maps (or leaves it to AMDB Bridge or the A320
+  OANS when one of them is already serving). AMDB Bridge carries it too: a tick box in its
+  installer, an option in the app, `amdb-bridge a330-oans on|off|status`.
+- The A330 is built on FlyByWire's A32NX: the OANS reads the ND mode from
+  `L:A32NX_EFIS_{L,R}_ND_MODE`, and its range knobs (an Asobo switch that stopped at
+  10 NM) become knobs with the A320 OANS's positions below 10, keeping FlyByWire's range
+  variable as it was. Two files changed in the aircraft, backed up and put back on
+  removal; serving adds them again after a Headwind update.
+- The OANS gauge takes `aircraft=fbw` in its panel.cfg address for an A32NX-family FCU;
+  without it, it is the Fenix's as before.
 
 **Building every airport: OpenStreetMap from downloaded extracts.**
 

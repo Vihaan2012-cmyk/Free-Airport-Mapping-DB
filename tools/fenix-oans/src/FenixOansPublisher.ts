@@ -2,8 +2,9 @@
 //
 // Feeds FlyByWire's OANS what the A380X's own systems give it -- the aircraft (see
 // AircraftPublisher), the EFIS ND mode, the OANS zoom and whether to show it -- from the
-// simulator and the Fenix A320's EFIS controls, for the captain's ND or the first
-// officer's.
+// simulator and the aircraft's EFIS controls, for the captain's ND or the first
+// officer's: the Fenix A320's, or those of an aircraft built on FlyByWire's A32NX (the
+// Headwind A330), whose FCU keeps the ND mode in FlyByWire's own variables.
 //
 // Each side's OANS state lives in one L:Var so the knob, the H: events and SimConnect all
 // agree:
@@ -15,6 +16,9 @@
 import { Publisher } from '@microsoft/msfs-sdk';
 import { EfisNdMode, FcuSimVars, OansControlEvents } from '@flybywiresim/fbw-sdk';
 import { AircraftPublisher } from './AircraftPublisher';
+
+/** Whose EFIS controls these are: the Fenix A320's, or an A32NX-family FCU's. */
+export type Fcu = 'fenix' | 'fbw';
 
 const MAX_ZOOM = 5;
 const DEFAULT_ZOOM = 4;
@@ -48,6 +52,7 @@ export class FenixOansPublisher extends AircraftPublisher {
   constructor(
     bus: { getPublisher: <T>() => Publisher<T> },
     private readonly side: 'L' | 'R' = 'L',
+    fcu: Fcu = 'fenix',
   ) {
     super(bus);
     this.publisher = bus.getPublisher<FcuSimVars & OansControlEvents>();
@@ -55,7 +60,8 @@ export class FenixOansPublisher extends AircraftPublisher {
     this.zoomVar = `L:AMDB_OANS_ZOOM${fo}`;
     this.cmdVar = `L:AMDB_OANS_CMD${fo}`;
     this.activeVar = `L:AMDB_OANS_ACTIVE${fo}`;
-    this.modeVar = `L:S_FCU_EFIS${side === 'R' ? 2 : 1}_ND_MODE`;
+    // Both number the mode knob's positions exactly as EfisNdMode does: LS, VOR, NAV, ARC, PLAN.
+    this.modeVar = fcu === 'fbw' ? `L:A32NX_EFIS_${side}_ND_MODE` : `L:S_FCU_EFIS${side === 'R' ? 2 : 1}_ND_MODE`;
   }
 
   /** Called with the display commands (open the menu, toggle the control panel). */
@@ -91,7 +97,6 @@ export class FenixOansPublisher extends AircraftPublisher {
 
     super.onUpdate();
 
-    // Fenix's mode knob numbers its positions exactly as EfisNdMode does: LS, VOR, NAV, ARC, PLAN.
     const mode = Math.round(SimVar.GetSimVarValue(this.modeVar, 'number'));
     const zoom = Math.round(SimVar.GetSimVarValue(this.zoomVar, 'number'));
     if (mode === this.lastMode && zoom === this.lastZoom) {

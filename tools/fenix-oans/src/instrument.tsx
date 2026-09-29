@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
 //
 // FlyByWire's A380X OANS (https://github.com/flybywiresim/aircraft, GPL-3.0) running as an
-// overlay on a Fenix A320 ND: the captain's, or the first officer's when panel.cfg loads
-// this gauge with `?Index=2`. The OANS, its control panel, the context menu and the erase
+// overlay on a Fenix A320 ND, or on the ND of an aircraft built on the A32NX (the Headwind
+// A330, `aircraft=fbw`): the captain's, or the first officer's when panel.cfg loads this
+// gauge with `?Index=2`. The OANS, its control panel, the context menu and the erase
 // dialogs are FlyByWire's own components (see OansDisplay); what the A380X's systems would
 // feed them comes from FenixOansPublisher.
 //
@@ -10,11 +11,11 @@
 // side what it is doing so both NDs show it. Either side's exit pick reaches it, as
 // FlyByWire's OANS shares a picked exit between its two sides.
 
-import { Clock, ConsumerSubject, FSComponent, InstrumentBackplane, Subscribable } from '@microsoft/msfs-sdk';
+import { Clock, ConsumerSubject, FSComponent, InstrumentBackplane, Subject, Subscribable } from '@microsoft/msfs-sdk';
 import { ArincEventBus, BtvSimvarPublisher, FmsOansData, FmsOansSimvarPublisher } from '@flybywiresim/fbw-sdk';
 import { RopRowOansPublisher } from '@flybywiresim/msfs-avionics-common';
 import { ResetPanelSimvarPublisher } from '@a380x/MsfsAvionicsCommon/providers/ResetPanelPublisher';
-import { FenixOansPublisher } from './FenixOansPublisher';
+import { Fcu, FenixOansPublisher } from './FenixOansPublisher';
 import { BtvState, BtvStatus, FenixBtv } from './FenixBtv';
 import { OansDisplay, reportOnce } from './OansDisplay';
 import { TaxiRouteFeed } from './TaxiRouteFeed';
@@ -73,9 +74,14 @@ class AmdbFenixOans extends BaseInstrument {
   public connectedCallback(): void {
     super.connectedCallback();
     const side = this.instrumentIndex === 2 ? 'R' : 'L';
+    // `aircraft=fbw` in the gauge's address (panel.cfg) for an aircraft built on the A32NX,
+    // the Headwind A330: its FCU's variables, and no BTV, which brakes through the Fenix's
+    // own autobrake buttons. BaseInstrument parses the address the same way, lowercased.
+    const fcu: Fcu = new URL((this.getAttribute('Url') ?? 'coui://x').toLowerCase()).searchParams.get('aircraft') === 'fbw' ? 'fbw' : 'fenix';
     const captain = side === 'L';
-    reportOnce(`nd-side-${side}`);
-    this.fenix = new FenixOansPublisher(this.bus, side);
+    const braking = captain && fcu === 'fenix';
+    reportOnce(`nd-side-${side}-${fcu}`);
+    this.fenix = new FenixOansPublisher(this.bus, side, fcu);
     this.display = new OansDisplay(this.bus, side);
     this.taxiRoute = new TaxiRouteFeed(this.bus, () => this.display.airport());
 
@@ -98,7 +104,7 @@ class AmdbFenixOans extends BaseInstrument {
     this.backplane.addPublisher('resetPanel', new ResetPanelSimvarPublisher(this.bus));
 
     let btvStatus: Subscribable<BtvStatus>;
-    if (captain) {
+    if (braking) {
       const btv = new FenixBtv(this.bus);
       this.backplane.addInstrument('btv-braking', btv);
       btvStatus = btv.status;
@@ -114,8 +120,10 @@ class AmdbFenixOans extends BaseInstrument {
         SimVar.SetSimVarValue('L:AMDB_BTV_EXIT_SELECTED', 'number', exit ? 1 : 0);
         reportOnce(`btv-exit-${exit ?? 'cleared'}`);
       });
-    } else {
+    } else if (fcu === 'fenix') {
       btvStatus = ConsumerSubject.create(this.bus.getSubscriber<BtvShared>().on('amdb_btv_status'), BTV_IDLE);
+    } else {
+      btvStatus = Subject.create(BTV_IDLE);
     }
     this.backplane.init();
 

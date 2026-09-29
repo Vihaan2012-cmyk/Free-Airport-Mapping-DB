@@ -1,0 +1,54 @@
+{
+  "content": [
+    {
+      "path": "html_ui/fonts/amdb-a330-oans/b612mono-regular.ttf",
+      "size": 140292,
+      "date": 134348858848028583
+    },
+    {
+      "path": "html_ui/images/amdb-a330-oans/oans/oans-cross.svg",
+      "size": 401,
+      "date": 134348858848440730
+    },
+    {
+      "path": "html_ui/images/amdb-a330-oans/oans/oans-flag.svg",
+      "size": 469,
+      "date": 134348858848641387
+    },
+    {
+      "path": "html_ui/pages/vcockpit/instruments/amdb-a330-oans/oans-nd.css",
+      "size": 33323,
+      "date": 134351249586320887
+    },
+    {
+      "path": "html_ui/pages/vcockpit/instruments/amdb-a330-oans/oans-nd.html",
+      "size": 393,
+      "date": 134351246404297451
+    },
+    {
+      "path": "html_ui/pages/vcockpit/instruments/amdb-a330-oans/oans-nd.js",
+      "size": 3586674,
+      "date": 134351249586315790
+    },
+    {
+      "path": "license-b612-font.txt",
+      "size": 4470,
+      "date": 134348858848242573
+    },
+    {
+      "path": "license.txt",
+      "size": 35823,
+      "date": 134351246403897181
+    },
+    {
+      "path": "manifest.json",
+      "size": 677,
+      "date": 134351249588116784
+    },
+    {
+      "path": "readme.txt",
+      "size": 2939,
+      "date": 134351246599693927
+    }
+  ]
+}

@@ -159,6 +159,12 @@ pub fn start(settings: &Settings, opts: &Options) -> Result<Running> {
             Ok(_) => {}
             Err(e) => crate::term::warn(&format!("{}: could not add the A320 OANS to the Fenix: {e:#}", sim.name)),
         }
+        // The same for the A330 OANS and a Headwind update.
+        match desktop::repatch_a330_oans(&sim.community) {
+            Ok(files) if !files.is_empty() => crate::term::success(&format!("{}: A330 OANS added to the Headwind A330 again after an update; restart the simulator to load it", sim.name)),
+            Ok(_) => {}
+            Err(e) => crate::term::warn(&format!("{}: could not add the A330 OANS to the Headwind A330: {e:#}", sim.name)),
+        }
     }
     crate::term::success("Ready: load your aircraft");
     Ok(Running { handle, redirected, fenix_charts, http_port, started: Instant::now() })

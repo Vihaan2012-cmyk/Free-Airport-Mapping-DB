@@ -67883,7 +67883,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   };
   var OANS_MODES = [4 /* PLAN */, 3 /* ARC */, 2 /* ROSE_NAV */];
   var FenixOansPublisher = class extends AircraftPublisher {
-    constructor(bus, side = "L") {
+    constructor(bus, side = "L", fcu = "fenix") {
       super(bus);
       this.side = side;
       this.lastMode = -1;
@@ -67895,7 +67895,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.zoomVar = "L:AMDB_OANS_ZOOM".concat(fo);
       this.cmdVar = "L:AMDB_OANS_CMD".concat(fo);
       this.activeVar = "L:AMDB_OANS_ACTIVE".concat(fo);
-      this.modeVar = "L:S_FCU_EFIS".concat(side === "R" ? 2 : 1, "_ND_MODE");
+      this.modeVar = fcu === "fbw" ? "L:A32NX_EFIS_".concat(side, "_ND_MODE") : "L:S_FCU_EFIS".concat(side === "R" ? 2 : 1, "_ND_MODE");
     }
     /**
      * An H: event, or a command number arriving through this side's command variable. The
@@ -81154,11 +81154,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return true;
     }
     connectedCallback() {
+      var _a7;
       super.connectedCallback();
       const side = this.instrumentIndex === 2 ? "R" : "L";
+      const fcu = new URL(((_a7 = this.getAttribute("Url")) != null ? _a7 : "coui://x").toLowerCase()).searchParams.get("aircraft") === "fbw" ? "fbw" : "fenix";
       const captain = side === "L";
-      reportOnce("nd-side-".concat(side));
-      this.fenix = new FenixOansPublisher(this.bus, side);
+      const braking = captain && fcu === "fenix";
+      reportOnce("nd-side-".concat(side, "-").concat(fcu));
+      this.fenix = new FenixOansPublisher(this.bus, side, fcu);
       this.display = new OansDisplay(this.bus, side);
       this.taxiRoute = new TaxiRouteFeed(this.bus, () => this.display.airport());
       this.backplane.addInstrument("fenix", this.fenix);
@@ -81178,7 +81181,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.backplane.addPublisher("btv", new BtvSimvarPublisher(this.bus));
       this.backplane.addPublisher("resetPanel", new ResetPanelSimvarPublisher(this.bus));
       let btvStatus;
-      if (captain) {
+      if (braking) {
         const btv = new FenixBtv(this.bus);
         this.backplane.addInstrument("btv-braking", btv);
         btvStatus = btv.status;
@@ -81192,8 +81195,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           SimVar.SetSimVarValue("L:AMDB_BTV_EXIT_SELECTED", "number", exit ? 1 : 0);
           reportOnce("btv-exit-".concat(exit != null ? exit : "cleared"));
         });
-      } else {
+      } else if (fcu === "fenix") {
         btvStatus = ConsumerSubject.create(this.bus.getSubscriber().on("amdb_btv_status"), BTV_IDLE);
+      } else {
+        btvStatus = Subject.create(BTV_IDLE);
       }
       this.backplane.init();
       const content = document.getElementById("OANS_CONTENT");

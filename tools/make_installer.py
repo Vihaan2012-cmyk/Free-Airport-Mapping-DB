@@ -5,6 +5,8 @@
   dist/AMDB-Navdata-<version>.zip        the same, as a zip to unpack anywhere
   dist/AMDB-Build-List-<version>.zip     build a list of airports by dropping it on an exe,
                                          nothing installed
+  dist/A330-OANS-Setup-<version>.exe       the Headwind A330 OANS on its own, likewise;
+                                         versioned as packages/msfs-a330-oans
   dist/A320-OANS-Setup-<oans version>.exe  the Fenix A320 OANS on its own, with its own
                                          bridge; versioned as packages/msfs-a320-oans
   dist/AMDB-Airport-Map-Setup-<version>.exe  the Airport Map toolbar window, without a
@@ -107,13 +109,18 @@ def main():
     if not os.path.isfile(os.path.join(ROOT, "packages", "msfs-a320-oans", "html_ui", "Pages", "VCockpit", "Instruments", "amdb-oans", "oans-nd.js")):
         print("The A320 OANS is not built. Build it with:  cd tools/fenix-oans && npm install && node build.mjs")
         return 1
-    run(["cargo", "build", "--release", "--locked", "--bin", "amdb-bridge-gui", "--bin", "amdb-bridge", "--bin", "amdbgen", "--bin", "amdb-navdata", "--bin", "amdb-navdata-gui", "--bin", "a320-oans", "--bin", "amdb-build-list"])
+    if not os.path.isfile(os.path.join(ROOT, "packages", "msfs-a330-oans", "html_ui", "Pages", "VCockpit", "Instruments", "amdb-a330-oans", "oans-nd.js")):
+        print("The A330 OANS is not built. Build it with:  cd tools/fenix-oans && npm install && node build.mjs")
+        return 1
+    run(["cargo", "build", "--release", "--locked", "--bin", "amdb-bridge-gui", "--bin", "amdb-bridge", "--bin", "amdbgen", "--bin", "amdb-navdata", "--bin", "amdb-navdata-gui", "--bin", "a320-oans", "--bin", "a330-oans", "--bin", "amdb-build-list"])
     stage_webview2_loader()
     run([compiler, f"/DAppVersion={v}", "/Q", os.path.join("installer", "amdb-bridge.iss")])
     run([compiler, f"/DAppVersion={v}", "/Q", os.path.join("installer", "amdb-navdata.iss")])
     # The A320 OANS is versioned as its package, apart from AMDB Bridge.
     oans = json.load(open(os.path.join(ROOT, "packages", "msfs-a320-oans", "manifest.json"), encoding="utf-8"))["package_version"]
     run([compiler, f"/DAppVersion={oans}", "/Q", os.path.join("installer", "a320-oans.iss")])
+    a330 = json.load(open(os.path.join(ROOT, "packages", "msfs-a330-oans", "manifest.json"), encoding="utf-8"))["package_version"]
+    run([compiler, f"/DAppVersion={a330}", "/Q", os.path.join("installer", "a330-oans.iss")])
     # So is the Airport Map, which is built by the same script.
     toolbar = json.load(open(os.path.join(ROOT, "packages", "msfs-amdb-oans-toolbar", "manifest.json"), encoding="utf-8"))["package_version"]
     run([compiler, f"/DAppVersion={toolbar}", "/Q", os.path.join("installer", "amdb-oans-toolbar.iss")])
@@ -128,6 +135,8 @@ def main():
     print(f"Built {n} ({os.path.getsize(n) / 1e6:.1f} MB)")
     a = os.path.join(ROOT, "dist", f"A320-OANS-Setup-{oans}.exe")
     print(f"Built {a} ({os.path.getsize(a) / 1e6:.1f} MB)")
+    a3 = os.path.join(ROOT, "dist", f"A330-OANS-Setup-{a330}.exe")
+    print(f"Built {a3} ({os.path.getsize(a3) / 1e6:.1f} MB)")
     t = os.path.join(ROOT, "dist", f"AMDB-Airport-Map-Setup-{toolbar}.exe")
     print(f"Built {t} ({os.path.getsize(t) / 1e6:.1f} MB)")
     return 0
