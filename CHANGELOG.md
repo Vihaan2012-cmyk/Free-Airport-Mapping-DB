@@ -2,6 +2,15 @@
 
 ## Unreleased · A330 OANS 1.0.0
 
+**The OANS no longer crashes the simulator now that every airport is built.**
+
+- An OANS control panel opens with the bridge's whole airport list (a search with no
+  query) and FlyByWire's puts every airport into a dropdown, an element each, on each ND.
+  With all 43,745 built airports that crashed MSFS in Coherent GT (CoherentGTJS.dll)
+  seconds after the Headwind A330's two OANS loaded. The list is the large and medium
+  airports again (about 5,000, what it was before everything was built), answered in
+  0.7 s rather than 10; a typed search still finds any built airport.
+
 **Charts for every American airport with procedures, drawn from the FAA's CIFP.**
 
 - `amdbgen cifp-charts [ICAO...] --airports DIR [--cycle 2610] [--jobs N] [--background]`
