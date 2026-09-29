@@ -50,11 +50,11 @@ pub fn cycle(today: chrono::NaiveDate) -> String {
     format!("{:02}{:02}", year % 100, n)
 }
 
-fn metafile_url(cycle: &str) -> String {
+pub fn metafile_url(cycle: &str) -> String {
     format!("https://aeronav.faa.gov/d-tpp/{cycle}/xml_data/d-TPP_Metafile.xml")
 }
 
-fn chart_url(cycle: &str, pdf: &str) -> String {
+pub fn chart_url(cycle: &str, pdf: &str) -> String {
     format!("https://aeronav.faa.gov/d-tpp/{cycle}/{pdf}")
 }
 
