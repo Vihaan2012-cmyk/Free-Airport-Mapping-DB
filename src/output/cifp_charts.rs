@@ -58,9 +58,19 @@ pub fn run(opts: &Options) -> Result<()> {
     idx.load_ourairports_online(&http, &cache)?;
 
     let only: Vec<String> = opts.only.iter().map(|s| s.trim().to_uppercase()).collect();
-    let mut list: Vec<&AirportProcedures> = all.values().filter(|a| only.is_empty() || only.contains(&a.icao)).filter(|a| opts.airports.join(&a.icao).join("manifest.json").is_file()).collect();
+    let wanted = |a: &AirportProcedures| only.is_empty() || crate::sources::cifp::spellings(&a.icao).iter().any(|s| only.contains(s));
+    // Each airport under the name its built folder has, which for one with no ICAO code is
+    // the FAA identifier with a K in front; the charts' name lookups then find it too.
+    let mut list: Vec<AirportProcedures> = all
+        .values()
+        .filter(|a| wanted(a))
+        .filter_map(|a| {
+            let folder = crate::sources::cifp::spellings(&a.icao).into_iter().find(|s| opts.airports.join(s).join("manifest.json").is_file())?;
+            Some(AirportProcedures { icao: folder, ..a.clone() })
+        })
+        .collect();
     list.sort_by(|a, b| a.icao.cmp(&b.icao));
-    let unbuilt = all.values().filter(|a| only.is_empty() || only.contains(&a.icao)).count() - list.len();
+    let unbuilt = all.values().filter(|a| wanted(a)).count() - list.len();
     let in_force = crate::sources::cifp::cycle_start(&cycle).map(|d| format!(" (in force from {})", d.format("%-d %b %Y"))).unwrap_or_default();
     crate::term::start(&format!(
         "Charts from the FAA's CIFP, cycle {cycle}{in_force}: {} airports{}",
@@ -85,7 +95,7 @@ pub fn run(opts: &Options) -> Result<()> {
             // Each approach on its own page: handed over alone, it is the one drawn.
             for p in a.procedures.iter().filter(|p| p.kind == Kind::Approach) {
                 let name = format!("{}.pdf", file_name(&p.name));
-                let one = AirportProcedures { procedures: vec![p.clone()], ..(*a).clone() };
+                let one = AirportProcedures { procedures: vec![p.clone()], ..a.clone() };
                 match super::charts_bulk::draw(one, None, &http, &cache, &idx, &bulk, false, Some(dir.join(&name))) {
                     Ok(_) => {
                         wanted.insert(name);
@@ -99,7 +109,7 @@ pub fn run(opts: &Options) -> Result<()> {
                 let names: Vec<&str> = group.iter().map(|p| p.name.as_str()).collect();
                 let name = format!("{} {}.pdf", if group[0].kind == Kind::Sid { "SID" } else { "STAR" }, file_name(&names.join(" - ")));
                 let out = dir.join(&name);
-                match super::approach::terminal::with_terminal_from((*a).clone(), names[0], |t| super::approach::terminal::write(t, &out)) {
+                match super::approach::terminal::with_terminal_from(a.clone(), names[0], |t| super::approach::terminal::write(t, &out)) {
                     Ok(()) => {
                         wanted.insert(name);
                     }
