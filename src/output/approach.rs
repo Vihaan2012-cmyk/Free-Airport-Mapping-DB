@@ -555,11 +555,15 @@ fn terrain_bands(field_ft: f64) -> Vec<(f64, (f32, f32, f32))> {
 
 /// Heights tinted in bands, as a terrain picture rather than contours: quick to read and
 /// honest about what the model can say.
+///
+/// Each square of the terrain model is painted once, in the colour it ends up: the band
+/// its height falls in, white where it is close to the field's own height (so an airport
+/// on a plateau does not sit in a wash of colour), and the sea where it is at sea level.
+/// Squares of one colour are merged into rectangles along a row and down the rows below,
+/// and each colour is set once. Painting band over band, with every band's edge as a
+/// polygon of its own, wrote a chart's terrain as tens of thousands of shapes: 800 KB a
+/// chart, 11 GB for the American ones.
 fn draw_terrain(c: &mut dyn Canvas, patch: &Patch, v: &View, field_ft: f64) {
-    // From the top down: each band paints everything below its own ceiling, and the next
-    // one paints over the middle of it, so what is left of each is the ring between one
-    // height and the next. The ground the airport stands on is painted out again, so that
-    // an airport on a plateau does not sit in a wash of colour, and the sea goes on last.
     let highest_ft = (0..patch.height)
         .flat_map(|row| (0..patch.width).map(move |col| (row, col)))
         .map(|(row, col)| patch.at(row, col))
@@ -567,21 +571,103 @@ fn draw_terrain(c: &mut dyn Canvas, patch: &Patch, v: &View, field_ft: f64) {
         .fold(f64::NEG_INFINITY, |m, h| m.max(h as f64 / 0.3048));
     let bands = terrain_bands(field_ft);
     let floor = (field_ft + 250.0).max(bands[0].0);
-    for (i, (top, (r, g, b))) in bands.iter().enumerate().rev() {
-        // A band the ground never reaches into is not drawn. Its floor is the top of the
-        // band under it; the highest band has no top of its own, and is drawn wherever
-        // the ground rises above the one under it.
-        let bottom = if i == 0 { 0.0 } else { bands[i - 1].0 };
-        if *top <= floor || highest_ft <= bottom {
+    // The bands the picture has: not one wholly under the white near the field, nor one
+    // the ground never reaches. Its floor is the top of the band under it.
+    let drawn: Vec<(f64, (f32, f32, f32))> = bands
+        .iter()
+        .enumerate()
+        .filter(|(i, (top, _))| {
+            let bottom = if *i == 0 { 0.0 } else { bands[i - 1].0 };
+            *top > floor && highest_ft > bottom
+        })
+        .map(|(_, band)| *band)
+        .collect();
+    let white = highest_ft > floor;
+    let water = field_ft >= WATER_NEEDS_FIELD_FT;
+    let mut palette: Vec<(f32, f32, f32)> = drawn.iter().map(|(_, colour)| *colour).collect();
+    let (white_at, water_at) = (palette.len(), palette.len() + 1);
+    palette.push((1.0, 1.0, 1.0));
+    palette.push(WATER_TINT);
+    // The colour a height ends up: the sea, then white near the field, then the lowest band
+    // it lies under; none where nothing is painted.
+    let colour = |ft: f64| -> Option<usize> {
+        if water && ft <= WATER_FT {
+            return Some(water_at);
+        }
+        if white && ft <= floor {
+            return Some(white_at);
+        }
+        drawn.iter().enumerate().filter(|(_, (top, _))| ft <= *top).min_by(|a, b| a.1 .0.total_cmp(&b.1 .0)).map(|(i, _)| i)
+    };
+    let corner = |row: usize, col: usize| -> (f32, f32) {
+        let (lat, lon) = patch.position(row, col);
+        v.at(lat, lon)
+    };
+    // One square: the mean of its four corners, where all four are known and it is near
+    // enough the window to be seen.
+    let square = |row: usize, col: usize| -> Option<usize> {
+        let corners = [(row, col), (row, col + 1), (row + 1, col + 1), (row + 1, col)];
+        let mut sum = 0.0;
+        for (r, k) in corners {
+            let h = patch.at(r, k);
+            if !h.is_finite() {
+                return None;
+            }
+            sum += h as f64;
+        }
+        corners.iter().any(|(r, k)| v.inside(corner(*r, *k), 30.0)).then(|| colour(sum / 4.0 / 0.3048)).flatten()
+    };
+    let mut rects: Vec<Vec<(f32, f32, f32, f32)>> = vec![Vec::new(); palette.len()];
+    let mut emit = |(from, to, k): (usize, usize, usize), first_row: usize, last_row: usize| {
+        let (a, b) = (corner(first_row, from), corner(last_row + 1, to + 1));
+        let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
+        let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
+        rects[k].push((x0, y0, (x1 - x0).max(0.1), (y1 - y0).max(0.1)));
+    };
+    // Runs of one colour along each row, kept open while the row below has the same run.
+    let mut open: std::collections::HashMap<(usize, usize, usize), usize> = std::collections::HashMap::new();
+    let rows = patch.height.saturating_sub(1);
+    for row in 0..rows {
+        let mut runs: Vec<(usize, usize, usize)> = Vec::new();
+        let mut current: Option<(usize, usize)> = None;
+        for col in 0..patch.width.saturating_sub(1) {
+            let k = square(row, col);
+            match (current, k) {
+                (Some((_, ck)), Some(k)) if ck == k => {}
+                _ => {
+                    if let Some((from, ck)) = current.take() {
+                        runs.push((from, col - 1, ck));
+                    }
+                    current = k.map(|k| (col, k));
+                }
+            }
+        }
+        if let Some((from, ck)) = current {
+            runs.push((from, patch.width.saturating_sub(2), ck));
+        }
+        let mut next: std::collections::HashMap<(usize, usize, usize), usize> = std::collections::HashMap::with_capacity(runs.len());
+        for run in runs {
+            let first = open.remove(&run).unwrap_or(row);
+            next.insert(run, first);
+        }
+        for (run, first) in open.drain() {
+            emit(run, first, row - 1);
+        }
+        open = next;
+    }
+    for (run, first) in open {
+        emit(run, first, rows.saturating_sub(1));
+    }
+    for (k, list) in rects.iter().enumerate() {
+        if list.is_empty() {
             continue;
         }
-        fill_below(c, patch, v, *top, (*r, *g, *b));
-    }
-    if highest_ft > floor {
-        fill_below(c, patch, v, floor, (1.0, 1.0, 1.0));
-    }
-    if field_ft >= WATER_NEEDS_FIELD_FT {
-        fill_below(c, patch, v, WATER_FT, WATER_TINT);
+        let (r, g, b) = palette[k];
+        c.set_fill_rgb(r, g, b);
+        for &(x, y, w, h) in list {
+            c.rect(x, y, w, h);
+        }
+        c.fill_nonzero();
     }
 }
 
@@ -698,91 +784,6 @@ fn draw_peak(c: &mut dyn Canvas, font: Name, patch: &Patch, v: &View, field_ft: 
         }
         c.fill_nonzero();
         taken.label(c, font, 6.5, px + 5.0, py - 1.0, &format!("{ft:.0}'"), INK);
-    }
-}
-
-/// Everything lower than a height, filled in one colour.
-///
-/// Drawn as a shape rather than as a field of squares. A square to each reading turns a
-/// coastline into a staircase, which is what the eye sees first and what no chart has;
-/// taking the line where the ground actually crosses the height, along each edge between
-/// two readings, gives the coast back its shape. It is the marching squares of any
-/// contour map: each cell of four readings contributes the piece of itself that lies
-/// below the height, with its corners where the crossings fall.
-///
-/// Only the cells the height passes through need that treatment. A run of cells wholly
-/// below it is one rectangle, however long the run — which matters, because a picture
-/// holding a quarter of a million readings would otherwise be a quarter of a million
-/// little shapes, and a file nobody can open.
-fn fill_below(c: &mut dyn Canvas, patch: &Patch, v: &View, height_ft: f64, tint: (f32, f32, f32)) {
-    let metres = height_ft * 0.3048;
-    let at = |row: usize, col: usize| -> Option<(f32, f32, f64)> {
-        let h = patch.at(row, col);
-        if !h.is_finite() {
-            return None;
-        }
-        let (lat, lon) = patch.position(row, col);
-        let (px, py) = v.at(lat, lon);
-        Some((px, py, h as f64))
-    };
-    let mut anything = false;
-    for row in 0..patch.height.saturating_sub(1) {
-        let mut run: Option<usize> = None;
-        for col in 0..patch.width {
-            let cell = (col + 1 < patch.width)
-                .then(|| [at(row, col), at(row, col + 1), at(row + 1, col + 1), at(row + 1, col)])
-                .and_then(|k| k.iter().copied().collect::<Option<Vec<_>>>());
-            let below = cell.as_ref().map(|k| k.iter().filter(|(_, _, h)| *h <= metres).count()).unwrap_or(0);
-            let inside = cell.as_ref().map(|k| k.iter().any(|(px, py, _)| v.inside((*px, *py), 30.0))).unwrap_or(false);
-            let whole = below == 4 && inside;
-            if whole {
-                run.get_or_insert(col);
-                continue;
-            }
-            // The run ends here, so it is drawn as the one rectangle it is.
-            if let Some(from) = run.take() {
-                if let (Some(top_left), Some(bottom_right)) = (at(row, from), at(row + 1, col)) {
-                    if !anything {
-                        c.set_fill_rgb(tint.0, tint.1, tint.2);
-                        anything = true;
-                    }
-                    let (x0, x1) = (top_left.0.min(bottom_right.0), top_left.0.max(bottom_right.0));
-                    let (y0, y1) = (top_left.1.min(bottom_right.1), top_left.1.max(bottom_right.1));
-                    c.rect(x0, y0, (x1 - x0).max(0.1), (y1 - y0).max(0.1));
-                }
-            }
-            let Some(k) = cell else { continue };
-            if below == 0 || !inside {
-                continue;
-            }
-            // A cell the height passes through: the piece of it that lies below.
-            let mut shape: Vec<(f32, f32)> = Vec::with_capacity(8);
-            for i in 0..4 {
-                let (ax, ay, ah) = k[i];
-                let (bx, by, bh) = k[(i + 1) % 4];
-                if ah <= metres {
-                    shape.push((ax, ay));
-                }
-                if (ah <= metres) != (bh <= metres) {
-                    let f = ((metres - ah) / (bh - ah)).clamp(0.0, 1.0) as f32;
-                    shape.push((ax + (bx - ax) * f, ay + (by - ay) * f));
-                }
-            }
-            if shape.len() >= 3 {
-                if !anything {
-                    c.set_fill_rgb(tint.0, tint.1, tint.2);
-                    anything = true;
-                }
-                c.move_to(shape[0].0, shape[0].1);
-                for point in &shape[1..] {
-                    c.line_to(point.0, point.1);
-                }
-                c.close_path();
-            }
-        }
-    }
-    if anything {
-        c.fill_nonzero();
     }
 }
 
