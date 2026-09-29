@@ -2,6 +2,16 @@
 
 ## Unreleased · A330 OANS 1.0.0
 
+**Every FAA chart, filed by airport.**
+
+- `amdbgen faa-charts [ICAO...] --out DIR [--cycle 2610] [--rate 4M] [--background]`
+  downloads the FAA's whole d-TPP for a cycle: approaches, departures, arrivals, airport
+  diagrams, hot spots, takeoff and alternate minimums (24,077 charts at 3,197 airports in
+  cycle 2609). Each PDF is fetched once into `_pdf/` and linked into each airport's folder
+  (`KBOS/005 HOT HOT SPOT.pdf`), with an `index.csv`. A cycle beside the one before it
+  fetches only the charts the FAA marks added or changed. `--background` runs it at idle
+  priority, and `--rate` caps the download, so it can run during a flight.
+
 **A330 OANS: the airport moving map on the Headwind A330.**
 
 - FlyByWire's A380X OANS on both NDs of the Headwind A330-900 (MSFS 2020), a product of

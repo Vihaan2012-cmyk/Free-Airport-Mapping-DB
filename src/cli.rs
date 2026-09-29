@@ -174,6 +174,29 @@ enum Cmd {
         #[arg(long)]
         open: bool,
     },
+    /// Every chart the FAA publishes (approaches, departures, arrivals, airport diagrams,
+    /// hot spots, takeoff and alternate minimums), downloaded from its d-TPP for one cycle
+    /// and filed by airport, with an index.csv. Resumes where it stopped; a cycle next to
+    /// the one before it downloads only what changed.
+    FaaCharts {
+        /// Only these airports (ICAO or FAA identifier); every one when left out.
+        icaos: Vec<String>,
+        /// Where cycles go: <out>/<cycle>/<airport>/.
+        #[arg(long, default_value = "faa-charts")]
+        out: PathBuf,
+        /// The cycle, e.g. 2610; the one in force today when left out.
+        #[arg(long)]
+        cycle: Option<String>,
+        /// Downloads at once.
+        #[arg(long, default_value_t = 3)]
+        jobs: usize,
+        /// Most bytes a second over the whole run, e.g. 4M or 500K; 0 for no limit.
+        #[arg(long, default_value = "4M")]
+        rate: String,
+        /// Lowest CPU, disk and memory priority, to leave a simulator undisturbed.
+        #[arg(long)]
+        background: bool,
+    },
     /// Approach charts for a list of airports, in one pass.
     ApproachCharts {
         /// ICAO codes. A list file can be given instead, or as well.
@@ -1324,6 +1347,10 @@ pub fn run() -> Result<()> {
         Cmd::Procedures { icao, json } => procedures_cmd(&icao, json),
         Cmd::Terrain { icao, radius_km, step_m } => terrain_cmd(&icao, radius_km, step_m),
         Cmd::Mora { bbox, step_m, json, jobs, cache, offline, refresh } => mora_cmd(bbox, step_m, json, jobs, cache, offline, refresh),
+        Cmd::FaaCharts { icaos, out, cycle, jobs, rate, background } => {
+            let opts = crate::output::faa_charts::Options { out, cycle, jobs, rate: crate::output::faa_charts::parse_rate(&rate)?, only: icaos, background };
+            crate::output::faa_charts::run(&opts).map(|_| ())
+        }
         Cmd::ApproachCharts { icaos, list, out_dir, jobs, kind, every_runway, no_msa } => {
             let opts = crate::output::charts_bulk::Options { out_dir, jobs, kind: kind.as_deref().map(approach_kind).transpose()?, every_runway, no_msa };
             let airports = crate::output::charts_bulk::airports(&icaos, list.as_deref())?;

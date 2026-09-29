@@ -6,6 +6,7 @@ pub mod manifest;
 pub mod approach;
 pub mod canvas;
 pub mod charts_bulk;
+pub mod faa_charts;
 pub mod chart;
 pub mod preview;
 pub mod routemap;
