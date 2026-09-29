@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased · A330 OANS 1.0.0
+## 1.2.10 (2026-09-29) · A330 OANS 1.0.0 · A320 OANS 1.0.8
 
 **The OANS no longer crashes the simulator now that every airport is built.**
 
