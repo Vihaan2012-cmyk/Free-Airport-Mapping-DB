@@ -464,6 +464,19 @@ pub struct Nav {
     info: HashMap<String, nd::AirportInfo>,
 }
 
+/// The ways an airport can be named: CIFP names one with no ICAO code by its FAA
+/// identifier (00R), where OurAirports and the built airports put a K in front (K00R).
+pub fn spellings(icao: &str) -> Vec<String> {
+    let icao = icao.trim().to_uppercase();
+    let mut out = vec![icao.clone()];
+    if icao.len() == 3 {
+        out.push(format!("K{icao}"));
+    } else if icao.len() == 4 && icao.starts_with('K') && icao[1..].chars().any(|c| c.is_ascii_digit()) {
+        out.push(icao[1..].to_string());
+    }
+    out
+}
+
 fn nm_between(a: (f64, f64), b: (f64, f64)) -> f64 {
     let cos = a.0.to_radians().cos().max(0.05);
     ((a.0 - b.0) * 60.0).hypot((a.1 - b.1) * 60.0 * cos)
@@ -496,24 +509,34 @@ impl Nav {
     }
 
     pub fn ils(&self, icao: &str, runway: &str) -> Option<nd::Ils> {
-        self.ils.get(&(icao.to_uppercase(), runway.trim_start_matches("RW").to_uppercase())).cloned()
+        let rw = runway.trim_start_matches("RW").to_uppercase();
+        spellings(icao).into_iter().find_map(|a| self.ils.get(&(a, rw.clone())).cloned())
+    }
+
+    fn runway_record(&self, icao: &str, runway: &str) -> Option<&((f64, f64), nd::Runway)> {
+        let rw = runway.trim_start_matches("RW").to_uppercase();
+        spellings(icao).into_iter().find_map(|a| self.runways.get(&(a, rw.clone())))
     }
 
     pub fn runway(&self, icao: &str, runway: &str) -> Option<nd::Runway> {
-        self.runways.get(&(icao.to_uppercase(), runway.trim_start_matches("RW").to_uppercase())).map(|(_, r)| *r)
+        self.runway_record(icao, runway).map(|(_, r)| *r)
     }
 
     pub fn runway_threshold(&self, icao: &str, runway: &str) -> Option<(f64, f64)> {
-        self.runways.get(&(icao.to_uppercase(), runway.trim_start_matches("RW").to_uppercase())).map(|(p, _)| *p)
+        self.runway_record(icao, runway).map(|(p, _)| *p)
+    }
+
+    fn msas(&self, icao: &str) -> Option<&Vec<nd::Msa>> {
+        spellings(icao).into_iter().find_map(|a| self.msa.get(&a))
     }
 
     /// The airport's minimum safe altitude nearest a place.
     pub fn msa(&self, icao: &str, at: (f64, f64)) -> Option<nd::Msa> {
-        self.msa.get(&icao.to_uppercase())?.iter().min_by(|a, b| nm_between(at, a.centre).total_cmp(&nm_between(at, b.centre))).cloned()
+        self.msas(icao)?.iter().min_by(|a, b| nm_between(at, a.centre).total_cmp(&nm_between(at, b.centre))).cloned()
     }
 
     pub fn msa_about(&self, icao: &str, centre: &str) -> Option<nd::Msa> {
-        self.msa.get(&icao.to_uppercase())?.iter().find(|m| m.centre_name.eq_ignore_ascii_case(centre)).cloned()
+        self.msas(icao)?.iter().find(|m| m.centre_name.eq_ignore_ascii_case(centre)).cloned()
     }
 
     pub fn holds_at(&self, fix: &str) -> Vec<nd::Hold> {
@@ -535,7 +558,7 @@ impl Nav {
     }
 
     pub fn airport_info(&self, icao: &str) -> Option<nd::AirportInfo> {
-        self.info.get(&icao.to_uppercase()).cloned()
+        spellings(icao).into_iter().find_map(|a| self.info.get(&a).cloned())
     }
 }
 
@@ -620,6 +643,13 @@ SUSAP KBOSK6DBLZZR64RW04R 020NHANTK6PC0E       DF                               
         // The missed approach's hold at WAXEN: 210 inbound, left turns, a one-minute leg.
         let hold = &nav.holds_at("WAXEN")[0];
         assert_eq!((hold.inbound_deg, hold.right_turns, hold.leg_time_min, hold.min_altitude_ft), (210.0, false, Some(1.0), Some(3000.0)));
+    }
+
+    #[test]
+    fn airports_are_found_with_or_without_the_k() {
+        assert_eq!(spellings("00R"), vec!["00R".to_string(), "K00R".to_string()]);
+        assert_eq!(spellings("K00R"), vec!["K00R".to_string(), "00R".to_string()]);
+        assert_eq!(spellings("KBOS"), vec!["KBOS".to_string()]);
     }
 
     #[test]
