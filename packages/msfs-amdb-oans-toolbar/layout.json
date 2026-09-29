@@ -18,7 +18,7 @@
     {
       "path": "html_ui/ingamepanels/amdboansmap/amdboansmap.css",
       "size": 35155,
-      "date": 134351249593754429
+      "date": 134351402757703604
     },
     {
       "path": "html_ui/ingamepanels/amdboansmap/amdboansmap.html",
@@ -28,7 +28,7 @@
     {
       "path": "html_ui/ingamepanels/amdboansmap/amdboansmap.js",
       "size": 3576487,
-      "date": 134351249593739164
+      "date": 134351402757703604
     },
     {
       "path": "html_ui/textures/menu/toolbar/icon_toolbar_amdb_oans_moving_map.svg",
@@ -53,7 +53,7 @@
     {
       "path": "manifest.json",
       "size": 690,
-      "date": 134351249596948648
+      "date": 134351402760897857
     },
     {
       "path": "readme.txt",

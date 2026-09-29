@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0
 //
-// Brake to vacate for the Fenix A320: the exit picked on the OANS, reached at taxi speed.
+// Brake to vacate for the Fenix A320 and the Headwind A330: the exit picked on the OANS,
+// reached at taxi speed.
 //
 // Armed with ARM BTV on the OANS control panel's MAP DATA page (or L:AMDB_BTV_ARM = 1)
-// once an exit is picked on the OANS; Fenix's autobrake need not be armed, and LO and MED
-// cannot be on the ground. At the rollout (on the ground above 30 kt with the ground
-// spoilers out, or slowing at idle) it presses any lit autobrake button off, before
-// Fenix's autobrake starts braking, and works the brake pedals itself:
+// once an exit is picked on the OANS; the autobrake need not be armed (the Fenix's LO and
+// MED cannot be on the ground). At the rollout (on the ground above 30 kt with the ground
+// spoilers out, or slowing at idle) it takes any armed autobrake off, before it starts
+// braking, and works the brake pedals itself (the axis events, which the Fenix and
+// FlyByWire's systems both read as the pedals):
 //
 // - no braking while the aircraft would reach the exit on its own (it only ever brakes as
 //   much as the exit needs; BTV cannot add thrust);
@@ -61,12 +63,47 @@ export enum BtvState {
 
 const ARM_VAR = 'L:AMDB_BTV_ARM';
 
+/** An aircraft's autobrake, as BTV needs it: which mode is armed, and taking it off. */
+export interface Autobrake {
+  /** The mode armed, as the panel names it, or undefined when none is. */
+  armed(): string | undefined;
+  /** Take it off, as the crew would. */
+  disarm(): void;
+}
+
 /** Fenix's autobrake modes, by the ON light and the pushbutton of each. */
-const AUTOBRAKE = [
+const FENIX_AUTOBRAKE = [
   { light: 'L:I_MIP_AUTOBRAKE_LO_L', button: 'L:S_MIP_AUTOBRAKE_LO', name: 'LO' },
   { light: 'L:I_MIP_AUTOBRAKE_MED_L', button: 'L:S_MIP_AUTOBRAKE_MED', name: 'MED' },
   { light: 'L:I_MIP_AUTOBRAKE_MAX_L', button: 'L:S_MIP_AUTOBRAKE_MAX', name: 'MAX' },
 ];
+
+/** The Fenix's: a mode is armed while its light is on, and taken off by pressing its button. */
+export const fenixAutobrake: Autobrake = {
+  armed: () => FENIX_AUTOBRAKE.find((a) => SimVar.GetSimVarValue(a.light, 'number') > 0.5)?.name,
+  disarm: () => {
+    const lit = FENIX_AUTOBRAKE.find((a) => SimVar.GetSimVarValue(a.light, 'number') > 0.5);
+    if (!lit) {
+      return;
+    }
+    // Fenix's momentary buttons count: a press adds one (odd, held) and the release
+    // another (even).
+    const count = Math.round(SimVar.GetSimVarValue(lit.button, 'number'));
+    const released = count % 2 === 0 ? count : count + 1;
+    SimVar.SetSimVarValue(lit.button, 'number', released + 1);
+    setTimeout(() => SimVar.SetSimVarValue(lit.button, 'number', released + 2), 150);
+  },
+};
+
+/** FlyByWire's, which the Headwind A330 flies: the mode armed in one variable (1 LO, 2 MED,
+ * 3 MAX), taken off by the systems' own disarm event. */
+export const fbwAutobrake: Autobrake = {
+  armed: () => {
+    const mode = Math.round(SimVar.GetSimVarValue('L:A32NX_AUTOBRAKES_ARMED_MODE', 'number'));
+    return mode > 0 ? (['', 'LO', 'MED', 'MAX'][mode] ?? `MODE ${mode}`) : undefined;
+  },
+  disarm: () => SimVar.SetSimVarValue('K:A32NX.AUTOBRAKE_SET_DISARM', 'number', 0),
+};
 
 /** Topics this publishes for the ARM BTV button on the OANS control panel. */
 export interface BtvArmEvents {
@@ -86,7 +123,8 @@ interface Reading {
   onGround: boolean;
   parkingBrake: number;
   spoilers: number;
-  autobrake: (typeof AUTOBRAKE)[number] | undefined;
+  /** The autobrake mode armed, by name. */
+  autobrake: string | undefined;
   armRequested: boolean;
 }
 
@@ -147,7 +185,10 @@ export class FenixBtv implements Instrument {
 
   private published: { armed?: boolean; canArm?: boolean } = {};
 
-  constructor(bus: EventBus) {
+  constructor(
+    bus: EventBus,
+    private readonly autobrakes: Autobrake = fenixAutobrake,
+  ) {
     this.pub = bus.getPublisher<BtvArmEvents>();
     const sub = bus.getSubscriber<FmsOansData>();
     sub.on('oansExitCoordinates').handle((c: { lat: number; long: number }) => {
@@ -180,7 +221,7 @@ export class FenixBtv implements Instrument {
       onGround: !!SimVar.GetSimVarValue('SIM ON GROUND', 'bool'),
       parkingBrake: SimVar.GetSimVarValue('BRAKE PARKING POSITION', 'percent over 100'),
       spoilers: SimVar.GetSimVarValue('SPOILERS LEFT POSITION', 'percent over 100'),
-      autobrake: AUTOBRAKE.find((a) => SimVar.GetSimVarValue(a.light, 'number') > 0.5),
+      autobrake: this.autobrakes.armed(),
       armRequested: SimVar.GetSimVarValue(ARM_VAR, 'number') > 0.5,
     };
   }
@@ -246,13 +287,13 @@ export class FenixBtv implements Instrument {
   /** Armed or not, and the start of the rollout. */
   private watch(r: Reading): void {
     if (this.takeoverAt !== null) {
-      // The autobrake button was pressed: it has the brakes only if its light went out.
+      // The autobrake was taken off: it has the brakes only if it is still armed.
       if (r.time - this.takeoverAt < TAKEOVER_CHECK_S) {
         return;
       }
       this.takeoverAt = null;
       if (r.autobrake) {
-        log(`takeover-failed-${r.autobrake.name}-still-armed:-Fenix-autobrake-keeps-the-brakes`);
+        log(`takeover-failed-${r.autobrake}-still-armed:-the-autobrake-keeps-the-brakes`);
         return;
       }
       this.begin(r);
@@ -275,16 +316,11 @@ export class FenixBtv implements Instrument {
       this.begin(r);
       return;
     }
-    // Take the brakes from Fenix's autobrake before it starts (2-4 s after the spoilers):
-    // press its lit button, as a finger would, and check it went off. Fenix's momentary
-    // buttons count: a press adds one (odd, held) and the release another (even).
-    const button = r.autobrake.button;
-    const count = Math.round(SimVar.GetSimVarValue(button, 'number'));
-    const released = count % 2 === 0 ? count : count + 1;
-    SimVar.SetSimVarValue(button, 'number', released + 1);
-    setTimeout(() => SimVar.SetSimVarValue(button, 'number', released + 2), 150);
+    // Take the brakes from the autobrake before it starts (2-4 s after the spoilers), as
+    // the crew would, and check it went off.
+    this.autobrakes.disarm();
     this.takeoverAt = r.time;
-    log(`takeover:-${r.autobrake.name}-pressed-off-at-${Math.round(r.gs / KT)}kt-exit-${Math.round(this.ahead(r))}m`);
+    log(`takeover:-${r.autobrake}-taken-off-at-${Math.round(r.gs / KT)}kt-exit-${Math.round(this.ahead(r))}m`);
   }
 
   private begin(r: Reading): void {
@@ -324,7 +360,7 @@ export class FenixBtv implements Instrument {
         : r.time - this.startedAt > 2 && r.accel > 0.5
           ? 'thrust'
           : r.autobrake
-            ? `autobrake-${r.autobrake.name}-armed-again`
+            ? `autobrake-${r.autobrake}-armed-again`
             : !this.exit
               ? 'exit-cleared'
               : r.gs <= this.releaseSpeed

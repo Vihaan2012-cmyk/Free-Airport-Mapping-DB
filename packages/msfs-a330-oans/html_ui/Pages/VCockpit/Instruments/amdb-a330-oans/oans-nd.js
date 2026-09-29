@@ -67959,13 +67959,38 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   var TAKEOVER_CHECK_S = 0.5;
   var LIMIT_S = 90;
   var ARM_VAR = "L:AMDB_BTV_ARM";
-  var AUTOBRAKE = [
+  var FENIX_AUTOBRAKE = [
     { light: "L:I_MIP_AUTOBRAKE_LO_L", button: "L:S_MIP_AUTOBRAKE_LO", name: "LO" },
     { light: "L:I_MIP_AUTOBRAKE_MED_L", button: "L:S_MIP_AUTOBRAKE_MED", name: "MED" },
     { light: "L:I_MIP_AUTOBRAKE_MAX_L", button: "L:S_MIP_AUTOBRAKE_MAX", name: "MAX" }
   ];
+  var fenixAutobrake = {
+    armed: () => {
+      var _a7;
+      return (_a7 = FENIX_AUTOBRAKE.find((a) => SimVar.GetSimVarValue(a.light, "number") > 0.5)) == null ? void 0 : _a7.name;
+    },
+    disarm: () => {
+      const lit = FENIX_AUTOBRAKE.find((a) => SimVar.GetSimVarValue(a.light, "number") > 0.5);
+      if (!lit) {
+        return;
+      }
+      const count = Math.round(SimVar.GetSimVarValue(lit.button, "number"));
+      const released = count % 2 === 0 ? count : count + 1;
+      SimVar.SetSimVarValue(lit.button, "number", released + 1);
+      setTimeout(() => SimVar.SetSimVarValue(lit.button, "number", released + 2), 150);
+    }
+  };
+  var fbwAutobrake = {
+    armed: () => {
+      var _a7;
+      const mode = Math.round(SimVar.GetSimVarValue("L:A32NX_AUTOBRAKES_ARMED_MODE", "number"));
+      return mode > 0 ? (_a7 = ["", "LO", "MED", "MAX"][mode]) != null ? _a7 : "MODE ".concat(mode) : void 0;
+    },
+    disarm: () => SimVar.SetSimVarValue("K:A32NX.AUTOBRAKE_SET_DISARM", "number", 0)
+  };
   var FenixBtv = class {
-    constructor(bus) {
+    constructor(bus, autobrakes = fenixAutobrake) {
+      this.autobrakes = autobrakes;
       this.status = Subject.create({ state: 0 /* Off */, exit: null, metres: null, missed: false });
       this.exit = null;
       this.exitName = null;
@@ -68021,7 +68046,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         onGround: !!SimVar.GetSimVarValue("SIM ON GROUND", "bool"),
         parkingBrake: SimVar.GetSimVarValue("BRAKE PARKING POSITION", "percent over 100"),
         spoilers: SimVar.GetSimVarValue("SPOILERS LEFT POSITION", "percent over 100"),
-        autobrake: AUTOBRAKE.find((a) => SimVar.GetSimVarValue(a.light, "number") > 0.5),
+        autobrake: this.autobrakes.armed(),
         armRequested: SimVar.GetSimVarValue(ARM_VAR, "number") > 0.5
       };
     }
@@ -68085,7 +68110,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         }
         this.takeoverAt = null;
         if (r.autobrake) {
-          log("takeover-failed-".concat(r.autobrake.name, "-still-armed:-Fenix-autobrake-keeps-the-brakes"));
+          log("takeover-failed-".concat(r.autobrake, "-still-armed:-the-autobrake-keeps-the-brakes"));
           return;
         }
         this.begin(r);
@@ -68107,13 +68132,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.begin(r);
         return;
       }
-      const button = r.autobrake.button;
-      const count = Math.round(SimVar.GetSimVarValue(button, "number"));
-      const released = count % 2 === 0 ? count : count + 1;
-      SimVar.SetSimVarValue(button, "number", released + 1);
-      setTimeout(() => SimVar.SetSimVarValue(button, "number", released + 2), 150);
+      this.autobrakes.disarm();
       this.takeoverAt = r.time;
-      log("takeover:-".concat(r.autobrake.name, "-pressed-off-at-").concat(Math.round(r.gs / KT), "kt-exit-").concat(Math.round(this.ahead(r)), "m"));
+      log("takeover:-".concat(r.autobrake, "-taken-off-at-").concat(Math.round(r.gs / KT), "kt-exit-").concat(Math.round(this.ahead(r)), "m"));
     }
     begin(r) {
       var _a7;
@@ -68141,7 +68162,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return;
       }
       const ahead = this.ahead(r);
-      const stop = !r.onGround ? "left-the-ground" : r.parkingBrake > 0.5 ? "parking-brake" : r.time - this.startedAt > 2 && r.accel > 0.5 ? "thrust" : r.autobrake ? "autobrake-".concat(r.autobrake.name, "-armed-again") : !this.exit ? "exit-cleared" : r.gs <= this.releaseSpeed ? "".concat(Math.round(this.releaseSpeed / KT), "kt") : ahead < -30 ? "exit-passed" : r.time - this.startedAt > LIMIT_S ? "time-limit" : null;
+      const stop = !r.onGround ? "left-the-ground" : r.parkingBrake > 0.5 ? "parking-brake" : r.time - this.startedAt > 2 && r.accel > 0.5 ? "thrust" : r.autobrake ? "autobrake-".concat(r.autobrake, "-armed-again") : !this.exit ? "exit-cleared" : r.gs <= this.releaseSpeed ? "".concat(Math.round(this.releaseSpeed / KT), "kt") : ahead < -30 ? "exit-passed" : r.time - this.startedAt > LIMIT_S ? "time-limit" : null;
       if (stop) {
         log("released:-".concat(stop, "-at-").concat((r.gs / KT).toFixed(1), "kt-exit-").concat(Math.round(ahead), "m"));
         this.releaseFrames = 5;
@@ -81159,7 +81180,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       const side = this.instrumentIndex === 2 ? "R" : "L";
       const fcu = new URL(((_a7 = this.getAttribute("Url")) != null ? _a7 : "coui://x").toLowerCase()).searchParams.get("aircraft") === "fbw" ? "fbw" : "fenix";
       const captain = side === "L";
-      const braking = captain && fcu === "fenix";
+      const braking = captain;
       reportOnce("nd-side-".concat(side, "-").concat(fcu));
       this.fenix = new FenixOansPublisher(this.bus, side, fcu);
       this.display = new OansDisplay(this.bus, side);
@@ -81182,7 +81203,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.backplane.addPublisher("resetPanel", new ResetPanelSimvarPublisher(this.bus));
       let btvStatus;
       if (braking) {
-        const btv = new FenixBtv(this.bus);
+        const btv = new FenixBtv(this.bus, fcu === "fbw" ? fbwAutobrake : fenixAutobrake);
         this.backplane.addInstrument("btv-braking", btv);
         btvStatus = btv.status;
         btv.status.sub((s) => this.bus.getPublisher().pub("amdb_btv_status", s, true, true), true);
@@ -81195,10 +81216,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           SimVar.SetSimVarValue("L:AMDB_BTV_EXIT_SELECTED", "number", exit ? 1 : 0);
           reportOnce("btv-exit-".concat(exit != null ? exit : "cleared"));
         });
-      } else if (fcu === "fenix") {
-        btvStatus = ConsumerSubject.create(this.bus.getSubscriber().on("amdb_btv_status"), BTV_IDLE);
       } else {
-        btvStatus = Subject.create(BTV_IDLE);
+        btvStatus = ConsumerSubject.create(this.bus.getSubscriber().on("amdb_btv_status"), BTV_IDLE);
       }
       this.backplane.init();
       const content = document.getElementById("OANS_CONTENT");
