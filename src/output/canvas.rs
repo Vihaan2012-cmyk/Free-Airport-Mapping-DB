@@ -14,6 +14,16 @@ use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
 use anyhow::{anyhow, Context, Result};
 use pdf_writer::types::LineCapStyle;
 use pdf_writer::{Content, Name, Str};
+
+/// A page's drawing commands, compressed for its stream (FlateDecode). They are text, a
+/// chart's terrain is thousands of small shapes, and unpacked they made a chart close to
+/// a megabyte.
+pub(crate) fn deflate(data: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut z = flate2::write::ZlibEncoder::new(Vec::with_capacity(data.len() / 4), flate2::Compression::best());
+    let _ = z.write_all(data);
+    z.finish().unwrap_or_default()
+}
 use std::path::{Path, PathBuf};
 
 /// What a chart is drawn with.
@@ -66,21 +76,33 @@ fn is_bold(font: Name) -> bool {
 // The PDF stream, which is what it always was.
 // ---------------------------------------------------------------------------------
 
+/// A position or size on the page, to the hundredth of a point (a thirtieth of a
+/// millimetre at 1:1): finer than any screen or press shows, and a third the digits of a
+/// float's, which is most of what a chart's terrain is written as.
+fn pt(v: f32) -> f32 {
+    (v * 100.0).round() / 100.0
+}
+
+/// A colour component to a thousandth, finer than eight bits a channel.
+fn tone(v: f32) -> f32 {
+    (v * 1000.0).round() / 1000.0
+}
+
 impl Canvas for Content {
     fn move_to(&mut self, x: f32, y: f32) {
-        Content::move_to(self, x, y);
+        Content::move_to(self, pt(x), pt(y));
     }
     fn line_to(&mut self, x: f32, y: f32) {
-        Content::line_to(self, x, y);
+        Content::line_to(self, pt(x), pt(y));
     }
     fn cubic_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32) {
-        Content::cubic_to(self, x1, y1, x2, y2, x3, y3);
+        Content::cubic_to(self, pt(x1), pt(y1), pt(x2), pt(y2), pt(x3), pt(y3));
     }
     fn close_path(&mut self) {
         Content::close_path(self);
     }
     fn rect(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        Content::rect(self, x, y, w, h);
+        Content::rect(self, pt(x), pt(y), pt(w), pt(h));
     }
     fn fill_nonzero(&mut self) {
         Content::fill_nonzero(self);
@@ -101,19 +123,19 @@ impl Canvas for Content {
         Content::clip_nonzero(self);
     }
     fn set_fill_gray(&mut self, grey: f32) {
-        Content::set_fill_gray(self, grey);
+        Content::set_fill_gray(self, tone(grey));
     }
     fn set_fill_rgb(&mut self, r: f32, g: f32, b: f32) {
-        Content::set_fill_rgb(self, r, g, b);
+        Content::set_fill_rgb(self, tone(r), tone(g), tone(b));
     }
     fn set_stroke_gray(&mut self, grey: f32) {
-        Content::set_stroke_gray(self, grey);
+        Content::set_stroke_gray(self, tone(grey));
     }
     fn set_stroke_rgb(&mut self, r: f32, g: f32, b: f32) {
-        Content::set_stroke_rgb(self, r, g, b);
+        Content::set_stroke_rgb(self, tone(r), tone(g), tone(b));
     }
     fn set_line_width(&mut self, w: f32) {
-        Content::set_line_width(self, w);
+        Content::set_line_width(self, pt(w));
     }
     fn set_dash(&mut self, pattern: &[f32], phase: f32) {
         Content::set_dash_pattern(self, pattern.iter().copied(), phase);
@@ -128,7 +150,7 @@ impl Canvas for Content {
         self.begin_text();
         self.set_fill_gray(grey);
         self.set_font(font, size);
-        self.next_line(x, y);
+        self.next_line(pt(x), pt(y));
         self.show(Str(&super::winansi(s)));
         self.end_text();
     }
@@ -137,7 +159,7 @@ impl Canvas for Content {
         self.set_fill_gray(grey);
         self.set_font(font, size);
         // A quarter turn anticlockwise about the point given.
-        self.set_text_matrix([0.0, 1.0, -1.0, 0.0, x, y]);
+        self.set_text_matrix([0.0, 1.0, -1.0, 0.0, pt(x), pt(y)]);
         self.show(Str(&super::winansi(s)));
         self.end_text();
     }
@@ -146,7 +168,7 @@ impl Canvas for Content {
         self.begin_text();
         self.set_fill_rgb(rgb.0, rgb.1, rgb.2);
         self.set_font(font, size);
-        self.set_text_matrix([cos, sin, -sin, cos, x, y]);
+        self.set_text_matrix([tone(cos), tone(sin), tone(-sin), tone(cos), pt(x), pt(y)]);
         self.show(Str(&super::winansi(s)));
         self.end_text();
     }
