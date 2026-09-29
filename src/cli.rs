@@ -196,6 +196,10 @@ enum Cmd {
         /// Lowest CPU, disk and memory priority, to leave a simulator undisturbed.
         #[arg(long)]
         background: bool,
+        /// Built airports: each one's charts go into <airports>/<ICAO>/charts/, beside its
+        /// layers, in place of a folder per airport under --out.
+        #[arg(long)]
+        airports: Option<PathBuf>,
     },
     /// Approach charts for a list of airports, in one pass.
     ApproachCharts {
@@ -1347,8 +1351,8 @@ pub fn run() -> Result<()> {
         Cmd::Procedures { icao, json } => procedures_cmd(&icao, json),
         Cmd::Terrain { icao, radius_km, step_m } => terrain_cmd(&icao, radius_km, step_m),
         Cmd::Mora { bbox, step_m, json, jobs, cache, offline, refresh } => mora_cmd(bbox, step_m, json, jobs, cache, offline, refresh),
-        Cmd::FaaCharts { icaos, out, cycle, jobs, rate, background } => {
-            let opts = crate::output::faa_charts::Options { out, cycle, jobs, rate: crate::output::faa_charts::parse_rate(&rate)?, only: icaos, background };
+        Cmd::FaaCharts { icaos, out, cycle, jobs, rate, background, airports } => {
+            let opts = crate::output::faa_charts::Options { out, cycle, jobs, rate: crate::output::faa_charts::parse_rate(&rate)?, only: icaos, background, airports };
             crate::output::faa_charts::run(&opts).map(|_| ())
         }
         Cmd::ApproachCharts { icaos, list, out_dir, jobs, kind, every_runway, no_msa } => {
