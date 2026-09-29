@@ -109,35 +109,44 @@ impl Store {
         Ok(Store { out: cfg.out.clone(), cfg, index, retention: Retention::KeepAll, loaded: Mutex::new(HashMap::new()), building: Mutex::new(HashMap::new()), xp_building: Mutex::new(HashSet::new()) })
     }
 
-    /// Airports offered to the client: everything already generated plus every
-    /// large/medium airport in the index. Rows follow the SDK `AmdbSearchResponse`;
-    /// the query is a prefix match on `idarpt`, `iata` or `name`, as documented.
+    /// Airports offered to the client. Rows follow the SDK `AmdbSearchResponse`; the query
+    /// is a prefix match on `idarpt`, `iata` or `name`, as documented.
+    ///
+    /// With no query, the whole list an OANS control panel opens with: the large and medium
+    /// airports only. FlyByWire's panel puts every airport it is given into a dropdown, an
+    /// element each, on every ND it runs on; with all 43,745 built airports that took the
+    /// simulator's cockpit browser (Coherent GT) down seconds after the panel loaded. About
+    /// five thousand is what it handled before everything was built. A typed query finds
+    /// any built airport, and is short enough to stay small.
     pub fn search(&self, q: &str) -> Vec<Value> {
         let q = q.trim().to_uppercase();
+        let matches = |idarpt: &str, iata: Option<&str>, name: &str| q.is_empty() || idarpt.starts_with(&q) || iata.is_some_and(|i| i.to_uppercase().starts_with(&q)) || name.to_uppercase().starts_with(&q);
+        let built = |icao: &str| self.out.join(icao).join("manifest.json").is_file();
         let mut out: HashMap<String, (String, Option<String>, String, f64, f64, Option<f64>)> = HashMap::new();
         for e in self.index.by_icao.values() {
             let big = matches!(e.kind.as_deref(), Some("large_airport") | Some("medium_airport"));
-            if !big && !self.out.join(&e.icao).join("manifest.json").is_file() {
+            let name = e.name.clone().unwrap_or_default();
+            if (q.is_empty() && !big) || !matches(&e.icao, e.iata.as_deref(), &name) || (!big && !built(&e.icao)) {
                 continue;
             }
-            out.insert(e.icao.clone(), (e.icao.clone(), e.iata.clone(), e.name.clone().unwrap_or_default(), e.lat, e.lon, e.elevation_ft));
+            out.insert(e.icao.clone(), (e.icao.clone(), e.iata.clone(), name, e.lat, e.lon, e.elevation_ft));
         }
-        // Generated airports not in the index (e.g. built from a local apt.dat).
-        if let Ok(rd) = std::fs::read_dir(&self.out) {
-            for d in rd.flatten() {
-                let icao = d.file_name().to_string_lossy().to_uppercase();
-                if out.contains_key(&icao) || !d.path().join("manifest.json").is_file() {
-                    continue;
-                }
-                if let Ok(m) = std::fs::read_to_string(d.path().join("manifest.json")).and_then(|t| serde_json::from_str::<Manifest>(&t).map_err(std::io::Error::other)) {
-                    out.insert(icao.clone(), (icao, m.iata.clone(), m.name.clone().unwrap_or_default(), m.arp[0], m.arp[1], m.elevation_ft));
+        // Generated airports not in the index (e.g. built from a local apt.dat), for a typed
+        // query: only a folder whose name the query begins is opened.
+        if !q.is_empty() {
+            if let Ok(rd) = std::fs::read_dir(&self.out) {
+                for d in rd.flatten() {
+                    let icao = d.file_name().to_string_lossy().to_uppercase();
+                    if !icao.starts_with(&q) || out.contains_key(&icao) || !d.path().join("manifest.json").is_file() {
+                        continue;
+                    }
+                    if let Ok(m) = std::fs::read_to_string(d.path().join("manifest.json")).and_then(|t| serde_json::from_str::<Manifest>(&t).map_err(std::io::Error::other)) {
+                        out.insert(icao.clone(), (icao, m.iata.clone(), m.name.clone().unwrap_or_default(), m.arp[0], m.arp[1], m.elevation_ft));
+                    }
                 }
             }
         }
-        let mut rows: Vec<(String, Option<String>, String, f64, f64, Option<f64>)> = out
-            .into_values()
-            .filter(|(idarpt, iata, name, _, _, _)| q.is_empty() || idarpt.starts_with(&q) || iata.as_deref().map_or(false, |i| i.to_uppercase().starts_with(&q)) || name.to_uppercase().starts_with(&q))
-            .collect();
+        let mut rows: Vec<(String, Option<String>, String, f64, f64, Option<f64>)> = out.into_values().collect();
         rows.sort_by(|a, b| a.0.cmp(&b.0));
         rows.into_iter().map(|(idarpt, iata, name, lat, lon, elev)| super::compat::search_row(&idarpt, iata.as_deref(), &name, lat, lon, elev)).collect()
     }
