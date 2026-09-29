@@ -154,7 +154,7 @@ impl Limiter {
 }
 
 #[cfg(windows)]
-fn enter_background() {
+pub(crate) fn enter_background() {
     use winapi::um::processthreadsapi::{GetCurrentProcess, SetPriorityClass};
     // PROCESS_MODE_BACKGROUND_BEGIN, which lowers disk and memory priority too, then
     // IDLE_PRIORITY_CLASS: the other way round, background mode puts the class back to
@@ -164,7 +164,7 @@ fn enter_background() {
 }
 
 #[cfg(not(windows))]
-fn enter_background() {}
+pub(crate) fn enter_background() {}
 
 /// Download a cycle's charts. Returns the cycle's folder.
 pub fn run(opts: &Options) -> Result<PathBuf> {

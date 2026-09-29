@@ -174,6 +174,29 @@ enum Cmd {
         #[arg(long)]
         open: bool,
     },
+    /// Charts for every American airport with published procedures, drawn from the FAA's
+    /// CIFP (its coded procedures, one 9 MB file a cycle): each approach, departure and
+    /// arrival, into <airports>/<ICAO>/charts/ beside the airport's layers. Minima are
+    /// worked out from terrain and obstacles; nothing of the FAA's printed charts is fetched.
+    CifpCharts {
+        /// Only these airports; every one with procedures when left out.
+        icaos: Vec<String>,
+        /// Built airports: each one's charts go into <airports>/<ICAO>/charts/.
+        #[arg(long)]
+        airports: PathBuf,
+        /// The cycle, e.g. 2610; the one in force today when left out.
+        #[arg(long)]
+        cycle: Option<String>,
+        /// Airports drawn at once.
+        #[arg(long, default_value_t = 2)]
+        jobs: usize,
+        /// Lowest CPU, disk and memory priority, to leave a simulator undisturbed.
+        #[arg(long)]
+        background: bool,
+        /// Leave off the minimum safe altitude ring, which reads terrain 25 miles round.
+        #[arg(long)]
+        no_msa: bool,
+    },
     /// Every chart the FAA publishes (approaches, departures, arrivals, airport diagrams,
     /// hot spots, takeoff and alternate minimums), downloaded from its d-TPP for one cycle
     /// and filed by airport, with an index.csv. Resumes where it stopped; a cycle next to
@@ -1351,6 +1374,7 @@ pub fn run() -> Result<()> {
         Cmd::Procedures { icao, json } => procedures_cmd(&icao, json),
         Cmd::Terrain { icao, radius_km, step_m } => terrain_cmd(&icao, radius_km, step_m),
         Cmd::Mora { bbox, step_m, json, jobs, cache, offline, refresh } => mora_cmd(bbox, step_m, json, jobs, cache, offline, refresh),
+        Cmd::CifpCharts { icaos, airports, cycle, jobs, background, no_msa } => crate::output::cifp_charts::run(&crate::output::cifp_charts::Options { airports, cycle, jobs, only: icaos, background, no_msa }),
         Cmd::FaaCharts { icaos, out, cycle, jobs, rate, background, airports } => {
             let opts = crate::output::faa_charts::Options { out, cycle, jobs, rate: crate::output::faa_charts::parse_rate(&rate)?, only: icaos, background, airports };
             crate::output::faa_charts::run(&opts).map(|_| ())

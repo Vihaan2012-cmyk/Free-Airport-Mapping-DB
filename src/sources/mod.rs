@@ -1,6 +1,7 @@
 //! Data sources. Each produces a `SourceAirport` (or part of one).
 
 pub mod copernicus;
+pub mod cifp;
 pub mod dtpp;
 pub mod faa;
 pub mod faa_amdb;

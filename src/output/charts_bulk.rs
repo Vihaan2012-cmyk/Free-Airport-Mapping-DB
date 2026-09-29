@@ -94,7 +94,7 @@ pub fn run(icaos: &[String], opts: &Options) -> Result<()> {
     Ok(())
 }
 
-/// One chart.
+/// One chart, into the output folder, with the FAA's published minima where it has them.
 fn one(
     procedures: procedures::AirportProcedures,
     runway: Option<&str>,
@@ -103,6 +103,25 @@ fn one(
     idx: &crate::sources::index::AirportIndex,
     opts: &Options,
 ) -> Result<PathBuf> {
+    draw(procedures, runway, http, cache, idx, opts, true, None)
+}
+
+/// One approach chart. `runway` picks the approach (the fullest when None); `published`
+/// reads the FAA's own minima off its chart for an American approach, which fetches that
+/// chart's PDF, and without it every minimum is worked out; `out` is where it goes (in
+/// the output folder, named for the airport and runway, when None).
+#[allow(clippy::too_many_arguments)]
+pub fn draw(
+    procedures: procedures::AirportProcedures,
+    runway: Option<&str>,
+    http: &crate::sources::http::Http,
+    cache: &crate::cache::Cache,
+    idx: &crate::sources::index::AirportIndex,
+    opts: &Options,
+    published: bool,
+    out: Option<PathBuf>,
+) -> Result<PathBuf> {
+    let use_published = published;
     let setup = crate::approach::prepare_from(procedures, http, cache, idx, runway, crate::approach::Options { quiet: true, wide_terrain: !opts.no_msa, ..Default::default() })?;
     let procedure = setup.procedure();
     // What sort of approach it is sets the floor and the protected area. The data says,
@@ -112,11 +131,11 @@ fn one(
         .or_else(|| procedure.approach_type.map(crate::minima::Approach::for_type))
         .unwrap_or(Approach::PrecisionCat1);
     let est = crate::approach::estimate(&setup, kind);
-    let published = crate::approach::published(http, cache, &setup, kind);
+    let published = if use_published { crate::approach::published(http, cache, &setup, kind) } else { None };
     let est = crate::approach::with_published(est, published.as_ref());
     let worked_out: Vec<(char, f64)> = crate::approach::circling_table(&setup).into_iter().map(|(letter, ft, _)| (letter, ft)).collect();
     let circling = crate::approach::circling_from(published.as_ref(), worked_out);
-    let out = opts.out_dir.join(format!("{}-RW{}.pdf", setup.procedures.icao, procedure.runway));
+    let out = out.unwrap_or_else(|| opts.out_dir.join(format!("{}-RW{}.pdf", setup.procedures.icao, procedure.runway)));
     // The beacons near the airport, and the localiser serving the runway, which the plan
     // draws and the fixes are measured from.
     let navaids = crate::sources::navdata::beacons_near(setup.procedures.lat, setup.procedures.lon, 40.0);
@@ -152,7 +171,7 @@ fn one(
     // The airway the published missed approach joins, which only its own words give.
     let missed_airway = published.as_ref().and_then(|p| p.text.missed_approach.as_deref()).and_then(crate::approach::missed_airway);
     // The localiser minimum for a glidepath failure, read off the same chart.
-    let localiser = crate::approach::published_localiser(http, cache, &setup, kind);
+    let localiser = if use_published { crate::approach::published_localiser(http, cache, &setup, kind) } else { None };
     let published_msa = crate::sources::navdata::msa(&setup.procedures.icao, (setup.procedures.lat, setup.procedures.lon));
     let msa_sectors: Vec<crate::minima::Sector> = match &published_msa {
         Some(m) => m.sectors.iter().map(|s| crate::minima::Sector { from_deg: s.from_deg, to_deg: s.to_deg, altitude_ft: s.altitude_ft }).collect(),
