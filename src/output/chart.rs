@@ -808,7 +808,7 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
     pdf.type1_font(font).base_font(Name(b"Helvetica")).encoding_predefined(Name(b"WinAnsiEncoding"));
     pdf.type1_font(bold).base_font(Name(b"Helvetica-Bold")).encoding_predefined(Name(b"WinAnsiEncoding"));
     let data = c.finish();
-    pdf.stream(stream, &data);
+    pdf.stream(stream, &crate::output::canvas::deflate(&data)).filter(pdf_writer::Filter::FlateDecode);
     let bytes = pdf.finish();
     if let Some(parent) = out.parent() {
         if !parent.as_os_str().is_empty() {

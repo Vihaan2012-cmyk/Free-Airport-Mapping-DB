@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Charts are 4-7 times smaller.** Every PDF page is compressed (FlateDecode) and its
+  numbers written to the hundredth of a point rather than a float's full length: an
+  airport diagram 586 KB -> 132 KB, an ILS chart 892 KB -> 133 KB, a STAR 2.1 MB ->
+  303 KB, drawn the same.
+- `amdbgen redraw-charts --airports DIR` draws every built airport's chart.pdf again, several
+  at once.
+
 ## 1.2.10 (2026-09-29) · A330 OANS 1.0.0 · A320 OANS 1.0.8
 
 **The OANS no longer crashes the simulator now that every airport is built.**

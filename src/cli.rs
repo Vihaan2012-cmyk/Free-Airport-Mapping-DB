@@ -52,6 +52,19 @@ enum Cmd {
     },
     /// Write a Jeppesen-style airport diagram as a PDF (<ICAO>/chart.pdf) for a built airport.
     Chart(PreviewArgs),
+    /// Draw chart.pdf (the airport diagram) again for every built airport in a folder,
+    /// several at once: after a change to how charts are drawn or written.
+    RedrawCharts {
+        /// The built airports' folder.
+        #[arg(long)]
+        airports: PathBuf,
+        /// Airports drawn at once.
+        #[arg(long, default_value_t = 8)]
+        jobs: usize,
+        /// Lowest CPU, disk and memory priority, to leave a simulator undisturbed.
+        #[arg(long)]
+        background: bool,
+    },
     /// Write an OANS-style moving-map preview (viewer.html) for a built airport.
     View(PreviewArgs),
     /// Write X-Plane OANS data (<ICAO>/oans.lua and index.lua) for the FlyWithLua moving map, and optionally install the script.
@@ -932,6 +945,58 @@ fn write_preview(folder: &Path, kind: Preview, out: Option<&Path>) -> Result<Pat
     Ok(out)
 }
 
+/// chart.pdf again for every built airport in a folder, several at once, where one is
+/// there already or asked for: the airports that have a diagram keep one, drawn anew.
+fn redraw_charts(airports: &Path, jobs: usize, background: bool) -> Result<()> {
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    if background {
+        crate::output::faa_charts::enter_background();
+    }
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(airports)
+        .with_context(|| format!("read {}", airports.display()))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|d| d.join("manifest.json").is_file() && d.join("chart.pdf").is_file())
+        .collect();
+    dirs.sort();
+    let total = dirs.len();
+    term::start(&format!("Drawing {total} airport diagrams again in {}", shown_path(airports)));
+    let t0 = std::time::Instant::now();
+    let (done, failed, before, after) = (AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0));
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs.max(1)).build()?;
+    pool.install(|| {
+        dirs.par_iter().for_each(|dir| {
+            let out = dir.join("chart.pdf");
+            before.fetch_add(std::fs::metadata(&out).map(|m| m.len() as usize).unwrap_or(0), Ordering::Relaxed);
+            match crate::output::chart::write(dir, &out) {
+                Ok(n) => {
+                    after.fetch_add(n as usize, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    failed.fetch_add(1, Ordering::Relaxed);
+                    term::warn(&format!("{}: {e:#}", dir.display()));
+                }
+            }
+            let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+            if n % 2000 == 0 || n == total {
+                term::info(&format!("{n}/{total} diagrams"));
+            }
+        });
+    });
+    term::success(&format!(
+        "{total} airport diagrams drawn again in {}: {} before, {} now{}",
+        term::human_secs(t0.elapsed().as_secs_f64()),
+        term::human_bytes(before.load(Ordering::Relaxed) as u64),
+        term::human_bytes(after.load(Ordering::Relaxed) as u64),
+        match failed.load(Ordering::Relaxed) {
+            0 => String::new(),
+            f => format!(", {f} failed"),
+        }
+    ));
+    Ok(())
+}
+
 /// Jeppesen-style airport diagram PDF for a built airport folder.
 fn chart_pdf(folder: &Path, out: Option<&Path>) -> Result<PathBuf> {
     let out = out.map(Path::to_path_buf).unwrap_or_else(|| folder.join("chart.pdf"));
@@ -1358,6 +1423,7 @@ pub fn run() -> Result<()> {
         }
         Cmd::Info(s) => info_cmd(s),
         Cmd::Search { text, limit, index } => search_cmd(&text, limit, index),
+        Cmd::RedrawCharts { airports, jobs, background } => redraw_charts(&airports, jobs, background),
         Cmd::Chart(p) => {
             let folder = resolve_target(&p.dir, &p.target);
             let out = chart_pdf(&folder, p.out.as_deref())?;
