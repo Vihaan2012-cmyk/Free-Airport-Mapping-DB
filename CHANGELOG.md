@@ -12,6 +12,14 @@
   procedures instead of the simulator's; minima are worked out from terrain and
   obstacles, and nothing of the FAA's printed charts is fetched. A new cycle replaces
   the folder's charts and removes the ones no longer published.
+- **The CIFP charts can be redistributed.** Everything on them is from sources free to
+  pass on: navaids, localisers and their DMEs, runway thresholds and crossing heights,
+  holds, minimum safe altitudes, grid MORA and transition altitudes all from the CIFP too,
+  obstacles from the FAA, terrain from the Copernicus DEM, the airport from our own
+  build. While they are drawn no aircraft's or simulator's navigation database is opened
+  (`navdata::use_only_cifp`); airspace and frequencies, which the CIFP lacks, are left
+  off. Every approach, departure and arrival chart now prints the Copernicus DEM and
+  OpenStreetMap credit lines in full.
 - `sources::cifp` reads CIFP into the simulator reader's `AirportProcedures`: legs with
   their path terminators, altitudes, courses, distances, turns, speeds and IAF/IF/FAF/MAP
   roles, fixes placed from the file's own waypoint, navaid and runway records, and each

@@ -5,8 +5,14 @@
 //! The procedures are the FAA's; the drawing is ours, the same as the flight bag charts
 //! drawn from the simulator's data. Nothing of the FAA's printed charts is fetched: the
 //! minima are worked out from the terrain and the obstacles, not read off the FAA's page.
-//! The navaids, holds and safe altitudes a chart prints beside the procedure come from the
-//! simulator's navigation data on this computer, where it has them.
+//!
+//! The charts are made to be passed on, so everything on them is free to pass on: the
+//! procedures, navaids, localisers, runways, holds, safe altitudes and grid MORA from the
+//! CIFP (public domain), obstacles from the FAA's Digital Obstacle File (public domain),
+//! terrain from the Copernicus DEM, the airport from our own build (OpenStreetMap, ODbL;
+//! the X-Plane Scenery Gateway) and names from OurAirports (public domain), each credited
+//! on the page. No aircraft's or simulator's navigation database is read: airspace and
+//! frequencies, which the CIFP does not carry, are left off.
 
 use crate::sources::msfs::procedures::{AirportProcedures, Kind};
 use anyhow::Result;
@@ -44,7 +50,10 @@ pub fn run(opts: &Options) -> Result<()> {
     let cache = crate::cache::Cache::for_index(false);
     let cycle = opts.cycle.clone().unwrap_or_else(|| crate::sources::dtpp::cycle(chrono::Utc::now().date_naive()));
     crate::term::step(None, &format!("Reading the FAA's CIFP for cycle {cycle}"));
-    let all = crate::sources::cifp::parse(&crate::sources::cifp::file(&http, &cache, &cycle)?);
+    let (all, nav) = crate::sources::cifp::read(&crate::sources::cifp::file(&http, &cache, &cycle)?, &cycle);
+    // Charts to be passed on hold only what may be: from here on every navaid, ILS, runway,
+    // hold, safe altitude and date comes from the CIFP, and no licensed database is read.
+    crate::sources::navdata::use_only_cifp(nav);
     let mut idx = crate::sources::index::AirportIndex::default();
     idx.load_ourairports_online(&http, &cache)?;
 

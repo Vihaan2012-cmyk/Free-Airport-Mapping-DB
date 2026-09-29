@@ -852,7 +852,7 @@ fn draw_header(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal) -> f32 {
     text(c, b, 9.0, pw - MARGIN - bw + 5.0, top - 26.0, &badge, 1.0);
     let middle = pw / 2.0;
     text_centred(c, b, 11.0, middle, top - 12.0, "AMDB V1", INK);
-    if let Some((from, to)) = crate::sources::msfs::airac_dates() {
+    if let Some((from, to)) = crate::sources::navdata::cycle_dates() {
         text_centred(c, f, 6.5, middle, top - 23.0, &format!("EFF {from} - {to}"), 0.3);
     }
     top - 34.0
@@ -1096,12 +1096,13 @@ fn draw_footer(c: &mut dyn Canvas, f: Name, t: &Terminal) {
         MARGIN,
         MARGIN + 1.0,
         &format!(
-            "AMDB V1 - drawn {printed} - procedure {} - fixes, MORA, MSA, holds and airspace {} - terrain Copernicus DEM (ESA)",
+            "AMDB V1 - drawn {printed} - procedure {} - fixes, MORA, MSA, holds and airspace {}",
             t.airport.source,
             crate::sources::navdata::source().unwrap_or_else(|| "simulator".into())
         ),
         0.45,
     );
+    draw_credits(c, f);
 }
 
 /// The page. Returns the window its map shows.

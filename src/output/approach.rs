@@ -23,6 +23,21 @@ pub mod terminal;
 const W: f32 = 595.0; // A4 portrait, points
 const H: f32 = 842.0;
 const MARGIN: f32 = 28.0;
+
+/// What the free sources a chart is drawn from ask to be credited with, wherever the
+/// chart goes: the Copernicus DEM licence's own wording, and OpenStreetMap's. Printed under
+/// the footer of every approach, departure and arrival chart.
+pub(crate) const CREDITS: [&str; 2] = [
+    "Terrain: Copernicus DEM GLO-30, (c) DLR e.V. 2010-2014 and (c) Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA; all rights reserved.",
+    "Airport: (c) OpenStreetMap contributors, ODbL (openstreetmap.org/copyright), and the X-Plane Scenery Gateway. Obstacles: FAA Digital Obstacle File.",
+];
+
+/// The credit lines, below the footer's own.
+pub(crate) fn draw_credits(c: &mut dyn Canvas, f: Name) {
+    for (i, line) in CREDITS.iter().enumerate() {
+        text(c, f, 5.2, MARGIN, MARGIN - 6.5 - 6.5 * i as f32, line, 0.45);
+    }
+}
 const INK: f32 = 0.10;
 const RULE: f32 = 0.30;
 /// The smallest and largest the plan view will scale itself to.
@@ -945,7 +960,7 @@ fn draw_track(c: &mut dyn Canvas, v: &View, legs: &[&Leg], start: Option<(f64, f
                 ("AF", Some(radius), Some(from)) => {
                     // Round the beacon it is measured from, at its distance, joined along
                     // the heading flown out to it.
-                    let centre = crate::sources::msfs::navaids::find_near(&leg.navaid, (lat, lon)).map(|n| (n.lat, n.lon));
+                    let centre = crate::sources::navdata::navaid_near(&leg.navaid, (lat, lon));
                     let arc = match centre {
                         Some(o) => {
                             let join = heading.and_then(|h| intercept(o, from, h, radius)).unwrap_or(from);
@@ -3614,12 +3629,14 @@ fn draw(c: &mut dyn Canvas, ch: &Chart, est: &Estimate, track: f64, f: Name, b: 
         MARGIN,
         MARGIN + 1.0,
         &format!(
-            "AMDB V1 - drawn {printed} - navigation data {} - terrain Copernicus DEM (ESA) - obstacles {} - airport OpenStreetMap and the X-Plane Scenery Gateway",
+            "AMDB V1 - drawn {printed} - procedure {} - navigation data {} - obstacles {}",
+            ch.airport.source,
             ch.airac.as_ref().map(|(from, to)| format!("in force {from} to {to}")).unwrap_or_else(|| ch.airport.source.clone()),
             ch.obstacles.first().map(|o| o.source).unwrap_or("none found")
         ),
         0.45,
     );
+    draw_credits(c, f);
     v
 }
 
@@ -3768,7 +3785,7 @@ pub fn with_chart<R>(
         runway_ends: setup.runway_ends,
         runway_size: setup.runway_detail.as_ref().and_then(|t| t.landing_m.zip(t.width_m)),
         runway_lighting: setup.runway_detail.as_ref().map(|t| t.lighting.as_slice()).unwrap_or(&[]),
-        airac: crate::sources::msfs::airac_dates(),
+        airac: crate::sources::navdata::cycle_dates(),
         missed_climb: crate::approach::missed_approach(&setup, &est).map(|m| (m.climb_ft_per_nm, m.what)),
         coded_ft: crate::minima::coded_minimum(&setup.final_legs(), setup.tdze_ft),
         circling_only: setup.is_circling_only(),

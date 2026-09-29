@@ -223,7 +223,7 @@ pub fn draw(
         runway_ends: setup.runway_ends,
         runway_size: setup.runway_detail.as_ref().and_then(|t| t.landing_m.zip(t.width_m)),
         runway_lighting: setup.runway_detail.as_ref().map(|t| t.lighting.as_slice()).unwrap_or(&[]),
-        airac: crate::sources::msfs::airac_dates(),
+        airac: crate::sources::navdata::cycle_dates(),
         missed_climb: crate::approach::missed_approach(&setup, &est).map(|m| (m.climb_ft_per_nm, m.what)),
         coded_ft: crate::minima::coded_minimum(&setup.final_legs(), setup.tdze_ft),
         circling_only: setup.is_circling_only(),
