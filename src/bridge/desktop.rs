@@ -333,6 +333,109 @@ pub fn remove_a320_oans(community: &Path) -> Result<bool> {
     Ok(was)
 }
 
+/// Folder name of the A330 OANS (packages/msfs-a330-oans) in a Community folder.
+pub const A330_OANS_FOLDER: &str = "amdb-a330-oans";
+
+/// The Community folder has a Headwind A330 the A330 OANS can be added to: one whose
+/// panel.cfg loads FlyByWire's A339X ND and whose range knob is where the bridge expects.
+pub fn a330_oans_fits(community: &Path) -> bool {
+    let files = patcher::scan_a330_oans(community);
+    files.iter().any(|(_, p, _)| p.file_name().is_some_and(|n| n == "panel.cfg")) && files.iter().any(|(_, p, _)| p.file_name().is_some_and(|n| n != "panel.cfg"))
+}
+
+/// Why the A330 OANS does not fit a Community folder, for the log.
+pub fn headwind_diagnosis(community: &Path) -> Vec<String> {
+    let Ok(rd) = fs::read_dir(community) else {
+        return vec![format!("cannot read {}", community.display())];
+    };
+    let mut hw: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().contains("a330"))).collect();
+    hw.sort();
+    if hw.is_empty() {
+        return vec!["no A330 folder in it".to_string()];
+    }
+    let found = patcher::scan_a330_oans(community);
+    hw.iter()
+        .map(|p| {
+            let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let files: Vec<String> = found.iter().filter(|(pkg, _, _)| *pkg == name).map(|(_, f, _)| f.file_name().unwrap_or_default().to_string_lossy().to_string()).collect();
+            format!("{name}: {}", if files.is_empty() { "none of the files the A330 OANS changes".to_string() } else { files.join(", ") })
+        })
+        .collect()
+}
+
+/// The A330 OANS shipped with this program: next to the executable once installed, or
+/// the package in the source tree when run from a build folder.
+pub fn bundled_a330_oans() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let installed = dir.join("msfs").join(A330_OANS_FOLDER);
+    if installed.join("manifest.json").is_file() {
+        return Some(installed);
+    }
+    dir.ancestors().map(|a| a.join("packages").join("msfs-a330-oans")).find(|p| p.join("manifest.json").is_file())
+}
+
+/// Whether the A330 OANS is in one Community folder, and at which version.
+pub fn a330_oans_state(community: &Path) -> MapState {
+    let dest = community.join(A330_OANS_FOLDER);
+    let Some(installed) = package_version(&dest) else { return MapState::NotInstalled };
+    match bundled_a330_oans().and_then(|b| package_version(&b)) {
+        Some(available) if newer(&available, &installed) => MapState::Outdated { installed, available },
+        _ => MapState::Installed(installed),
+    }
+}
+
+/// The Headwind A330 in this Community folder still has the lines that load the A330
+/// OANS. A Headwind update replaces the files they were added to.
+pub fn headwind_loads_a330_oans(community: &Path) -> bool {
+    let files = patcher::scan_a330_oans(community);
+    !files.is_empty() && files.iter().all(|(_, _, patched)| *patched)
+}
+
+/// Install (or update) the A330 OANS into one Community folder and add it to the Headwind
+/// A330 there. Returns what was done, one line per step, for the activity log.
+pub fn install_a330_oans(community: &Path) -> Result<Vec<String>> {
+    let src = bundled_a330_oans().ok_or_else(|| anyhow!("the A330 OANS files are missing from this installation - reinstall it"))?;
+    if !a330_oans_fits(community) {
+        return Err(anyhow!("no Headwind A330 in {} that the A330 OANS can be added to (its panel.cfg or range knob behaviours are not where the A339X keeps them)", community.display()));
+    }
+    let mut notes = Vec::new();
+    let dest = community.join(A330_OANS_FOLDER);
+    if dest.exists() {
+        fs::remove_dir_all(&dest).with_context(|| format!("remove the old A330 OANS in {} (is the simulator running?)", dest.display()))?;
+    }
+    copy_dir(&src, &dest)?;
+    notes.push(format!("A330 OANS {} installed in {}", package_version(&dest).unwrap_or_default(), community.display()));
+    // The package adds its own files and replaces nothing; what makes the A330 load them
+    // is a gauge line on each ND in its panel.cfg and the range knobs' OANS positions, in
+    // the aircraft's own files, each backed up beside it and put back on removal.
+    for f in patcher::patch_a330_oans(community, false)? {
+        notes.push(format!("OANS added to the Headwind A330 (backup kept): {}", f.path.display()));
+    }
+    Ok(notes)
+}
+
+/// Add the A330 OANS to the Headwind A330 again where it is installed but an update has
+/// replaced the files it was added to. Returns the files patched.
+pub fn repatch_a330_oans(community: &Path) -> Result<Vec<PathBuf>> {
+    if !community.join(A330_OANS_FOLDER).join("manifest.json").is_file() {
+        return Ok(Vec::new());
+    }
+    Ok(patcher::patch_a330_oans(community, false)?.into_iter().map(|f| f.path).collect())
+}
+
+/// Remove the A330 OANS from one Community folder and put the Headwind A330's files back.
+/// Returns false when it was not installed there.
+pub fn remove_a330_oans(community: &Path) -> Result<bool> {
+    patcher::unpatch_a330_oans(community)?;
+    let dest = community.join(A330_OANS_FOLDER);
+    if dest.exists() {
+        fs::remove_dir_all(&dest).with_context(|| format!("remove {} (is the simulator running?)", dest.display()))?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// Folder name of the Airport Map toolbar window (packages/msfs-amdb-oans-toolbar) in a
 /// Community folder. It comes with its own download, which keeps the package in its own
 /// folder and has AMDB Bridge or the A320 OANS program put it into each simulator.
@@ -552,10 +655,23 @@ const RUN_VALUE: &str = "AMDB Bridge";
 /// installer's uninstall entry (the AppId in installer/a320-oans.iss) is there.
 #[cfg(windows)]
 pub fn standalone_a320_oans_installed() -> bool {
+    uninstall_entry_exists("8C3E51A7-4F2B-4D9A-B6E0-71A5D2C9F413")
+}
+
+/// The standalone A330 OANS download is installed: its own installer's uninstall entry
+/// (the AppId in installer/a330-oans.iss) is there.
+#[cfg(windows)]
+pub fn standalone_a330_oans_installed() -> bool {
+    uninstall_entry_exists("3F6B2D90-7A41-4E58-9C2D-A83E15F60B27")
+}
+
+/// An Inno Setup program with this AppId is installed, for this user or for all.
+#[cfg(windows)]
+fn uninstall_entry_exists(app_id: &str) -> bool {
     use winapi::shared::winerror::ERROR_SUCCESS;
     use winapi::um::winnt::KEY_READ;
     use winapi::um::winreg::{RegCloseKey, RegOpenKeyExW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
-    let sub = wide(r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{8C3E51A7-4F2B-4D9A-B6E0-71A5D2C9F413}_is1");
+    let sub = wide(&format!(r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{{{app_id}}}_is1"));
     [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE].into_iter().any(|root| unsafe {
         let mut hkey = std::ptr::null_mut();
         let found = RegOpenKeyExW(root, sub.as_ptr(), 0, KEY_READ, &mut hkey) == ERROR_SUCCESS as i32;
@@ -568,6 +684,11 @@ pub fn standalone_a320_oans_installed() -> bool {
 
 #[cfg(not(windows))]
 pub fn standalone_a320_oans_installed() -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn standalone_a330_oans_installed() -> bool {
     false
 }
 
@@ -877,6 +998,9 @@ pub fn uninstall_cleanup() -> Vec<String> {
         // The standalone A320 OANS download uses the same package; it stays while that is installed.
         if !standalone_a320_oans_installed() {
             note(remove_a320_oans(&sim.community).map(|_| ()), &format!("remove the A320 OANS from {}", sim.name));
+        }
+        if !standalone_a330_oans_installed() {
+            note(remove_a330_oans(&sim.community).map(|_| ()), &format!("remove the A330 OANS from {}", sim.name));
         }
         note(patcher::unpatch(&sim.community).map(|_| ()), &format!("restore patched aircraft in {}", sim.name));
     }

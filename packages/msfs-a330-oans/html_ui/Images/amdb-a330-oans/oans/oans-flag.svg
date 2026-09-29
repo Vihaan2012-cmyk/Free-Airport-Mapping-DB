@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+  <!-- A pilot's flag on the OANS map: a pole standing on the point, a pennant to its right. -->
+  <path d="M12 36 L12 5 L32 12 L12 19" stroke="#000000" stroke-width="6" stroke-linejoin="round" stroke-linecap="round" fill="none"/>
+  <path d="M12 5 L32 12 L12 19 Z" fill="#ff94ff"/>
+  <path d="M12 36 L12 5" stroke="#ff94ff" stroke-width="3" stroke-linecap="round" fill="none"/>
+</svg>

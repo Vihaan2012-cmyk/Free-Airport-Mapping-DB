@@ -1081,10 +1081,7 @@ const FENIX_FO_KNOB_MARK: &str = "<!--amdb-bridge-fenix-oans-fo-->";
 
 /// The knob's INC_CODE and DEC_CODE for one side: its EFIS number and OANS variable.
 fn fenix_knob_code(efis: u8, zoom: &str) -> (String, String) {
-    let nd = format!("L:S_FCU_EFIS{efis}_ND_ZOOM");
-    let inc = format!("({zoom}) 0 &gt; if{{ ({zoom}) 1 - (&gt;{zoom}) }} els{{ ({nd}) 1 + 5 min (&gt;{nd}) }}");
-    let dec = format!("({zoom}) 0 &gt; if{{ ({zoom}) 1 + 5 min (&gt;{zoom}) }} els{{ ({nd}) 0 &gt; if{{ ({nd}) 1 - (&gt;{nd}) }} els{{ 1 (&gt;{zoom}) }} }}");
-    (inc, dec)
+    knob_code(&format!("L:S_FCU_EFIS{efis}_ND_ZOOM"), zoom)
 }
 
 /// Give the range knobs their OANS positions: the captain's, and the first officer's when
@@ -1221,6 +1218,224 @@ pub fn unpatch_fenix_oans(community: &Path) -> Result<usize> {
 
 /// What every change the OANS makes to a Fenix file is marked with.
 const FENIX_OANS_TAG: &str = "amdb-bridge-fenix-oans";
+
+// ---------------------------------------------------------------------------------
+// A330 OANS on the Headwind A330-900 (A339X), which is built on FlyByWire's A32NX. The
+// same OANS gauge as the Fenix's, from its own package, stacked on each ND's own gauges
+// in the aircraft's panel.cfg and told it is on an A32NX-family FCU (`aircraft=fbw`); and
+// the ND range knobs given the OANS positions below 10 NM the Fenix's have.
+// ---------------------------------------------------------------------------------
+
+/// What every change the A330 OANS makes to a Headwind file is marked with.
+const A330_OANS_TAG: &str = "amdb-bridge-a330-oans";
+const A330_OANS_CFG_MARK: &str = "//amdb-bridge-a330-oans";
+/// Each ND's block, found by its texture's name, and the gauge the OANS adds to it.
+const A330_NDS: [(&str, &str); 2] = [("ND_L", "amdb-a330-oans/oans-nd.html?Index=1&aircraft=fbw"), ("ND_R", "amdb-a330-oans/oans-nd.html?Index=2&aircraft=fbw")];
+/// Where a Headwind panel.cfg loads FlyByWire's ND: how an A330 one is told from others.
+const A330_ND_GAUGE: &str = "A339X/ND/nd.html";
+/// The range knob's template, shared by both sides' knobs (the component around each
+/// sets SIDE to L or R), and the switch in it that the OANS knob replaces.
+const A330_KNOB_TEMPLATE: &str = "<Template Name=\"FBW_AIRLINER_Knob_ND_Range_SubTemplate\">";
+const A330_KNOB_SWITCH: &str = "<UseTemplate Name=\"ASOBO_GT_Switch_XStates\">";
+const A330_KNOB_RANGE: &str = "A32NX_FCU_EFIS_#SIDE#_EFIS_RANGE";
+const A330_KNOB_MARK: &str = "<!--amdb-bridge-a330-oans-->";
+
+/// A `[VCockpitNN]` block by its texture's name, however its `texture = ` line is spaced:
+/// its start and end in the text.
+fn cfg_block_by_texture(text: &str, name: &str) -> Option<(usize, usize)> {
+    let mut at = 0;
+    let mut tex = None;
+    for line in text.split_inclusive('\n') {
+        if let Some((k, v)) = line.split_once('=') {
+            if k.trim().eq_ignore_ascii_case("texture") && v.trim() == name {
+                tex = Some(at);
+                break;
+            }
+        }
+        at += line.len();
+    }
+    let tex = tex?;
+    let start = text[..tex].rfind("\n[").map_or(0, |i| i + 1);
+    let end = text[tex..].find("\n[").map_or(text.len(), |i| tex + i);
+    Some((start, end))
+}
+
+fn a330_nd_has_overlay(text: &str, texture: &str, gauge: &str) -> bool {
+    cfg_block_by_texture(text, texture).is_some_and(|(s, e)| text[s..e].contains(&format!("{gauge},")))
+}
+
+/// Add the OANS gauge to each ND in a Headwind A330 panel.cfg, after the ND's own gauges
+/// and at the block's size. None when both are there already, or when the captain's ND
+/// is not where this bridge expects it.
+pub fn patch_a330_panel_text(text: &str) -> Option<String> {
+    let mut out = text.to_string();
+    for (i, (texture, gauge)) in A330_NDS.iter().enumerate() {
+        let Some((start, end)) = cfg_block_by_texture(&out, texture) else {
+            if i == 0 {
+                return None;
+            }
+            continue;
+        };
+        if a330_nd_has_overlay(&out, texture, gauge) {
+            continue;
+        }
+        let block = &out[start..end];
+        let mut next = 0u32;
+        let mut from = 0;
+        while let Some(at) = block[from..].find("htmlgauge") {
+            let at = from + at + "htmlgauge".len();
+            from = at;
+            let digits: String = block[at..].chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(n) = digits.parse::<u32>() {
+                next = next.max(n + 1);
+            }
+        }
+        let (w, h) = fenix_pair(block, "size_mm").unwrap_or((768, 768));
+        let at = start + block.trim_end().len();
+        let line = format!("\n{A330_OANS_CFG_MARK}\nhtmlgauge{next:02} = {gauge}, 0,0,{w},{h}");
+        out = format!("{}{}{}", &out[..at], line, &out[at..]);
+    }
+    (out != text).then_some(out)
+}
+
+/// Both NDs (the first officer's when the file has it) have the OANS gauge.
+fn a330_panel_patched(text: &str) -> bool {
+    A330_NDS.iter().enumerate().all(|(i, (texture, gauge))| if cfg_block_by_texture(text, texture).is_none() { i > 0 } else { a330_nd_has_overlay(text, texture, gauge) })
+}
+
+/// Give the A330's range knobs their OANS positions. The knob is an Asobo multi-state
+/// switch on FlyByWire's range variable, which stops at 10 NM; it becomes a knob that runs
+/// the same code as the Fenix's, turning left past 10 NM into OANS zoom and back, with
+/// FlyByWire's variable still 0..5 and its animation drawn from it as before. Each side
+/// zooms its own OANS: the component around each knob says which side it is. None when
+/// done already, or when the template is not the one this bridge knows.
+pub fn patch_a330_knob_text(text: &str) -> Option<String> {
+    if text.contains(A330_KNOB_MARK) {
+        return None;
+    }
+    let t = text.find(A330_KNOB_TEMPLATE)?;
+    let t_end = t + text[t..].find("</Template>")?;
+    let sw = t + text[t..t_end].find(A330_KNOB_SWITCH)?;
+    let sw_end = sw + text[sw..t_end].find("</UseTemplate>")? + "</UseTemplate>".len();
+    if !text[sw..sw_end].contains(A330_KNOB_RANGE) {
+        return None;
+    }
+    let indent = |at: usize| {
+        let line = text[..at].rfind('\n').map_or(0, |i| i + 1);
+        text[line..at].chars().take_while(|c| c.is_whitespace()).collect::<String>()
+    };
+    let (i, zoom) = (indent(sw), "#AMDB_OANS_ZOOM#");
+    let (cw, acw) = knob_code(&format!("L:{A330_KNOB_RANGE}"), zoom);
+    let knob = format!(
+        "{A330_KNOB_MARK}\n{i}<UseTemplate Name=\"ASOBO_GT_Knob_Finite_Code\">\n{i}    <ANIM_CODE>(L:{A330_KNOB_RANGE}) 20 *</ANIM_CODE>\n{i}    <ANIM_LENGTH>100</ANIM_LENGTH>\n{i}    <CLOCKWISE_CODE>{cw}</CLOCKWISE_CODE>\n{i}    <ANTICLOCKWISE_CODE>{acw}</ANTICLOCKWISE_CODE>\n{i}</UseTemplate>"
+    );
+    // The side's OANS zoom variable, chosen once by the template rather than on each click.
+    let params_at = t + text[t..sw].find("</DefaultTemplateParameters>")? + "</DefaultTemplateParameters>".len();
+    let p = indent(t + text[t..sw].find("</DefaultTemplateParameters>")?);
+    let params = format!(
+        "\n\n{p}{A330_KNOB_MARK}\n{p}<Parameters Type=\"Override\">\n{p}    <Condition Check=\"SIDE\" Match=\"R\">\n{p}        <True>\n{p}            <AMDB_OANS_ZOOM>L:AMDB_OANS_ZOOM_FO</AMDB_OANS_ZOOM>\n{p}        </True>\n{p}        <False>\n{p}            <AMDB_OANS_ZOOM>L:AMDB_OANS_ZOOM</AMDB_OANS_ZOOM>\n{p}        </False>\n{p}    </Condition>\n{p}</Parameters>"
+    );
+    Some(format!("{}{}{}{}{}", &text[..params_at], params, &text[params_at..sw], knob, &text[sw_end..]))
+}
+
+/// A range knob's clockwise and anticlockwise code, given its ND range variable (0..5,
+/// 10..320 NM) and its side's OANS zoom (0 off, 1..5 closer in): right zooms the OANS out
+/// and past 5 NM hands back to the ND; left narrows the ND, and past 10 NM brings the
+/// OANS up and zooms it in. The Fenix's knob runs the same.
+fn knob_code(nd: &str, zoom: &str) -> (String, String) {
+    let inc = format!("({zoom}) 0 &gt; if{{ ({zoom}) 1 - (&gt;{zoom}) }} els{{ ({nd}) 1 + 5 min (&gt;{nd}) }}");
+    let dec = format!("({zoom}) 0 &gt; if{{ ({zoom}) 1 + 5 min (&gt;{zoom}) }} els{{ ({nd}) 0 &gt; if{{ ({nd}) 1 - (&gt;{nd}) }} els{{ 1 (&gt;{zoom}) }} }}");
+    (inc, dec)
+}
+
+/// The Headwind A330 files the A330 OANS changes in one package: every aircraft panel.cfg
+/// that loads the A339X ND, and the range knob's behaviours.
+fn a330_oans_files(pdir: &Path) -> Vec<(PathBuf, &'static str)> {
+    let mut out = Vec::new();
+    if let Ok(rd) = fs::read_dir(pdir.join("SimObjects/Airplanes")) {
+        let mut planes: Vec<PathBuf> = rd.flatten().map(|e| e.path().join("panel/panel.cfg")).filter(|p| p.is_file()).collect();
+        planes.sort();
+        out.extend(planes.into_iter().map(|p| (p, "panel.cfg")));
+    }
+    out.push((pdir.join("ModelBehaviorDefs/A339X/generated/A32NX_Interior_EFIS.xml"), "range knob"));
+    out
+}
+
+/// Headwind A330 files in a Community folder the A330 OANS changes: (package, file,
+/// already patched).
+pub fn scan_a330_oans(community: &Path) -> Vec<(String, PathBuf, bool)> {
+    let mut out = Vec::new();
+    let Ok(rd) = fs::read_dir(community) else { return out };
+    let mut pkgs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    pkgs.sort();
+    for pdir in pkgs {
+        let name = pdir.file_name().unwrap_or_default().to_string_lossy().to_string();
+        for (path, kind) in a330_oans_files(&pdir) {
+            let Ok(text) = fs::read_to_string(&path) else { continue };
+            let (ours, patched) = match kind {
+                "panel.cfg" => (text.contains(A330_ND_GAUGE), a330_panel_patched(&text)),
+                _ => (text.contains(A330_KNOB_TEMPLATE), text.contains(A330_KNOB_MARK)),
+            };
+            if ours {
+                out.push((name.clone(), path, patched));
+            }
+        }
+    }
+    out
+}
+
+/// Add the A330 OANS to every Headwind A330 in a Community folder: the ND gauges in
+/// panel.cfg, the OANS positions on the range knobs (backups kept, recorded for
+/// `unpatch`).
+pub fn patch_a330_oans(community: &Path, dry_run: bool) -> Result<Vec<PatchedFile>> {
+    let mut record = load_record(community);
+    let mut done = Vec::new();
+    for (pkg, path, patched) in scan_a330_oans(community) {
+        if patched {
+            continue;
+        }
+        let text = fs::read_to_string(&path)?;
+        let is_panel = path.file_name().is_some_and(|n| n == "panel.cfg");
+        let Some(new_text) = (if is_panel { patch_a330_panel_text(&text) } else { patch_a330_knob_text(&text) }) else {
+            log::warn!("{pkg}: {} is a version of this Headwind file the bridge does not know how to patch", path.display());
+            continue;
+        };
+        log::info!("{}{}: A330 OANS added to {}", if dry_run { "[dry-run] " } else { "" }, pkg, path.display());
+        if dry_run {
+            done.push(PatchedFile { path: path.clone(), backup: PathBuf::new(), replacements: 1 });
+            continue;
+        }
+        let backup = PathBuf::from(format!("{}{}", path.display(), BACKUP_SUFFIX));
+        // A file with none of the OANS in it is Headwind's own, newer than the backup after
+        // an update: the backup follows it.
+        if !backup.exists() || !text.contains(A330_OANS_TAG) {
+            fs::copy(&path, &backup).with_context(|| format!("backup {}", path.display()))?;
+        }
+        fs::write(&path, new_text)?;
+        sync_layout_size(&path)?;
+        let pf = PatchedFile { path: path.clone(), backup, replacements: 1 };
+        record.files.retain(|f| f.path != pf.path);
+        record.files.push(pf.clone());
+        done.push(pf);
+    }
+    if !dry_run && !done.is_empty() {
+        save_record(community, &record)?;
+    }
+    Ok(done)
+}
+
+/// Put the Headwind A330's panel.cfg and range knobs back, wherever the A330 OANS changed
+/// them.
+pub fn unpatch_a330_oans(community: &Path) -> Result<usize> {
+    let mut n = 0;
+    for (_, path, _) in scan_a330_oans(community) {
+        if restore_one(community, &path)? {
+            sync_layout_size(&path)?;
+            n += 1;
+        }
+    }
+    Ok(n)
+}
 
 /// Put a changed file's new size (and time) into its package's layout.json. MSFS 2020
 /// ignores a size that no longer matches; MSFS 2024 may read the file only that far,
@@ -1676,5 +1891,47 @@ bus.on('RequestNavigraphAccessToken',()=>{ return 'tok'; });";
         let out = patch_fenix_oans_text(&manager_only).unwrap();
         assert_eq!(out.matches("oans-shell.html").count(), 1);
         assert_eq!(out.matches("oans-nd.html").count(), 1);
+    }
+    /// The Headwind A330's two NDs as its panel.cfg has them: spaced lines, the terrain
+    /// gauge under FlyByWire's ND.
+    const A330_PANEL: &str = "[VCockpit02]\r\nsize_mm = 768,768\r\npixel_size = 768,768\r\ntexture = ND_L\r\n\r\nhtmlgauge00 = WasmInstrument/WasmInstrument.html?wasm_module=terronnd.wasm&wasm_gauge=terronnd,0,0,768,768,L\r\nhtmlgauge01 = A339X/ND/nd.html?Index=1, 0,0,768,768\r\n\r\n[VCockpit03]\r\nsize_mm = 768,768\r\ntexture = ECAM_EWD\r\n\r\nhtmlgauge00 = A339X/EWD/ewd.html?Index=1, 0,0,768,768\r\n\r\n[VCockpit15]\r\nsize_mm = 768,768\r\npixel_size = 768,768\r\ntexture = ND_R\r\n\r\nhtmlgauge00 = WasmInstrument/WasmInstrument.html?wasm_module=terronnd.wasm&wasm_gauge=terronnd,0,0,768,768,R\r\nhtmlgauge01 = A339X/ND/nd.html?Index=2, 0,0,768,768\r\n\r\n[VCockpit16]\r\ntexture = EFB\r\n";
+
+    #[test]
+    fn a330_nds_each_get_the_oans_after_their_own_gauges() {
+        let out = patch_a330_panel_text(A330_PANEL).unwrap();
+        let (s, e) = cfg_block_by_texture(&out, "ND_L").unwrap();
+        assert!(out[s..e].contains("htmlgauge02 = amdb-a330-oans/oans-nd.html?Index=1&aircraft=fbw, 0,0,768,768"), "{}", &out[s..e]);
+        let (s, e) = cfg_block_by_texture(&out, "ND_R").unwrap();
+        assert!(out[s..e].contains("htmlgauge02 = amdb-a330-oans/oans-nd.html?Index=2&aircraft=fbw, 0,0,768,768"));
+        let (s, e) = cfg_block_by_texture(&out, "ECAM_EWD").unwrap();
+        assert!(!out[s..e].contains("oans"), "another display was changed");
+        assert!(a330_panel_patched(&out));
+        assert!(patch_a330_panel_text(&out).is_none());
+    }
+
+    const A330_KNOB: &str = "    <Template Name=\"FBW_AIRLINER_Knob_ND_Range_SubTemplate\">\n        <DefaultTemplateParameters>\n            <NODE_ID>AIRLINER_Knob_Autopilot_ND_Range_#ID#</NODE_ID>\n            <KNOB_NUM_STATE>6</KNOB_NUM_STATE>\n        </DefaultTemplateParameters>\n\n        <Component ID=\"#NODE_ID#\" Node=\"#NODE_ID#\">\n            <UseTemplate Name=\"ASOBO_GT_Switch_XStates\">\n                <NUM_STATES>#KNOB_NUM_STATE#</NUM_STATES>\n                <SWITCH_POSITION_TYPE>L</SWITCH_POSITION_TYPE>\n                <SWITCH_POSITION_VAR>A32NX_FCU_EFIS_#SIDE#_EFIS_RANGE</SWITCH_POSITION_VAR>\n            </UseTemplate>\n        </Component>\n    </Template>\n\n    <Template Name=\"FBW_AIRBUS_NAV_AID_SWITCH_Template\">\n        <UseTemplate Name=\"ASOBO_GT_Switch_XStates\">\n        </UseTemplate>\n    </Template>\n";
+
+    #[test]
+    fn a330_range_knob_becomes_the_oans_knob_once() {
+        let out = patch_a330_knob_text(A330_KNOB).unwrap();
+        let knob = &out[..out.find("FBW_AIRBUS_NAV_AID_SWITCH_Template").unwrap()];
+        assert!(!knob.contains("ASOBO_GT_Switch_XStates"), "the range switch is still there");
+        assert!(knob.contains("<UseTemplate Name=\"ASOBO_GT_Knob_Finite_Code\">"));
+        assert!(knob.contains("<ANIM_CODE>(L:A32NX_FCU_EFIS_#SIDE#_EFIS_RANGE) 20 *</ANIM_CODE>"));
+        assert!(knob.contains("<ANTICLOCKWISE_CODE>(#AMDB_OANS_ZOOM#) 0 &gt; if{"));
+        assert!(knob.contains("els{ 1 (&gt;#AMDB_OANS_ZOOM#) }"));
+        // The side's zoom variable is chosen in the template's parameters, before the knob.
+        let params = knob.find("<Parameters Type=\"Override\">").unwrap();
+        assert!(params > knob.find("</DefaultTemplateParameters>").unwrap() && params < knob.find("<Component").unwrap());
+        assert!(knob.contains("<AMDB_OANS_ZOOM>L:AMDB_OANS_ZOOM_FO</AMDB_OANS_ZOOM>"));
+        // The other template's switch is left alone.
+        assert!(out[out.find("FBW_AIRBUS_NAV_AID_SWITCH_Template").unwrap()..].contains("ASOBO_GT_Switch_XStates"));
+        assert!(patch_a330_knob_text(&out).is_none());
+    }
+
+    #[test]
+    fn a330_knob_patch_leaves_an_unknown_template_alone() {
+        assert!(patch_a330_knob_text(&A330_KNOB.replace("A32NX_FCU_EFIS_#SIDE#_EFIS_RANGE", "SOMETHING_ELSE")).is_none());
+        assert!(patch_a330_knob_text("<Template Name=\"Other\"></Template>").is_none());
     }
 }

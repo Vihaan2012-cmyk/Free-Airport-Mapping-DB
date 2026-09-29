@@ -33,6 +33,10 @@ name = "a320-oans"
 path = "src/bin/a320-oans.rs"
 
 [[bin]]
+name = "a330-oans"
+path = "src/bin/a330-oans.rs"
+
+[[bin]]
 name = "amdb-build-list"
 path = "src/bin/amdb-build-list.rs"
 

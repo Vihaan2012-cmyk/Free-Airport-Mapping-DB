@@ -49,6 +49,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "a220map"; Description: "Install the airport moving map for the Synaptic A220 into Microsoft Flight Simulator 2020 and 2024"; GroupDescription: "Simulators:"
 Name: "a320oans"; Description: "Add the A320 OANS airport moving map to the Fenix A320's captain navigation display"; GroupDescription: "Simulators:"
+Name: "a330oans"; Description: "Add the A330 OANS airport moving map to the Headwind A330's navigation displays"; GroupDescription: "Simulators:"
 Name: "a350"; Description: "Set up the iniBuilds A350 and FlyByWire A380X airport maps (Windows asks for administrator permission)"; GroupDescription: "Simulators:"
 Name: "fenixcharts"; Description: "Show AMDB Bridge's charts on the Fenix A320's tablet (Windows asks for administrator permission; while on, Navigraph sign-in on this computer goes to AMDB Bridge)"; GroupDescription: "Simulators:"; Flags: unchecked
 Name: "startup"; Description: "Open AMDB Bridge in the notification area when Windows starts"; GroupDescription: "Starting up:"; Flags: unchecked
@@ -61,6 +62,7 @@ Source: "{#Root}\target\release\amdb-bridge.exe"; DestDir: "{app}"; Flags: ignor
 Source: "{#Root}\target\release\amdbgen.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\packages\msfs-a220-amm\*"; DestDir: "{app}\msfs\zzz-amdb-a220-amm"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#Root}\packages\msfs-a320-oans\*"; DestDir: "{app}\msfs\amdb-a320-oans"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#Root}\packages\msfs-a330-oans\*"; DestDir: "{app}\msfs\amdb-a330-oans"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#Root}\tools\xplane\amdb_oans.lua"; DestDir: "{app}\xplane"; Flags: ignoreversion
 Source: "{#Root}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -75,6 +77,8 @@ Filename: "{app}\{#AppExe}"; Parameters: "--install-a220"; StatusMsg: "Installin
 Filename: "{app}\{#AppExe}"; Parameters: "--install-a320-oans"; StatusMsg: "Adding the A320 OANS to the Fenix A320..."; Tasks: a320oans; Flags: runhidden waituntilterminated
 ; Unticked, a copy already in the simulator is still brought up to this version.
 Filename: "{app}\{#AppExe}"; Parameters: "--update-a320-oans"; StatusMsg: "Updating the A320 OANS..."; Tasks: not a320oans; Flags: runhidden waituntilterminated
+Filename: "{app}\{#AppExe}"; Parameters: "--install-a330-oans"; StatusMsg: "Adding the A330 OANS to the Headwind A330..."; Tasks: a330oans; Flags: runhidden waituntilterminated
+Filename: "{app}\{#AppExe}"; Parameters: "--update-a330-oans"; StatusMsg: "Updating the A330 OANS..."; Tasks: not a330oans; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Parameters: "--setup-navigraph on"; StatusMsg: "Setting up the A350 and A380X..."; Tasks: a350; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Parameters: "--setup-fenix-charts on"; StatusMsg: "Setting up the Fenix A320's tablet charts..."; Tasks: fenixcharts; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Parameters: "--run-at-login on"; Tasks: startup; Flags: runhidden waituntilterminated

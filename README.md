@@ -344,6 +344,36 @@ Navigraph Charts app included; untick it, or uninstall AMDB Bridge, to put it ba
 is separate from the A350/A380X option, whose one host (`amdb.api.navigraph.com`) the
 A320 does not use, and turning either on or off keeps the other's hosts.
 
+## A330 OANS for the Headwind A330 (MSFS)
+
+The same OANS on the Headwind A330-900's two NDs (MSFS 2020): FlyByWire's A380X OANS
+with its map data panel, context menu, flags and crosses. The A330 is built on
+FlyByWire's A32NX, so the OANS reads its FCU where FlyByWire keeps it. Brake to vacate
+is not part of it. Unofficial: not made or supported by Headwind Simulations.
+
+Two ways to get it, from the [releases](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB/releases/latest):
+
+- **`A330-OANS-Setup-<version>.exe`**, the A330 OANS on its own, with its own small
+  program in the notification area that starts with the simulator and serves the maps.
+- **`AMDB-Bridge-Setup-<version>.exe`**, everything, with the A330 OANS as a tick box in
+  the installer and an option in the app.
+
+Either way it is its own Community package, `amdb-a330-oans`, apart from the A320 OANS.
+With AMDB Bridge:
+
+```
+amdb-bridge a330-oans on       # install it and add it to the A330, then restart the sim
+amdb-bridge a330-oans status
+amdb-bridge a330-oans off      # remove it and put the A330's files back
+```
+
+It adds a gauge line to each ND in the aircraft's panel.cfg and gives both ND range knobs
+their OANS positions in `ModelBehaviorDefs/A339X/generated/A32NX_Interior_EFIS.xml`
+(backups kept beside each). Turn a range knob anticlockwise past 10 for the OANS on that
+side, on through 5, 2, 1, 0.5 and 0.2 NM, and clockwise back to the ND; the same
+`H:AMDB_OANS_*` events and `L:AMDB_OANS_ZOOM` / `L:AMDB_OANS_ZOOM_FO` as the A320 OANS.
+A Headwind update replaces both files, and serving adds the lines again.
+
 ## Airport Map: the OANS in a toolbar window (MSFS)
 
 The same FlyByWire A380X OANS in a window of its own on the simulator's toolbar, for any

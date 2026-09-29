@@ -422,6 +422,17 @@ enum Cmd {
         #[arg(long = "community")]
         community: Vec<PathBuf>,
     },
+    /// The A330 OANS, an airport moving map on the Headwind A330's NDs: `on` installs its
+    /// package and adds it to the A330 (a gauge line per ND in panel.cfg and the range
+    /// knobs' OANS positions, backups kept), `off` removes it and puts those files back,
+    /// `status` says where it is installed and whether the A330 still loads it.
+    #[command(name = "a330-oans")]
+    A330Oans {
+        /// on, off or status
+        state: String,
+        #[arg(long = "community")]
+        community: Vec<PathBuf>,
+    },
     /// Approach charts on the flight bags built on the Navigraph SDK (iniBuilds A350, PMDG
     /// 737 and 777): `on` points their charts at this bridge, `off` gives them back their
     /// own, `status` says which each is. No administrator rights needed. While on, the
@@ -604,6 +615,14 @@ fn serve(a: ServeArgs) -> Result<()> {
                     }
                 }
                 Err(e) => crate::term::warn(&format!("could not add the A320 OANS to the Fenix in {}: {e:#}", d.display())),
+            }
+            match super::desktop::repatch_a330_oans(&d) {
+                Ok(files) => {
+                    for f in files {
+                        crate::term::success(&format!("A330 OANS added to the Headwind A330 again after an update (backup kept, `unpatch` restores): {}", f.display()));
+                    }
+                }
+                Err(e) => crate::term::warn(&format!("could not add the A330 OANS to the Headwind A330 in {}: {e:#}", d.display())),
             }
         }
     }
@@ -853,6 +872,51 @@ pub fn run() -> Result<()> {
                 crate::term::warn("no flight bag built on the Navigraph SDK found (iniBuilds A350, PMDG 737/777)");
             } else if state == "on" {
                 crate::term::info("Start the bridge before the flight: the tablet asks it for every chart.");
+            }
+            Ok(())
+        }
+        Cmd::A330Oans { state, community } => {
+            let state = state.to_ascii_lowercase();
+            let mut found = 0;
+            for d in &communities(&community) {
+                if patcher::scan_a330_oans(d).is_empty() && !d.join(super::desktop::A330_OANS_FOLDER).exists() {
+                    continue;
+                }
+                if state == "on" && !super::desktop::a330_oans_fits(d) {
+                    crate::term::warn(&format!("{}: this A330's files are not where the A330 OANS expects them", d.display()));
+                    super::desktop::headwind_diagnosis(d).iter().for_each(|l| crate::term::info(&format!("  {l}")));
+                    continue;
+                }
+                found += 1;
+                match state.as_str() {
+                    "on" => {
+                        for note in super::desktop::install_a330_oans(d)? {
+                            crate::term::success(&note);
+                        }
+                    }
+                    "off" => {
+                        if super::desktop::remove_a330_oans(d)? {
+                            crate::term::success(&format!("A330 OANS removed from {}", d.display()));
+                        }
+                    }
+                    "status" => {
+                        let state = match super::desktop::a330_oans_state(d) {
+                            super::desktop::MapState::NotInstalled => "not installed".to_string(),
+                            super::desktop::MapState::Installed(v) => format!("v{v} installed"),
+                            super::desktop::MapState::Outdated { installed, available } => format!("v{installed} installed, v{available} available"),
+                        };
+                        println!("  {}: A330 OANS {state}", d.display());
+                        for (pkg, f, patched) in patcher::scan_a330_oans(d) {
+                            println!("    {pkg}  {}: {}", if patched { "PATCHED (OANS added)" } else { "not patched" }, f.display());
+                        }
+                    }
+                    other => return Err(anyhow!("a330-oans takes on, off or status, not {other}")),
+                }
+            }
+            if found == 0 {
+                crate::term::warn("no Headwind A330 found in any Community folder");
+            } else if state == "on" {
+                crate::term::info("Restart the simulator to load it, and keep the bridge (or the A330 OANS program) running while you fly: the map comes from it.");
             }
             Ok(())
         }

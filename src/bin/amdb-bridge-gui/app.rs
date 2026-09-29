@@ -185,6 +185,26 @@ fn install_a320_oans_everywhere(update: bool) -> i32 {
     i32::from(failed)
 }
 
+/// `--install-a330-oans` installs the A330 OANS wherever the Headwind A330 is; with `update`
+/// (`--update-a330-oans`) it only brings existing copies up to this version.
+fn install_a330_oans_everywhere(update: bool) -> i32 {
+    let mut failed = false;
+    for sim in desktop::detect_sims() {
+        let wanted = if update { desktop::a330_oans_state(&sim.community) != MapState::NotInstalled } else { desktop::a330_oans_fits(&sim.community) };
+        if !wanted {
+            continue;
+        }
+        match desktop::install_a330_oans(&sim.community) {
+            Ok(notes) => notes.iter().for_each(|n| amdbgen::term::success(&format!("{}: {n}", sim.name))),
+            Err(e) => {
+                failed = true;
+                amdbgen::term::error(&format!("{}: {e:#}", sim.name));
+            }
+        }
+    }
+    i32::from(failed)
+}
+
 fn uninstall(relaunched: bool) -> i32 {
     instance::ask_to_quit(Duration::from_secs(10));
     let problems = desktop::uninstall_cleanup();
@@ -282,6 +302,9 @@ pub fn main() -> i32 {
     }
     if has("--install-a320-oans") || has("--update-a320-oans") {
         return install_a320_oans_everywhere(has("--update-a320-oans"));
+    }
+    if has("--install-a330-oans") || has("--update-a330-oans") {
+        return install_a330_oans_everywhere(has("--update-a330-oans"));
     }
     // For the Airport Map toolbar window's installer, which has no bridge of its own.
     if let Some(i) = args.iter().position(|a| a == "--install-toolbar") {
@@ -401,6 +424,16 @@ fn take_inventory(redirect: bool, serving_redirect: bool, fenix_charts: bool, se
         }
         if desktop::a380x_in_community(&sim.community) {
             rows.push([sim.name.clone(), "FlyByWire A380X OANS".into(), navigraph("Ready")]);
+        }
+        if !amdbgen::bridge::patcher::scan_a330_oans(&sim.community).is_empty() || desktop::a330_oans_state(&sim.community) != MapState::NotInstalled {
+            let status = match desktop::a330_oans_state(&sim.community) {
+                MapState::NotInstalled if !desktop::a330_oans_fits(&sim.community) => "Not available for this A330 yet".to_string(),
+                MapState::NotInstalled => "Off: tick its option below".to_string(),
+                MapState::Outdated { installed, available } => format!("Update available (v{installed} → v{available}): untick and tick its option"),
+                MapState::Installed(_) if !desktop::headwind_loads_a330_oans(&sim.community) => "Added to the A330 again when serving starts".to_string(),
+                MapState::Installed(v) => format!("On (v{v})"),
+            };
+            rows.push([sim.name.clone(), "Headwind A330: A330 OANS".into(), status]);
         }
         if desktop::fenix_in_community(&sim.community) {
             let status = match desktop::a320_oans_state(&sim.community) {
@@ -548,6 +581,7 @@ struct Ui {
     opt_sim: nwg::CheckBox,
     opt_xplane: nwg::CheckBox,
     opt_a320_oans: nwg::CheckBox,
+    opt_a330_oans: nwg::CheckBox,
     opt_fenix_charts: nwg::CheckBox,
     opt_redirect: nwg::CheckBox,
     opt_cache: nwg::CheckBox,
@@ -624,7 +658,7 @@ impl App {
 
         nwg::Window::builder()
             .flags(nwg::WindowFlags::WINDOW | nwg::WindowFlags::MINIMIZE_BOX)
-            .size((640, 868))
+            .size((640, 891))
             .center(true)
             .title("AMDB Bridge")
             .icon(Some(&ui.icon))
@@ -702,12 +736,13 @@ impl App {
         ui.chart_draw.set_enabled(false);
 
         nwg::Label::builder().parent(w).text("Options").font(Some(&ui.font_header)).position((20, 512)).size((600, 22)).build(&mut ui.options_header)?;
-        let opts: [(&mut nwg::CheckBox, &str); 8] = [
+        let opts: [(&mut nwg::CheckBox, &str); 9] = [
             (&mut ui.opt_start, "Start serving as soon as AMDB Bridge opens"),
             (&mut ui.opt_login, "Open AMDB Bridge in the notification area when Windows starts"),
             (&mut ui.opt_sim, "Open AMDB Bridge when Microsoft Flight Simulator starts"),
             (&mut ui.opt_xplane, "Install the X-Plane 12 moving map when serving starts"),
             (&mut ui.opt_a320_oans, "Add the A320 OANS moving map to the Fenix A320's captain navigation display"),
+            (&mut ui.opt_a330_oans, "Add the A330 OANS moving map to the Headwind A330's navigation displays"),
             (&mut ui.opt_fenix_charts, "Show AMDB Bridge's charts on the Fenix A320's tablet (asks for administrator permission once)"),
             (&mut ui.opt_redirect, "Also serve the iniBuilds A350 and FlyByWire A380X (asks for administrator permission once)"),
             (&mut ui.opt_cache, "Keep built airports on disk, so they load instantly next time"),
@@ -715,24 +750,24 @@ impl App {
         for (i, (cb, text)) in opts.into_iter().enumerate() {
             nwg::CheckBox::builder().parent(w).text(text).position((20, 536 + i as i32 * 23)).size((600, 22)).build(cb)?;
         }
-        nwg::TextInput::builder().parent(w).readonly(true).position((40, 722)).size((340, 25)).build(&mut ui.folder)?;
-        nwg::Button::builder().parent(w).text("Change…").position((386, 720)).size((90, 29)).build(&mut ui.folder_change)?;
-        nwg::Label::builder().parent(w).text("Limit").h_align(nwg::HTextAlign::Right).position((484, 725)).size((40, 22)).build(&mut ui.limit_label)?;
-        nwg::TextInput::builder().parent(w).align(nwg::HTextAlign::Right).limit(7).placeholder_text(Some("none")).position((530, 722)).size((58, 25)).build(&mut ui.limit)?;
-        nwg::Label::builder().parent(w).text("MB").position((594, 725)).size((26, 22)).build(&mut ui.limit_unit)?;
+        nwg::TextInput::builder().parent(w).readonly(true).position((40, 745)).size((340, 25)).build(&mut ui.folder)?;
+        nwg::Button::builder().parent(w).text("Change…").position((386, 743)).size((90, 29)).build(&mut ui.folder_change)?;
+        nwg::Label::builder().parent(w).text("Limit").h_align(nwg::HTextAlign::Right).position((484, 748)).size((40, 22)).build(&mut ui.limit_label)?;
+        nwg::TextInput::builder().parent(w).align(nwg::HTextAlign::Right).limit(7).placeholder_text(Some("none")).position((530, 745)).size((58, 25)).build(&mut ui.limit)?;
+        nwg::Label::builder().parent(w).text("MB").position((594, 748)).size((26, 22)).build(&mut ui.limit_unit)?;
 
         // Activity
-        nwg::Label::builder().parent(w).text("Activity").font(Some(&ui.font_header)).position((20, 762)).size((100, 22)).build(&mut ui.activity_header)?;
-        nwg::Button::builder().parent(w).text("Build a list…").font(Some(&ui.font_small)).position((128, 759)).size((124, 26)).build(&mut ui.build_list)?;
-        nwg::Button::builder().parent(w).text("Aircraft report").font(Some(&ui.font_small)).position((258, 759)).size((124, 26)).build(&mut ui.collect)?;
-        nwg::Button::builder().parent(w).text("Airports folder").font(Some(&ui.font_small)).position((388, 759)).size((124, 26)).build(&mut ui.open_folder)?;
-        nwg::Button::builder().parent(w).text("Save log").font(Some(&ui.font_small)).position((518, 759)).size((102, 26)).build(&mut ui.open_log)?;
+        nwg::Label::builder().parent(w).text("Activity").font(Some(&ui.font_header)).position((20, 785)).size((100, 22)).build(&mut ui.activity_header)?;
+        nwg::Button::builder().parent(w).text("Build a list…").font(Some(&ui.font_small)).position((128, 782)).size((124, 26)).build(&mut ui.build_list)?;
+        nwg::Button::builder().parent(w).text("Aircraft report").font(Some(&ui.font_small)).position((258, 782)).size((124, 26)).build(&mut ui.collect)?;
+        nwg::Button::builder().parent(w).text("Airports folder").font(Some(&ui.font_small)).position((388, 782)).size((124, 26)).build(&mut ui.open_folder)?;
+        nwg::Button::builder().parent(w).text("Save log").font(Some(&ui.font_small)).position((518, 782)).size((102, 26)).build(&mut ui.open_log)?;
         nwg::TextBox::builder()
             .parent(w)
             .readonly(true)
             .flags(nwg::TextBoxFlags::VISIBLE | nwg::TextBoxFlags::VSCROLL | nwg::TextBoxFlags::AUTOVSCROLL | nwg::TextBoxFlags::TAB_STOP)
             .font(Some(&ui.font_small))
-            .position((20, 790))
+            .position((20, 813))
             .size((600, 66))
             .build(&mut ui.log)?;
 
@@ -915,6 +950,8 @@ impl App {
                     self.option_xplane();
                 } else if handle == ui.opt_a320_oans.handle {
                     self.option_a320_oans();
+                } else if handle == ui.opt_a330_oans.handle {
+                    self.option_a330_oans();
                 } else if handle == ui.opt_fenix_charts.handle {
                     self.option_fenix_charts();
                 } else if handle == ui.opt_redirect.handle {
@@ -1588,6 +1625,10 @@ impl App {
         let fenix = sims.iter().any(|s| desktop::a320_oans_fits(&s.community));
         ui.opt_a320_oans.set_check_state(checked(installed));
         ui.opt_a320_oans.set_enabled(installed || (fenix && desktop::bundled_a320_oans().is_some()));
+        let installed = sims.iter().any(|s| desktop::a330_oans_state(&s.community) != MapState::NotInstalled);
+        let a330 = sims.iter().any(|s| desktop::a330_oans_fits(&s.community));
+        ui.opt_a330_oans.set_check_state(checked(installed));
+        ui.opt_a330_oans.set_enabled(installed || (a330 && desktop::bundled_a330_oans().is_some()));
         ui.opt_redirect.set_check_state(checked(s.navigraph_redirect));
         ui.opt_fenix_charts.set_check_state(checked(s.fenix_charts));
         ui.opt_cache.set_check_state(checked(s.cache));
@@ -1682,6 +1723,43 @@ impl App {
             );
         } else if desktop::sim_running() {
             nwg::modal_info_message(&self.ui.window, "A320 OANS", "The A320 OANS is removed. Restart Microsoft Flight Simulator to finish.");
+        }
+    }
+
+    fn option_a330_oans(&self) {
+        let on = is_checked(&self.ui.opt_a330_oans);
+        let mut done = 0;
+        for sim in desktop::detect_sims() {
+            let result = if on {
+                if !desktop::a330_oans_fits(&sim.community) {
+                    continue;
+                }
+                desktop::install_a330_oans(&sim.community).map(|notes| notes.iter().for_each(|n| amdbgen::term::success(&format!("{}: {n}", sim.name))))
+            } else {
+                desktop::remove_a330_oans(&sim.community).map(|was| {
+                    if was {
+                        amdbgen::term::success(&format!("{}: A330 OANS removed and the Headwind A330's files put back", sim.name));
+                    }
+                })
+            };
+            match result {
+                Ok(()) => done += 1,
+                Err(e) => amdbgen::term::error(&format!("{}: {e:#}", sim.name)),
+            }
+        }
+        self.drain_lines_only();
+        self.refresh_inventory();
+        if done == 0 {
+            self.ui.opt_a330_oans.set_check_state(checked(!on));
+        } else if on {
+            let restart = if desktop::sim_running() { "Restart Microsoft Flight Simulator to load it. " } else { "" };
+            nwg::modal_info_message(
+                &self.ui.window,
+                "A330 OANS",
+                &format!("The A330 OANS is added to the Headwind A330. {restart}Turn an ND range knob anticlockwise past 10 to show it.\n\nThe airport maps come from AMDB Bridge, so keep it serving while you fly."),
+            );
+        } else if desktop::sim_running() {
+            nwg::modal_info_message(&self.ui.window, "A330 OANS", "The A330 OANS is removed. Restart Microsoft Flight Simulator to finish.");
         }
     }
 

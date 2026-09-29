@@ -1,5 +1,5 @@
-window.addEventListener('error',function(e){if(String(e.filename).indexOf('amdb-oans')>=0){fetch('http://127.0.0.1:8770/amdb-oans-error?'+encodeURIComponent(e.message+' @'+e.lineno+':'+e.colno));}});
-window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.stack?String(r.stack):'';if(s.indexOf('amdb-oans')>=0){fetch('http://127.0.0.1:8770/amdb-oans-error?'+encodeURIComponent(String(r&&r.message||r)+' | '+s.slice(0,300)));}});
+window.addEventListener('error',function(e){if(String(e.filename).indexOf('amdb-a330-oans')>=0){fetch('http://127.0.0.1:8770/amdb-a330-oans-error?'+encodeURIComponent(e.message+' @'+e.lineno+':'+e.colno));}});
+window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.stack?String(r.stack):'';if(s.indexOf('amdb-a330-oans')>=0){fetch('http://127.0.0.1:8770/amdb-a330-oans-error?'+encodeURIComponent(String(r&&r.message||r)+' | '+s.slice(0,300)));}});
 (() => {
   var __create = Object.create;
   var __defProp = Object.defineProperty;
@@ -80659,7 +80659,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         {
           style: "position: relative; top: -5px; left: 10px",
           width: "25px",
-          src: "/Images/amdb-a320-oans/oans/oans-".concat(this.props.isCross ? "cross" : "flag", ".svg")
+          src: "/Images/amdb-a330-oans/oans/oans-".concat(this.props.isCross ? "cross" : "flag", ".svg")
         }
       ))), /* @__PURE__ */ FSComponent.buildComponent("div", { class: "mfd-dialog-buttons" }, /* @__PURE__ */ FSComponent.buildComponent(Button, { label: "CANCEL", onClick: () => this.props.hideDialog() }), /* @__PURE__ */ FSComponent.buildComponent(
         Button,
@@ -81323,4 +81323,4 @@ tslib/tslib.es6.js:
   PERFORMANCE OF THIS SOFTWARE.
   ***************************************************************************** *)
 */
-fetch('http://127.0.0.1:8770/amdb-oans-loaded');
+fetch('http://127.0.0.1:8770/amdb-a330-oans-loaded');

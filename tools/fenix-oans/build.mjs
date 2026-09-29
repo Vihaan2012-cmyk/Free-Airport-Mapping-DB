@@ -51,6 +51,16 @@ const TARGETS = [
     tag: 'amdb-oans',
   },
   {
+    // The same OANS on the Headwind A330's NDs, a product of its own: panel.cfg loads it
+    // with `aircraft=fbw`, for the A32NX-family FCU it has.
+    pkg: path.resolve(here, '../../packages/msfs-a330-oans'),
+    out: 'html_ui/Pages/VCockpit/Instruments/amdb-a330-oans',
+    entry: 'src/instrument.tsx',
+    name: 'oans-nd',
+    assetDir: 'amdb-a330-oans',
+    tag: 'amdb-a330-oans',
+  },
+  {
     pkg: path.resolve(here, '../../packages/msfs-amdb-oans-toolbar'),
     out: 'html_ui/InGamePanels/AmdbOansMap',
     entry: 'src/toolbar.tsx',
