@@ -1086,7 +1086,8 @@ fn draw_routing(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, top:
 fn draw_footer(c: &mut dyn Canvas, f: Name, t: &Terminal) {
     let pw = t.page.0;
     line(c, MARGIN, MARGIN + 17.0, pw - MARGIN, MARGIN + 17.0, 0.6, RULE);
-    text(c, f, 6.2, MARGIN, MARGIN + 9.0, "NOT FOR REAL-WORLD NAVIGATION. Drawn from the simulator's navigation data: fly the published chart.", 0.25);
+    let from = if t.airport.source.contains("CIFP") { "the FAA's coded procedures (CIFP)" } else { "the simulator's navigation data" };
+    text(c, f, 6.2, MARGIN, MARGIN + 9.0, &format!("NOT FOR REAL-WORLD NAVIGATION. Drawn from {from}: fly the published chart."), 0.25);
     let printed = chrono::Utc::now().format("%d %b %Y").to_string().to_uppercase();
     text(
         c,
@@ -1519,6 +1520,12 @@ fn extent(points: &[(f64, f64)]) -> f64 {
 pub fn with_terminal<R>(icao: &str, name: &str, f: impl FnOnce(&Terminal) -> Result<R>) -> Result<R> {
     let icao = icao.to_uppercase();
     let found = crate::sources::msfs::procedures::find(&icao)?.ok_or_else(|| anyhow::anyhow!("{icao} has no procedures in the simulator's navigation data"))?;
+    with_terminal_from(found, name, f)
+}
+
+/// The same, from procedures already read: the simulator's, or the FAA's CIFP.
+pub fn with_terminal_from<R>(found: AirportProcedures, name: &str, f: impl FnOnce(&Terminal) -> Result<R>) -> Result<R> {
+    let icao = found.icao.to_uppercase();
     let group = groups(&found)
         .into_iter()
         .find(|g| g.iter().any(|p| p.name.eq_ignore_ascii_case(name)))

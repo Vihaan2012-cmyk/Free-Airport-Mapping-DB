@@ -2,6 +2,21 @@
 
 ## Unreleased · A330 OANS 1.0.0
 
+**Charts for every American airport with procedures, drawn from the FAA's CIFP.**
+
+- `amdbgen cifp-charts [ICAO...] --airports DIR [--cycle 2610] [--jobs N] [--background]`
+  reads the FAA's Coded Instrument Flight Procedures (ARINC 424-18, one 9 MB zip a
+  cycle, public domain) and draws every approach, departure and arrival into each built
+  airport's `charts` folder beside its layers: `KBOS/charts/ILS RWY 04R.pdf`,
+  `SID BLZZR6 - REVSS6.pdf`. The same renderers as the flight bag charts, fed the FAA's
+  procedures instead of the simulator's; minima are worked out from terrain and
+  obstacles, and nothing of the FAA's printed charts is fetched. A new cycle replaces
+  the folder's charts and removes the ones no longer published.
+- `sources::cifp` reads CIFP into the simulator reader's `AirportProcedures`: legs with
+  their path terminators, altitudes, courses, distances, turns, speeds and IAF/IF/FAF/MAP
+  roles, fixes placed from the file's own waypoint, navaid and runway records, and each
+  approach split into its feeders, final and missed approach.
+
 **Every FAA chart, filed by airport.**
 
 - `amdbgen faa-charts [ICAO...] --out DIR [--cycle 2610] [--rate 4M] [--background]`
