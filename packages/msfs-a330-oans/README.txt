@@ -19,8 +19,18 @@ approach). Pick another on the MAP DATA page.
 Airport maps come from AMDB Bridge running on this computer while you fly:
 https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB
 
-Brake to vacate (BTV) is not part of the A330 OANS: the ARM BTV button on the
-MAP DATA page does nothing on the A330.
+Brake to vacate (BTV) -- experimental
+-------------------------------------
+Pick a runway and then an exit on the OANS (ND in PLAN or NAV: click the runway
+end, then the exit), then press ARM BTV on the MAP DATA page of the OANS control
+panel. "BTV <exit>" shows in cyan at the top of the ND. The autobrake need not
+be armed; if a mode is, BTV takes it off at touchdown. It then brakes itself:
+no braking while the exit is further than the aircraft would roll, then just
+enough to reach the exit at the speed it is built for: 40 kt for a high-speed
+exit, 10 kt for any other. BTV cannot add thrust. L:AMDB_BTV_ARM (1 = armed) is
+there to bind to hardware. It lets go at that speed, on passing the exit, or when
+you set the parking brake, add thrust, arm the autobrake, or clear the exit.
+It is new on the A330: watch it, and brake yourself if needed.
 
 What it changes in the Headwind A330
 ------------------------------------

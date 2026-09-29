@@ -49,6 +49,9 @@
   removal; serving adds them again after a Headwind update.
 - The OANS gauge takes `aircraft=fbw` in its panel.cfg address for an A32NX-family FCU;
   without it, it is the Fenix's as before.
+- Brake to vacate on the A330 too (experimental): the same BTV as the A320 OANS, taking
+  over from FlyByWire's autobrake (`L:A32NX_AUTOBRAKES_ARMED_MODE`, disarmed with
+  `A32NX.AUTOBRAKE_SET_DISARM`) instead of pressing the Fenix's buttons.
 
 **Building every airport: OpenStreetMap from downloaded extracts.**
 
