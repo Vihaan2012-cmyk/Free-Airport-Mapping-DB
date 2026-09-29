@@ -8,6 +8,10 @@
   303 KB, drawn the same.
 - `amdbgen redraw-charts --airports DIR` draws every built airport's chart.pdf again, several
   at once.
+- `--uncompressed-pdf` (redraw-charts, cifp-charts) writes the pages uncompressed but
+  still rounded, for a pack compressed as a whole: each file is bigger, but a 7z of many
+  charts is about half the size (Boston's 30 charts: 1.75 MB against 3.3 MB), as the
+  archive's compression works better on the raw drawing and finds what charts share.
 
 ## 1.2.10 (2026-09-29) · A330 OANS 1.0.0 · A320 OANS 1.0.8
 

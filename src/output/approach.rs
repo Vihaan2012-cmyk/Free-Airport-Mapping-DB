@@ -3431,7 +3431,7 @@ fn write_page_sized(out: &FsPath, size: (f32, f32), paint: impl FnOnce(&mut dyn 
     let (f, b) = (Name(b"F"), Name(b"B"));
     let mut c = Content::new();
     paint(&mut c, f, b);
-    pdf.stream(content_id, &crate::output::canvas::deflate(&c.finish())).filter(pdf_writer::Filter::FlateDecode);
+    crate::output::canvas::page_stream(&mut pdf, content_id, &c.finish());
     std::fs::write(out, pdf.finish()).with_context(|| format!("write {}", out.display()))?;
     Ok(())
 }

@@ -24,6 +24,24 @@ pub(crate) fn deflate(data: &[u8]) -> Vec<u8> {
     let _ = z.write_all(data);
     z.finish().unwrap_or_default()
 }
+
+static UNCOMPRESSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Write chart pages uncompressed from now on. Each file is several times bigger, but a
+/// 7z or zip of many charts comes out about half the size: the archive's compression
+/// does better on the raw drawing than on the PDF's own, and finds what charts share.
+pub fn set_uncompressed_pdf(on: bool) {
+    UNCOMPRESSED.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A page's drawing as its content stream: compressed, unless `set_uncompressed_pdf` says.
+pub(crate) fn page_stream(pdf: &mut pdf_writer::Pdf, id: pdf_writer::Ref, data: &[u8]) {
+    if UNCOMPRESSED.load(std::sync::atomic::Ordering::Relaxed) {
+        pdf.stream(id, data);
+    } else {
+        pdf.stream(id, &deflate(data)).filter(pdf_writer::Filter::FlateDecode);
+    }
+}
 use std::path::{Path, PathBuf};
 
 /// What a chart is drawn with.

@@ -64,6 +64,10 @@ enum Cmd {
         /// Lowest CPU, disk and memory priority, to leave a simulator undisturbed.
         #[arg(long)]
         background: bool,
+        /// Chart pages uncompressed: several times bigger each, but a 7z of many charts
+        /// comes out about half the size.
+        #[arg(long)]
+        uncompressed_pdf: bool,
     },
     /// Write an OANS-style moving-map preview (viewer.html) for a built airport.
     View(PreviewArgs),
@@ -209,6 +213,10 @@ enum Cmd {
         /// Leave off the minimum safe altitude ring, which reads terrain 25 miles round.
         #[arg(long)]
         no_msa: bool,
+        /// Chart pages uncompressed: several times bigger each, but a 7z of many charts
+        /// comes out about half the size.
+        #[arg(long)]
+        uncompressed_pdf: bool,
     },
     /// Every chart the FAA publishes (approaches, departures, arrivals, airport diagrams,
     /// hot spots, takeoff and alternate minimums), downloaded from its d-TPP for one cycle
@@ -1423,7 +1431,10 @@ pub fn run() -> Result<()> {
         }
         Cmd::Info(s) => info_cmd(s),
         Cmd::Search { text, limit, index } => search_cmd(&text, limit, index),
-        Cmd::RedrawCharts { airports, jobs, background } => redraw_charts(&airports, jobs, background),
+        Cmd::RedrawCharts { airports, jobs, background, uncompressed_pdf } => {
+            crate::output::canvas::set_uncompressed_pdf(uncompressed_pdf);
+            redraw_charts(&airports, jobs, background)
+        }
         Cmd::Chart(p) => {
             let folder = resolve_target(&p.dir, &p.target);
             let out = chart_pdf(&folder, p.out.as_deref())?;
@@ -1440,7 +1451,10 @@ pub fn run() -> Result<()> {
         Cmd::Procedures { icao, json } => procedures_cmd(&icao, json),
         Cmd::Terrain { icao, radius_km, step_m } => terrain_cmd(&icao, radius_km, step_m),
         Cmd::Mora { bbox, step_m, json, jobs, cache, offline, refresh } => mora_cmd(bbox, step_m, json, jobs, cache, offline, refresh),
-        Cmd::CifpCharts { icaos, airports, cycle, jobs, background, no_msa } => crate::output::cifp_charts::run(&crate::output::cifp_charts::Options { airports, cycle, jobs, only: icaos, background, no_msa }),
+        Cmd::CifpCharts { icaos, airports, cycle, jobs, background, no_msa, uncompressed_pdf } => {
+            crate::output::canvas::set_uncompressed_pdf(uncompressed_pdf);
+            crate::output::cifp_charts::run(&crate::output::cifp_charts::Options { airports, cycle, jobs, only: icaos, background, no_msa })
+        }
         Cmd::FaaCharts { icaos, out, cycle, jobs, rate, background, airports } => {
             let opts = crate::output::faa_charts::Options { out, cycle, jobs, rate: crate::output::faa_charts::parse_rate(&rate)?, only: icaos, background, airports };
             crate::output::faa_charts::run(&opts).map(|_| ())
