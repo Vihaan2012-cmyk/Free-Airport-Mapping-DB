@@ -120,8 +120,41 @@ pub struct Runway {
     pub magnetic_bearing_deg: Option<f64>,
 }
 
+/// Charts that are to be passed on may hold only what may be passed on. Once this is set,
+/// every question below is answered from the FAA's CIFP (public domain) or not at all:
+/// no aircraft's navigation database, no X-Plane data, nothing of the simulator's.
+static REDISTRIBUTABLE: OnceLock<crate::sources::cifp::Nav> = OnceLock::new();
+
+/// Answer from the FAA's CIFP alone from now on, for charts to be redistributed.
+pub fn use_only_cifp(nav: crate::sources::cifp::Nav) {
+    let _ = REDISTRIBUTABLE.set(nav);
+}
+
+fn cifp_only() -> Option<&'static crate::sources::cifp::Nav> {
+    REDISTRIBUTABLE.get()
+}
+
+/// Where a navaid is, the nearest of its name to a place.
+pub fn navaid_near(ident: &str, near: (f64, f64)) -> Option<(f64, f64)> {
+    if let Some(n) = cifp_only() {
+        return n.navaid_near(ident, near);
+    }
+    crate::sources::msfs::navaids::find_near(ident, near).map(|n| (n.lat, n.lon))
+}
+
+/// The dates the navigation data is in force, as a chart prints them.
+pub fn cycle_dates() -> Option<(String, String)> {
+    if let Some(n) = cifp_only() {
+        return n.dates();
+    }
+    crate::sources::msfs::airac_dates()
+}
+
 /// The published record for one runway.
 pub fn runway(icao: &str, runway: &str) -> Option<Runway> {
+    if let Some(n) = cifp_only() {
+        return n.runway(icao, runway);
+    }
     database()?.runway(icao, runway)
 }
 
@@ -132,8 +165,10 @@ pub fn runway(icao: &str, runway: &str) -> Option<Runway> {
 /// missed approach holds on a course back towards the airport it has just left, because
 /// that is the way the aircraft arrives at the fix.
 pub fn hold_towards(fix: &str, from: (f64, f64)) -> Option<Hold> {
-    let db = database()?;
-    let holds = db.holds_at(fix);
+    let holds = match cifp_only() {
+        Some(n) => n.holds_at(fix),
+        None => database()?.holds_at(fix),
+    };
     let best = holds.into_iter().min_by(|a, b| {
         let angle = |h: &Hold| {
             let cos = h.lat.to_radians().cos().max(0.05);
@@ -147,6 +182,9 @@ pub fn hold_towards(fix: &str, from: (f64, f64)) -> Option<Hold> {
 
 /// The beacons within a distance of a point, nearest first.
 pub fn beacons_near(lat: f64, lon: f64, radius_nm: f64) -> Vec<Beacon> {
+    if let Some(n) = cifp_only() {
+        return n.beacons_near(lat, lon, radius_nm);
+    }
     if let Some(db) = database() {
         let found = db.beacons_near(lat, lon, radius_nm);
         if !found.is_empty() {
@@ -195,6 +233,9 @@ pub fn beacons_near(lat: f64, lon: f64, radius_nm: f64) -> Vec<Beacon> {
 
 /// The localiser serving a runway, where one serves it.
 pub fn ils(icao: &str, runway: &str) -> Option<Ils> {
+    if let Some(n) = cifp_only() {
+        return n.ils(icao, runway);
+    }
     if let Some(found) = database().and_then(|db| db.ils(icao, runway)) {
         return Some(found);
     }
@@ -214,20 +255,32 @@ pub fn ils(icao: &str, runway: &str) -> Option<Ils> {
 /// The published safe altitude about a named beacon or fix at an airport, where there is
 /// one about it.
 pub fn msa_about(icao: &str, centre: &str) -> Option<Msa> {
+    if let Some(n) = cifp_only() {
+        return n.msa_about(icao, centre);
+    }
     database()?.msa_about(icao, centre)
 }
 
 pub fn msa(icao: &str, at: (f64, f64)) -> Option<Msa> {
+    if let Some(n) = cifp_only() {
+        return n.msa(icao, at);
+    }
     database()?.msa(icao, at)
 }
 
 /// The published hold at a fix, where one is published.
 pub fn hold_at(fix: &str) -> Option<Hold> {
+    if let Some(n) = cifp_only() {
+        return n.holds_at(fix).into_iter().next();
+    }
     database()?.hold_at(fix)
 }
 
 /// Which navigation database is being read, for the chart to say so.
 pub fn source() -> Option<String> {
+    if let Some(n) = cifp_only() {
+        return Some(n.source());
+    }
     let db = database()?;
     Some(match &db.airac {
         Some(cycle) => format!("{} (AIRAC {cycle})", db.name),
@@ -235,8 +288,11 @@ pub fn source() -> Option<String> {
     })
 }
 
-/// The database in use, found once.
+/// The database in use, found once. None once charts are being drawn for passing on.
 fn database() -> Option<&'static Database> {
+    if cifp_only().is_some() {
+        return None;
+    }
     static DB: OnceLock<Option<Database>> = OnceLock::new();
     DB.get_or_init(|| {
         let found = Database::find();
@@ -266,6 +322,9 @@ pub(crate) fn open_table(wanted: &str) -> Option<(rusqlite::Connection, String)>
 
 /// The AIRAC cycle of the navigation database in use.
 pub(crate) fn airac() -> Option<String> {
+    if let Some(n) = cifp_only() {
+        return Some(n.cycle.clone());
+    }
     database()?.airac.clone()
 }
 
@@ -833,12 +892,18 @@ pub struct Communication {
 }
 
 pub fn airport_info(icao: &str) -> Option<AirportInfo> {
+    if let Some(n) = cifp_only() {
+        return n.airport_info(icao);
+    }
     database()?.airport_info(icao)
 }
 
 /// The grid minimum off-route altitudes over an area: (south edge, west edge, feet) for
 /// each one-degree square.
 pub fn grid_mora(south: f64, north: f64, west: f64, east: f64) -> Vec<(f64, f64, f64)> {
+    if let Some(n) = cifp_only() {
+        return n.grid_mora(south, north, west, east);
+    }
     database().map(|db| db.grid_mora(south, north, west, east)).unwrap_or_default()
 }
 
@@ -1352,6 +1417,9 @@ pub fn fixes_near(idents: &[String], near: (f64, f64)) -> std::collections::Hash
 
 /// Where a runway's landing threshold is.
 pub fn runway_threshold(icao: &str, runway: &str) -> Option<(f64, f64)> {
+    if let Some(n) = cifp_only() {
+        return n.runway_threshold(icao, runway);
+    }
     database()?.runway_threshold(icao, runway)
 }
 
