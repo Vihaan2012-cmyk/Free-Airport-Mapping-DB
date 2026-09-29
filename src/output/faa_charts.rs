@@ -9,6 +9,9 @@
 //! or changed since the cycle before; with that cycle already downloaded beside it, the
 //! unchanged ones are linked from there and only the rest are fetched.
 //!
+//! With `airports`, the charts go where an airport's charts are kept: `charts/` in its
+//! folder among the built airports, found by its ICAO code or FAA identifier.
+//!
 //! Written to be left running while flying: a few connections, a cap on the download rate,
 //! and on Windows the process in background mode (lowest CPU, disk and memory priority).
 
@@ -34,6 +37,10 @@ pub struct Options {
     pub only: Vec<String>,
     /// Run in the background: lowest CPU, disk and memory priority.
     pub background: bool,
+    /// Built airports (amdbgen's output folder): each one's charts go into its own
+    /// `charts` folder, beside its layers and airport diagram, in place of the cycle's
+    /// own folder per airport. A chart from an earlier cycle is taken out of it.
+    pub airports: Option<PathBuf>,
 }
 
 /// One chart as the index lists it under an airport.
@@ -234,17 +241,34 @@ pub fn run(opts: &Options) -> Result<PathBuf> {
         });
     });
 
-    // Each airport's folder: its charts in the index's order, named as the index names them.
+    // Each airport's charts in the index's order, named as the index names them: in its
+    // own folder among the built airports, or in the cycle's folder.
     let mut by_airport: BTreeMap<String, Vec<&Chart>> = BTreeMap::new();
     for c in &charts {
         by_airport.entry(c.folder().to_string()).or_default().push(c);
     }
+    let effective = effective_dates(&xml);
     let mut rows = Vec::new();
+    let mut unbuilt = Vec::new();
     for (folder, mut list) in by_airport {
         list.sort_by_key(|c| c.seq);
-        let adir = dir.join(&folder);
+        let (adir, shown) = match &opts.airports {
+            Some(root) => {
+                let c = list[0];
+                // An airport is filed under its ICAO code; one with none under the FAA
+                // identifier, with or without the K the United States puts in front.
+                let found = [c.icao.clone(), c.faa.clone(), format!("K{}", c.faa)].into_iter().filter(|k| !k.is_empty() && k != "K").find(|k| root.join(k).join("manifest.json").is_file());
+                let Some(key) = found else {
+                    unbuilt.push(folder.clone());
+                    continue;
+                };
+                (root.join(&key).join("charts"), format!("{key}/charts"))
+            }
+            None => (dir.join(&folder), folder.clone()),
+        };
         std::fs::create_dir_all(&adir)?;
         let mut used: HashMap<String, usize> = HashMap::new();
+        let mut wanted = std::collections::HashSet::new();
         for (i, c) in list.iter().enumerate() {
             let src = pdf_dir.join(&c.pdf);
             if !src.is_file() {
@@ -255,13 +279,32 @@ pub fn run(opts: &Options) -> Result<PathBuf> {
             *k += 1;
             let name = if *k == 1 { format!("{base}.pdf") } else { format!("{base} ({k}).pdf") };
             let dest = adir.join(&name);
-            if !dest.is_file() {
+            // A file of the same name from an earlier cycle is replaced by this one's.
+            let same = std::fs::metadata(&dest).ok().zip(std::fs::metadata(&src).ok()).is_some_and(|(d, s)| d.len() == s.len());
+            if !same {
+                let _ = std::fs::remove_file(&dest);
                 if std::fs::hard_link(&src, &dest).is_err() {
                     std::fs::copy(&src, &dest).with_context(|| format!("put {} in {}", c.pdf, adir.display()))?;
                 }
             }
-            rows.push([c.state.clone(), c.city.clone(), c.airport.clone(), c.faa.clone(), c.icao.clone(), c.code.clone(), c.name.clone(), format!("{folder}/{name}"), c.pdf.clone()]);
+            wanted.insert(name.clone());
+            rows.push([c.state.clone(), c.city.clone(), c.airport.clone(), c.faa.clone(), c.icao.clone(), c.code.clone(), c.name.clone(), format!("{shown}/{name}"), c.pdf.clone()]);
         }
+        if opts.airports.is_some() {
+            // The folder is ours: a chart no longer published goes with its cycle.
+            if let Ok(rd) = std::fs::read_dir(&adir) {
+                for e in rd.flatten() {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if name.to_ascii_lowercase().ends_with(".pdf") && !wanted.contains(&name) {
+                        let _ = std::fs::remove_file(e.path());
+                    }
+                }
+            }
+            std::fs::write(adir.join("cycle.txt"), format!("FAA d-TPP cycle {cycle}{effective}\r\nFrom the FAA's digital Terminal Procedures Publication. NOT FOR REAL-WORLD NAVIGATION.\r\n"))?;
+        }
+    }
+    if !unbuilt.is_empty() {
+        crate::term::info(&format!("{} airports with FAA charts are not among the built airports, and were left out: {}", unbuilt.len(), unbuilt.iter().take(20).cloned().collect::<Vec<_>>().join(" ")));
     }
     let mut w = csv::Writer::from_path(dir.join("index.csv"))?;
     w.write_record(["state", "city", "airport", "faa_id", "icao", "code", "chart", "file", "faa_pdf"])?;
@@ -285,6 +328,16 @@ pub fn run(opts: &Options) -> Result<PathBuf> {
         crate::term::warn(&format!("{msg}; {f} PDFs failed: run it again to fetch just those"));
     }
     Ok(dir)
+}
+
+/// When the cycle is in force, as the index's first line says: ", 0901Z 09/03/26 to 0901Z 10/01/26".
+fn effective_dates(xml: &str) -> String {
+    let head = &xml[..xml.len().min(600)];
+    let attr = |k: &str| head.find(&format!("{k}=\"")).and_then(|i| head[i + k.len() + 2..].split('"').next()).map(|v| v.split_whitespace().collect::<Vec<_>>().join(" "));
+    match (attr("from_edate"), attr("to_edate")) {
+        (Some(f), Some(t)) => format!(", {f} to {t}"),
+        _ => String::new(),
+    }
 }
 
 /// One PDF, checked to be one, written whole or not at all. Returns its size.
@@ -333,6 +386,12 @@ mod tests {
     fn file_names_are_safe_and_in_order() {
         let c = &parse(INDEX)[2];
         assert_eq!(file_name(3, c), "003 IAP VOR-DME RWY 27");
+    }
+
+    #[test]
+    fn says_when_the_cycle_is_in_force() {
+        let xml = r#"<?xml version="1.0"?><digital_tpp cycle="2609" from_edate="0901Z  09/03/26" to_edate="0901Z  10/01/26">"#;
+        assert_eq!(effective_dates(xml), ", 0901Z 09/03/26 to 0901Z 10/01/26");
     }
 
     #[test]
