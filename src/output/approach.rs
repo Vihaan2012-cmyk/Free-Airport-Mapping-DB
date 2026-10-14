@@ -159,7 +159,7 @@ const HELVETICA_BOLD: [u16; 95] = [
     889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584,
 ];
 
-fn text_width(font: Name, size: f32, s: &str) -> f32 {
+pub(crate) fn text_width(font: Name, size: f32, s: &str) -> f32 {
     let table = if font.0 == b"B" { &HELVETICA_BOLD } else { &HELVETICA };
     let mils: u32 = s.chars().map(crate::output::width_char).map(|c| table[c as usize - 32] as u32).sum();
     mils as f32 * size / 1000.0
@@ -407,6 +407,42 @@ fn intercept(centre: (f64, f64), from: (f64, f64), heading_deg: f64, radius_nm: 
     (t > 0.0).then(|| local.to_ll(px + dx * t, py + dy * t))
 }
 
+/// The way round from the track an aircraft is on (`prev` to `from`) onto a heading, the
+/// shorter way, at the radius it turns at: the points after `from`, ending on the heading.
+/// None of it where the heading is all but the track already.
+fn turn_onto(prev: (f64, f64), from: (f64, f64), heading_deg: f64) -> Vec<(f64, f64)> {
+    const RADIUS_NM: f64 = 1.15;
+    let local = Local::at(from);
+    let (px, py) = local.to_nm(prev.0, prev.1);
+    if px.hypot(py) < 0.01 {
+        return Vec::new();
+    }
+    // The track flown into `from`, clockwise from north, and how far round to the heading.
+    let track = (-px).atan2(-py);
+    let mut delta = heading_deg.to_radians() - track;
+    while delta > std::f64::consts::PI {
+        delta -= std::f64::consts::TAU;
+    }
+    while delta <= -std::f64::consts::PI {
+        delta += std::f64::consts::TAU;
+    }
+    if delta.abs().to_degrees() < 5.0 {
+        return Vec::new();
+    }
+    // Facing along a bearing b, the right hand points along (cos b, -sin b); the centre of
+    // a right turn is there, of a left turn the other side, and the aircraft stays the
+    // radius from it.
+    let side = delta.signum();
+    let (cx, cy) = (side * RADIUS_NM * track.cos(), -side * RADIUS_NM * track.sin());
+    let steps = ((delta.abs().to_degrees() / 5.0).ceil() as usize).max(2);
+    (1..=steps)
+        .map(|k| {
+            let b = track + delta * k as f64 / steps as f64;
+            local.to_ll(cx - side * RADIUS_NM * b.cos(), cy + side * RADIUS_NM * b.sin())
+        })
+        .collect()
+}
+
 /// A DME arc: from where the aircraft is, out (or in) to the arc on the line from the
 /// beacon, round it at its distance the way the leg turns, to the fix it ends at.
 fn dme_arc(centre: (f64, f64), from: (f64, f64), to: (f64, f64), radius_nm: f64, turn: Option<Turn>) -> Vec<(f64, f64)> {
@@ -556,19 +592,21 @@ fn terrain_bands(field_ft: f64) -> Vec<(f64, (f32, f32, f32))> {
 /// Heights tinted in bands, as a terrain picture rather than contours: quick to read and
 /// honest about what the model can say.
 ///
-/// Each square of the terrain model is painted once, in the colour it ends up: the band
-/// its height falls in, white where it is close to the field's own height (so an airport
-/// on a plateau does not sit in a wash of colour), and the sea where it is at sea level.
-/// Squares of one colour are merged into rectangles along a row and down the rows below,
-/// and each colour is set once. Painting band over band, with every band's edge as a
-/// polygon of its own, wrote a chart's terrain as tens of thousands of shapes: 800 KB a
-/// chart, 11 GB for the American ones.
-fn draw_terrain(c: &mut dyn Canvas, patch: &Patch, v: &View, field_ft: f64) {
-    let highest_ft = (0..patch.height)
-        .flat_map(|row| (0..patch.width).map(move |col| (row, col)))
-        .map(|(row, col)| patch.at(row, col))
-        .filter(|h| h.is_finite())
-        .fold(f64::NEG_INFINITY, |m, h| m.max(h as f64 / 0.3048));
+/// Each band is filled as the shapes its edges make: contours traced through the terrain
+/// model's grid (marching squares), each edge's crossing found between the two heights
+/// either side of it, so a coast or a ridge line runs as the ground does rather than in the
+/// model's squares. The bands are the ground's height in the colour it ends up: the sea at
+/// sea level, white close to the field's own height (so an airport on a plateau does not
+/// sit in a wash of colour), then the tints. Each is painted over the one below as the
+/// ground above its floor, its outline thinned to the points that change its shape by more
+/// than a few hundredths of a point, which keeps a chart's page a few tens of kilobytes.
+///
+/// `patches` are the terrain models to draw from, the finest first: each point of the map
+/// takes its height from the finest that has it. They are traced as one grid, so where a
+/// fine model round the airport meets a coarse one round it there is no seam.
+fn draw_terrain(c: &mut dyn Canvas, patches: &[&Patch], v: &View, field_ft: f64) {
+    let Some(finest) = patches.first() else { return };
+    let highest_ft = patches.iter().flat_map(|p| p.heights.iter()).filter(|h| h.is_finite()).fold(f64::NEG_INFINITY, |m, h| m.max(*h as f64 / 0.3048));
     let bands = terrain_bands(field_ft);
     let floor = (field_ft + 250.0).max(bands[0].0);
     // The bands the picture has: not one wholly under the white near the field, nor one
@@ -584,91 +622,208 @@ fn draw_terrain(c: &mut dyn Canvas, patch: &Patch, v: &View, field_ft: f64) {
         .collect();
     let white = highest_ft > floor;
     let water = field_ft >= WATER_NEEDS_FIELD_FT;
-    let mut palette: Vec<(f32, f32, f32)> = drawn.iter().map(|(_, colour)| *colour).collect();
-    let (white_at, water_at) = (palette.len(), palette.len() + 1);
-    palette.push((1.0, 1.0, 1.0));
-    palette.push(WATER_TINT);
-    // The colour a height ends up: the sea, then white near the field, then the lowest band
-    // it lies under; none where nothing is painted.
-    let colour = |ft: f64| -> Option<usize> {
-        if water && ft <= WATER_FT {
-            return Some(water_at);
-        }
-        if white && ft <= floor {
-            return Some(white_at);
-        }
-        drawn.iter().enumerate().filter(|(_, (top, _))| ft <= *top).min_by(|a, b| a.1 .0.total_cmp(&b.1 .0)).map(|(i, _)| i)
-    };
-    let corner = |row: usize, col: usize| -> (f32, f32) {
-        let (lat, lon) = patch.position(row, col);
-        v.at(lat, lon)
-    };
-    // One square: the mean of its four corners, where all four are known and it is near
-    // enough the window to be seen.
-    let square = |row: usize, col: usize| -> Option<usize> {
-        let corners = [(row, col), (row, col + 1), (row + 1, col + 1), (row + 1, col)];
-        let mut sum = 0.0;
-        for (r, k) in corners {
-            let h = patch.at(r, k);
-            if !h.is_finite() {
-                return None;
-            }
-            sum += h as f64;
-        }
-        corners.iter().any(|(r, k)| v.inside(corner(*r, *k), 30.0)).then(|| colour(sum / 4.0 / 0.3048)).flatten()
-    };
-    let mut rects: Vec<Vec<(f32, f32, f32, f32)>> = vec![Vec::new(); palette.len()];
-    let mut emit = |(from, to, k): (usize, usize, usize), first_row: usize, last_row: usize| {
-        let (a, b) = (corner(first_row, from), corner(last_row + 1, to + 1));
-        let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
-        let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
-        rects[k].push((x0, y0, (x1 - x0).max(0.1), (y1 - y0).max(0.1)));
-    };
-    // Runs of one colour along each row, kept open while the row below has the same run.
-    let mut open: std::collections::HashMap<(usize, usize, usize), usize> = std::collections::HashMap::new();
-    let rows = patch.height.saturating_sub(1);
-    for row in 0..rows {
-        let mut runs: Vec<(usize, usize, usize)> = Vec::new();
-        let mut current: Option<(usize, usize)> = None;
-        for col in 0..patch.width.saturating_sub(1) {
-            let k = square(row, col);
-            match (current, k) {
-                (Some((_, ck)), Some(k)) if ck == k => {}
-                _ => {
-                    if let Some((from, ck)) = current.take() {
-                        runs.push((from, col - 1, ck));
-                    }
-                    current = k.map(|k| (col, k));
-                }
+    // Each colour and the height above which it is painted, from the bottom: the sea, white
+    // near the field, then the tints. The lowest is painted wherever there is ground.
+    let mut layers: Vec<(f64, (f32, f32, f32))> = Vec::new();
+    let mut lower = f64::NEG_INFINITY;
+    if water {
+        layers.push((lower, WATER_TINT));
+        lower = WATER_FT;
+    }
+    if white {
+        layers.push((lower, (1.0, 1.0, 1.0)));
+        lower = floor;
+    }
+    for (top, colour) in &drawn {
+        layers.push((lower, *colour));
+        lower = *top;
+    }
+    // One grid over the window and a margin round it, its points as far apart as the finest
+    // model's or three quarters of a point, whichever is more: finer than that cannot be
+    // seen at the size a flight bag shows the page.
+    let model_pt = ((finest.step_lon / v.deg_w) as f32 * v.w).min((finest.step_lat / v.deg_h) as f32 * v.h);
+    let step = model_pt.max(0.75);
+    let (left, top) = (v.x - 30.0, v.y + v.h + 30.0);
+    let (cols, rows) = (((v.w + 60.0) / step).ceil() as usize + 1, ((v.h + 60.0) / step).ceil() as usize + 1);
+    // Heights in feet, a row and column of nothing round them so every outline closes; a
+    // point no model has is nothing too.
+    const NOTHING: f64 = -1.0e30;
+    let (h, w) = (rows + 2, cols + 2);
+    let mut grid = vec![NOTHING; h * w];
+    for r in 0..rows {
+        for k in 0..cols {
+            let (x, y) = (left + k as f32 * step, top - r as f32 * step);
+            let lon = v.west + ((x - v.x) / v.w) as f64 * v.deg_w;
+            let lat = v.north - ((v.y + v.h - y) / v.h) as f64 * v.deg_h;
+            if let Some(ft) = patches.iter().find_map(|p| height_at(p, lat, lon)) {
+                grid[(r + 1) * w + (k + 1)] = ft;
             }
         }
-        if let Some((from, ck)) = current {
-            runs.push((from, patch.width.saturating_sub(2), ck));
-        }
-        let mut next: std::collections::HashMap<(usize, usize, usize), usize> = std::collections::HashMap::with_capacity(runs.len());
-        for run in runs {
-            let first = open.remove(&run).unwrap_or(row);
-            next.insert(run, first);
-        }
-        for (run, first) in open.drain() {
-            emit(run, first, row - 1);
-        }
-        open = next;
     }
-    for (run, first) in open {
-        emit(run, first, rows.saturating_sub(1));
-    }
-    for (k, list) in rects.iter().enumerate() {
-        if list.is_empty() {
+    // A grid position (row, column, fractions) on the page.
+    let place = |row: f64, col: f64| -> (f32, f32) { (left + (col - 1.0) as f32 * step, top - (row - 1.0) as f32 * step) };
+    for (floor_ft, colour) in layers {
+        let threshold = if floor_ft == f64::NEG_INFINITY { NOTHING / 2.0 } else { floor_ft };
+        let rings = contours(&grid, h, w, threshold, &place);
+        if rings.is_empty() {
             continue;
         }
-        let (r, g, b) = palette[k];
-        c.set_fill_rgb(r, g, b);
-        for &(x, y, w, h) in list {
-            c.rect(x, y, w, h);
+        c.set_fill_rgb(colour.0, colour.1, colour.2);
+        for ring in &rings {
+            for (i, &(x, y)) in ring.iter().enumerate() {
+                if i == 0 {
+                    c.move_to(x, y);
+                } else {
+                    c.line_to(x, y);
+                }
+            }
+            c.close_path();
         }
-        c.fill_nonzero();
+        c.fill_even_odd();
     }
+}
+
+/// A model's height at a place, feet, between its four nearest points; None outside it or
+/// where one of them is missing.
+fn height_at(p: &Patch, lat: f64, lon: f64) -> Option<f64> {
+    let (fr, fc) = ((p.north - lat) / p.step_lat, (lon - p.west) / p.step_lon);
+    if !(fr >= 0.0 && fc >= 0.0) {
+        return None;
+    }
+    let (r, k) = (fr.floor() as usize, fc.floor() as usize);
+    if r + 1 >= p.height || k + 1 >= p.width {
+        return None;
+    }
+    let (dr, dk) = (fr - r as f64, fc - k as f64);
+    let corners = [p.at(r, k), p.at(r, k + 1), p.at(r + 1, k), p.at(r + 1, k + 1)];
+    if !corners.iter().all(|h| h.is_finite()) {
+        return None;
+    }
+    let [a, b, cc, d] = corners.map(|h| h as f64);
+    Some(((a * (1.0 - dk) + b * dk) * (1.0 - dr) + (cc * (1.0 - dk) + d * dk) * dr) / 0.3048)
+}
+
+/// The outlines of the ground above `threshold` in a grid of heights (row-major, `h` by `w`,
+/// its edge below everything), as closed rings of page points: marching squares, a
+/// crossing put between the heights either side of it, the saddle cells settled by their
+/// middle. Each ring is thinned (Douglas and Peucker) and one too small to see is left out.
+fn contours(grid: &[f64], h: usize, w: usize, threshold: f64, place: &dyn Fn(f64, f64) -> (f32, f32)) -> Vec<Vec<(f32, f32)>> {
+    use std::collections::HashMap;
+    let at = |i: usize, j: usize| grid[i * w + j];
+    let above = |i: usize, j: usize| at(i, j) > threshold;
+    // A crossing is named by its edge: the node it starts at and whether it runs across.
+    let key = |i: usize, j: usize, across: bool| ((i * w + j) as u64) << 1 | across as u64;
+    let mut points: HashMap<u64, (f32, f32)> = HashMap::new();
+    let mut links: HashMap<u64, Vec<u64>> = HashMap::new();
+    let mut crossing = |i: usize, j: usize, across: bool| -> u64 {
+        let k = key(i, j, across);
+        points.entry(k).or_insert_with(|| {
+            let (i2, j2) = if across { (i, j + 1) } else { (i + 1, j) };
+            let (p, q) = (at(i, j), at(i2, j2));
+            let f = ((threshold - p) / (q - p)).clamp(0.0, 1.0);
+            if across {
+                place(i as f64, j as f64 + f)
+            } else {
+                place(i as f64 + f, j as f64)
+            }
+        });
+        k
+    };
+    for i in 0..h - 1 {
+        for j in 0..w - 1 {
+            let case = (above(i, j) as u8) << 3 | (above(i, j + 1) as u8) << 2 | (above(i + 1, j + 1) as u8) << 1 | above(i + 1, j) as u8;
+            if case == 0 || case == 15 {
+                continue;
+            }
+            let (top, right, bottom, left) = (crossing(i, j, true), crossing(i, j + 1, false), crossing(i + 1, j, true), crossing(i, j, false));
+            let middle_above = (at(i, j) + at(i, j + 1) + at(i + 1, j + 1) + at(i + 1, j)) / 4.0 > threshold;
+            let pairs: &[(u64, u64)] = &match case {
+                1 | 14 => [(left, bottom), (0, 0)],
+                2 | 13 => [(bottom, right), (0, 0)],
+                3 | 12 => [(left, right), (0, 0)],
+                4 | 11 => [(top, right), (0, 0)],
+                6 | 9 => [(top, bottom), (0, 0)],
+                7 | 8 => [(left, top), (0, 0)],
+                5 if middle_above => [(left, top), (bottom, right)],
+                5 => [(top, right), (left, bottom)],
+                10 if middle_above => [(top, right), (left, bottom)],
+                _ => [(left, top), (bottom, right)],
+            };
+            for &(a, b) in pairs.iter().filter(|(a, b)| a != b) {
+                links.entry(a).or_default().push(b);
+                links.entry(b).or_default().push(a);
+            }
+        }
+    }
+    // Walk each loop of crossings round to where it began.
+    let mut rings = Vec::new();
+    let mut starts: Vec<u64> = links.keys().copied().collect();
+    starts.sort_unstable();
+    for start in starts {
+        if !links.get(&start).is_some_and(|l| !l.is_empty()) {
+            continue;
+        }
+        let mut ring = vec![points[&start]];
+        let (mut prev, mut here) = (start, start);
+        loop {
+            let next = {
+                let l = links.get_mut(&here).unwrap();
+                let Some(at) = l.iter().position(|&n| n != prev || l.len() == 1) else { break };
+                l.swap_remove(at)
+            };
+            if let Some(l) = links.get_mut(&next) {
+                if let Some(at) = l.iter().position(|&n| n == here) {
+                    l.swap_remove(at);
+                }
+            }
+            if next == start {
+                break;
+            }
+            ring.push(points[&next]);
+            prev = here;
+            here = next;
+        }
+        let area = ring.iter().zip(ring.iter().cycle().skip(1)).map(|(a, b)| a.0 * b.1 - b.0 * a.1).sum::<f32>().abs() / 2.0;
+        if ring.len() >= 3 && area >= 0.3 {
+            rings.push(thin(&ring, 0.06));
+        }
+    }
+    rings
+}
+
+/// A closed ring with the points that change its shape by less than `tolerance` dropped.
+fn thin(ring: &[(f32, f32)], tolerance: f32) -> Vec<(f32, f32)> {
+    fn keep(points: &[(f32, f32)], tolerance: f32, out: &mut Vec<(f32, f32)>) {
+        let (a, b) = (points[0], points[points.len() - 1]);
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let len = (dx * dx + dy * dy).sqrt().max(1e-6);
+        let (far, at) = points[1..points.len() - 1].iter().enumerate().map(|(i, p)| (((p.0 - a.0) * dy - (p.1 - a.1) * dx).abs() / len, i + 1)).fold((0.0f32, 0usize), |m, x| if x.0 > m.0 { x } else { m });
+        if far > tolerance && at > 0 {
+            keep(&points[..=at], tolerance, out);
+            out.pop();
+            keep(&points[at..], tolerance, out);
+        } else {
+            out.push(a);
+            out.push(b);
+        }
+    }
+    if ring.len() < 8 {
+        return ring.to_vec();
+    }
+    // Split at the point farthest from the first, so each half is an open line.
+    let far = (1..ring.len()).max_by(|&i, &j| {
+        let d = |k: usize| (ring[k].0 - ring[0].0).powi(2) + (ring[k].1 - ring[0].1).powi(2);
+        d(i).total_cmp(&d(j))
+    });
+    let far = far.unwrap_or(ring.len() / 2);
+    let mut out = Vec::with_capacity(ring.len() / 4);
+    keep(&ring[..=far], tolerance, &mut out);
+    out.pop();
+    let mut back: Vec<(f32, f32)> = ring[far..].to_vec();
+    back.push(ring[0]);
+    keep(&back, tolerance, &mut out);
+    out.pop();
+    out
 }
 
 /// The height each tint stands for, written on the tint itself.
@@ -947,8 +1102,6 @@ fn draw_track(c: &mut dyn Canvas, v: &View, legs: &[&Leg], start: Option<(f64, f
     // A heading flown with no fix at its end ("turn onto 090"), which the next leg joins
     // from: an arc is intercepted along it.
     let mut heading: Option<f64> = None;
-    // Stretches of the track that are arcs already, and must not be rounded again.
-    let mut arcs: Vec<(usize, usize)> = Vec::new();
     for leg in legs {
         if leg.lat.is_none() && !matches!(leg.path.as_str(), "HM" | "HA" | "HF") {
             if let Some(c) = leg.course_deg {
@@ -964,18 +1117,28 @@ fn draw_track(c: &mut dyn Canvas, v: &View, legs: &[&Leg], start: Option<(f64, f
                     let centre = crate::sources::navdata::navaid_near(&leg.navaid, (lat, lon));
                     let arc = match centre {
                         Some(o) => {
-                            let join = heading.and_then(|h| intercept(o, from, h, radius)).unwrap_or(from);
+                            // The turn onto the heading is flown before the heading is: it
+                            // carries the aircraft on round, and the arc is joined from
+                            // where it ends, as a published chart draws it.
+                            // The way the aircraft came into `from`: the point before it on
+                            // this track, or where the track began.
+                            let came_from = if ll.len() >= 2 { Some(ll[ll.len() - 2]) } else { start.filter(|_| ll.len() == 1) };
+                            let turn = match (heading, came_from) {
+                                (Some(h), Some(p)) => turn_onto(p, from, h),
+                                _ => Vec::new(),
+                            };
+                            let start = turn.last().copied().unwrap_or(from);
+                            let join = heading.and_then(|h| intercept(o, start, h, radius)).unwrap_or(start);
                             let mut a = vec![from];
+                            a.extend(turn);
                             a.extend(dme_arc(o, join, (lat, lon), radius, leg.turn));
                             a
                         }
                         None => arc_points(from, (lat, lon), radius, leg.turn),
                     };
-                    let first = ll.len();
                     for p in arc.into_iter().skip(1) {
                         ll.push(p);
                     }
-                    arcs.push((first, ll.len()));
                 }
                 _ => ll.push((lat, lon)),
             }
@@ -983,9 +1146,9 @@ fn draw_track(c: &mut dyn Canvas, v: &View, legs: &[&Leg], start: Option<(f64, f
             last_ll = Some((lat, lon));
         }
     }
-    // Where the track doubles back, the turn is drawn round rather than as a spike; the
-    // arcs are drawn as they are.
-    let rounded = if ll.len() >= 3 && arcs.is_empty() { round_turns(ll) } else { ll };
+    // Where the track turns, the turn is drawn round rather than as a corner: into and out
+    // of an arc too, whose own bends are too gentle to be taken for corners.
+    let rounded = if ll.len() >= 3 { round_turns(ll) } else { ll };
     pts.extend(rounded.into_iter().map(|(lat, lon)| v.at(lat, lon)));
     if pts.len() < 2 {
         return pts;
@@ -1024,66 +1187,89 @@ fn round_turns(pts: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
     const RADIUS_NM: f64 = 1.15;
     // Below this a turn is a kink in a straight track and rounding it shows nothing.
     const LEAST_TURN_DEG: f64 = 25.0;
-    if pts.len() < 3 {
+    // A turn is measured between the track this far before and after it, so that the many
+    // small bends a drawn arc is made of are not each taken for a corner, while the corner
+    // where an arc meets a straight leg is.
+    const LOOK_NM: f64 = 0.3;
+    let n = pts.len();
+    if n < 3 {
         return pts;
     }
-    let mut out = vec![pts[0]];
-    for i in 1..pts.len() - 1 {
-        let here = pts[i];
-        let local = Local::at(here);
-        let (ax, ay) = local.to_nm(pts[i - 1].0, pts[i - 1].1);
-        let (bx, by) = local.to_nm(pts[i + 1].0, pts[i + 1].1);
+    // How far along the track each point is, in miles.
+    let mut along = vec![0.0f64; n];
+    for i in 1..n {
+        let (x, y) = Local::at(pts[i - 1]).to_nm(pts[i].0, pts[i].1);
+        along[i] = along[i - 1] + x.hypot(y);
+    }
+    let total = along[n - 1];
+    let point_at = |d: f64| -> (f64, f64) {
+        let d = d.clamp(0.0, total);
+        let i = along.partition_point(|&a| a < d).clamp(1, n - 1);
+        let (a0, a1) = (along[i - 1], along[i]);
+        let f = if a1 > a0 { (d - a0) / (a1 - a0) } else { 0.0 };
+        (pts[i - 1].0 + (pts[i].0 - pts[i - 1].0) * f, pts[i - 1].1 + (pts[i].1 - pts[i - 1].1) * f)
+    };
+    // The angle turned through at a point, between the track `look` before it and after.
+    let turned_at = |i: usize, look: f64| -> f64 {
+        let local = Local::at(pts[i]);
+        let (b, f) = (point_at(along[i] - look), point_at(along[i] + look));
+        let (ax, ay) = local.to_nm(b.0, b.1);
+        let (bx, by) = local.to_nm(f.0, f.1);
         let (la, lb) = (ax.hypot(ay), bx.hypot(by));
-        if la < 0.2 || lb < 0.2 {
-            out.push(here);
+        if la < 0.02 || lb < 0.02 {
+            return 0.0;
+        }
+        std::f64::consts::PI - ((ax * bx + ay * by) / (la * lb)).clamp(-1.0, 1.0).acos()
+    };
+    let turned: Vec<f64> = (0..n).map(|i| if i == 0 || i == n - 1 { 0.0 } else { turned_at(i, LOOK_NM) }).collect();
+    // The corners: points turned through enough, each the sharpest of the points near it
+    // (those beside a corner see it too, in part).
+    let corners: Vec<usize> = (1..n - 1)
+        .filter(|&i| turned[i].to_degrees() >= LEAST_TURN_DEG)
+        .filter(|&i| (1..n - 1).all(|j| j == i || (along[j] - along[i]).abs() > LOOK_NM || turned[j] < turned[i] || (turned[j] == turned[i] && j > i)))
+        .collect();
+    let mut out = Vec::with_capacity(n + corners.len() * 16);
+    let mut next = 0usize;
+    for (k, &i) in corners.iter().enumerate() {
+        // Room either side: the way to the corner before and the one after, of which each
+        // takes less than half.
+        let before = if k == 0 { along[i] } else { along[i] - along[corners[k - 1]] };
+        let after = if k + 1 == corners.len() { total - along[i] } else { along[corners[k + 1]] - along[i] };
+        let half = (std::f64::consts::PI - turned[i]) / 2.0;
+        let reach = (RADIUS_NM / half.tan().max(1e-6)).min(0.45 * before).min(0.45 * after);
+        while next < n && along[next] < along[i] - reach {
+            out.push(pts[next]);
+            next += 1;
+        }
+        if reach * half.tan() < 0.05 {
+            while next <= i {
+                out.push(pts[next]);
+                next += 1;
+            }
             continue;
         }
-        // Unit vectors from the fix back along each leg.
-        let (ux, uy) = (ax / la, ay / la);
-        let (wx, wy) = (bx / lb, by / lb);
-        // The angle between the two legs at the fix. A straight-through track has the
-        // legs opposite, so the angle is 180° and nothing is turned through.
-        let between = (ux * wx + uy * wy).clamp(-1.0, 1.0).acos();
-        let turned = std::f64::consts::PI - between;
-        if turned.to_degrees() < LEAST_TURN_DEG || between < 1e-3 {
-            out.push(here);
-            continue;
-        }
-        let half = between / 2.0;
-        // How far back along each leg the arc touches, capped so it leaves the legs room.
-        let reach = (RADIUS_NM / half.tan()).min(0.45 * la.min(lb));
-        let r = reach * half.tan();
-        if r < 0.05 {
-            out.push(here);
-            continue;
-        }
-        let (t1x, t1y) = (ux * reach, uy * reach);
-        let (t2x, t2y) = (wx * reach, wy * reach);
-        // The centre lies along the bisector of the two legs.
-        let (bxn, byn) = (ux + wx, uy + wy);
-        let blen = bxn.hypot(byn);
-        if blen < 1e-6 {
-            out.push(here);
-            continue;
-        }
-        let along = r / half.sin();
-        let (cx, cy) = (bxn / blen * along, byn / blen * along);
-        let a1 = (t1y - cy).atan2(t1x - cx);
-        let a2 = (t2y - cy).atan2(t2x - cx);
-        let mut sweep = a2 - a1;
-        while sweep > std::f64::consts::PI {
-            sweep -= std::f64::consts::TAU;
-        }
-        while sweep < -std::f64::consts::PI {
-            sweep += std::f64::consts::TAU;
-        }
-        let steps = ((sweep.abs().to_degrees() / 5.0) as usize).clamp(3, 48);
+        // From where the turn begins on the track to where it ends, the corner the point
+        // the two tangents meet at: a rational quadratic Bezier weighted so that between
+        // straight legs it is a circle's arc exactly.
+        let local = Local::at(pts[i]);
+        let (t1, t2) = (point_at(along[i] - reach), point_at(along[i] + reach));
+        let (p0, p2) = (local.to_nm(t1.0, t1.1), local.to_nm(t2.0, t2.1));
+        let weight = half.sin();
+        let steps = ((turned[i].to_degrees() / 5.0) as usize).clamp(3, 48);
         for s in 0..=steps {
-            let a = a1 + sweep * s as f64 / steps as f64;
-            out.push(local.to_ll(cx + r * a.cos(), cy + r * a.sin()));
+            let t = s as f64 / steps as f64;
+            let (a, b, c) = ((1.0 - t) * (1.0 - t), 2.0 * (1.0 - t) * t * weight, t * t);
+            let d = a + b + c;
+            out.push(local.to_ll((a * p0.0 + c * p2.0) / d, (a * p0.1 + c * p2.1) / d));
+        }
+        while next < n && along[next] <= along[i] + reach {
+            next += 1;
         }
     }
-    out.push(pts[pts.len() - 1]);
+    while next < n {
+        out.push(pts[next]);
+        next += 1;
+    }
     out
 }
 
@@ -1870,10 +2056,8 @@ fn draw_plan(c: &mut dyn Canvas, font: Name, bold: Name, ch: &Chart, x: f32, y: 
     c.rect(x, y, w, h);
     c.clip_nonzero();
     c.end_path();
-    if let Some(wide) = ch.wide {
-        draw_terrain(c, wide, &v, ch.field_elev_ft);
-    }
-    draw_terrain(c, ch.patch, &v, ch.field_elev_ft);
+    let patches: Vec<&Patch> = std::iter::once(ch.patch).chain(ch.wide).collect();
+    draw_terrain(c, &patches, &v, ch.field_elev_ft);
     let have_airport = ch.airport_dir.map(|d| draw_airport(c, d, &v)).unwrap_or(false);
     // The runway itself. At eight or sixteen miles across, the pavement we build is a
     // couple of millimetres of grey; a chart still has to show which strip is being
@@ -3401,19 +3585,29 @@ pub fn title_of(p: &Procedure) -> String {
 /// Write the chart for a minimum that has already been worked out.
 pub fn write(ch: &Chart, est: &Estimate, out: &FsPath) -> Result<()> {
     let track = ch.track_deg;
-    write_page(out, |c, f, b| {
-        let _ = draw(c, ch, est, track, f, b);
-    })
+    let v = write_page_sized(out, (W, H), |c, f, b| draw(c, ch, est, track, f, b))?;
+    save_georef(out, (W, H), &v)
 }
 
-/// One A4 page as a PDF, drawn by `paint` in Helvetica and Helvetica-Bold (named `f`
-/// and `b`).
-fn write_page(out: &FsPath, paint: impl FnOnce(&mut dyn Canvas, Name, Name)) -> Result<()> {
-    write_page_sized(out, (W, H), paint)
+/// Where a chart's plan view is: written beside its PDF (`<chart>.geo.json`) so that a
+/// flight bag shown the page can put the aircraft on it. `page` is the page's size in
+/// points; `plan` the map's box on it, (x, y, width, height) in points measured up from the
+/// page's foot; `latlng` the ground it covers, (west, south, east, north). The plan is
+/// drawn to a scale even in latitude and longitude, so two corners are the whole of it.
+pub fn save_georef_at(out: &FsPath, page: (f32, f32), plan: (f32, f32, f32, f32), latlng: (f64, f64, f64, f64)) -> Result<()> {
+    let json = serde_json::json!({ "page": [page.0, page.1], "plan": [plan.0, plan.1, plan.2, plan.3], "latlng": [latlng.0, latlng.1, latlng.2, latlng.3] });
+    let path = out.with_extension("geo.json");
+    std::fs::write(&path, json.to_string()).with_context(|| format!("write {}", path.display()))
 }
 
-/// The same for a page of any size: a landscape one is A4 turned on its side.
-fn write_page_sized(out: &FsPath, size: (f32, f32), paint: impl FnOnce(&mut dyn Canvas, Name, Name)) -> Result<()> {
+fn save_georef(out: &FsPath, page: (f32, f32), v: &View) -> Result<()> {
+    save_georef_at(out, page, (v.x, v.y, v.w, v.h), (v.west, v.north - v.deg_h, v.west + v.deg_w, v.north))
+}
+
+/// A page as a PDF, drawn by `paint` in Helvetica and Helvetica-Bold (named `f` and `b`):
+/// A4, or A4 turned on its side for a landscape one. Returns what `paint` returns, which
+/// for a chart is the window its map shows.
+fn write_page_sized<R>(out: &FsPath, size: (f32, f32), paint: impl FnOnce(&mut dyn Canvas, Name, Name) -> R) -> Result<R> {
     let mut pdf = Pdf::new();
     let (cat, tree, page_id, content_id, font_id, bold_id) = (Ref::new(1), Ref::new(2), Ref::new(3), Ref::new(4), Ref::new(5), Ref::new(6));
     pdf.catalog(cat).pages(tree);
@@ -3431,10 +3625,10 @@ fn write_page_sized(out: &FsPath, size: (f32, f32), paint: impl FnOnce(&mut dyn 
 
     let (f, b) = (Name(b"F"), Name(b"B"));
     let mut c = Content::new();
-    paint(&mut c, f, b);
+    let painted = paint(&mut c, f, b);
     crate::output::canvas::page_stream(&mut pdf, content_id, &c.finish());
     std::fs::write(out, pdf.finish()).with_context(|| format!("write {}", out.display()))?;
-    Ok(())
+    Ok(painted)
 }
 
 /// The same chart as a picture, for anything that wants one rather than a page to print.

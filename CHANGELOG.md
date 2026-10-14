@@ -1,23 +1,82 @@
 # Changelog
 
-## Unreleased
+## 1.2.11 (2026-10-14) · A330 OANS 1.0.1 · A320 OANS 1.0.9
 
-- **Charts are about 25 times smaller.** Terrain is painted once per square of the model,
-  merged into rectangles along the rows and down them, rather than every tint band
-  repainting all the ground under it with every band edge a polygon of its own: tens of
-  thousands of shapes a chart. Boston's 30 approach, departure and arrival charts: 24.5 MB
-  -> 1.0 MB (4.0 MB uncompressed, 0.42 MB in a 7z). Band edges follow the terrain model's
-  squares rather than being smoothed between them.
-- **Charts are 4-7 times smaller.** Every PDF page is compressed (FlateDecode) and its
-  numbers written to the hundredth of a point rather than a float's full length: an
-  airport diagram 586 KB -> 132 KB, an ILS chart 892 KB -> 133 KB, a STAR 2.1 MB ->
-  303 KB, drawn the same.
-- `amdbgen redraw-charts --airports DIR` draws every built airport's chart.pdf again, several
-  at once.
-- `--uncompressed-pdf` (redraw-charts, cifp-charts) writes the pages uncompressed but
-  still rounded, for a pack compressed as a whole: each file is bigger, but a 7z of many
-  charts is about half the size (Boston's 30 charts: 1.75 MB against 3.3 MB), as the
-  archive's compression works better on the raw drawing and finds what charts share.
+**A much smaller airport cache: update the bridge before using a cache built by this
+version.**
+
+- Each built airport's layers are one brotli-packed file (`layers.json.br`) rather than a
+  file a layer: every airport in the world went from 3.18 GB in about 2 million files to
+  0.3 GB in 43,745, with nothing lost. `amdbgen pack-layers --airports DIR` packs an
+  existing cache. A bridge older than 1.2.11 sees a packed airport as empty.
+- Building an airport again that an old version built keeps its charts and diagram: the
+  old folder is set aside, and its `charts`, `charts-*`, `chart.pdf` and `chart.geo.json`
+  are put back once the new build is in (or the whole folder, if the build fails).
+
+**The flight bags show the charts that were generated, matched to each aircraft's data
+cycle.**
+
+- The patched Navigraph flight bags (iniBuilds A350, PMDG 737 and 777, Synaptic A220,
+  TFDi) take their charts from the PDFs in each airport's folder: the set drawn for the
+  aircraft's own navigation data cycle first, the FAA's at a US airport for an aircraft
+  on the current cycle, otherwise the newest set drawn from an aircraft's database. An
+  airport with no PDFs falls back to charts drawn on request, as before.
+- `amdbgen navdata-charts [ICAO...] --from sim|<database.s3db>` draws every approach,
+  departure and arrival of a navigation data set, the simulator's own or an aircraft's,
+  into the airports' folders (`--subfolder charts-2610`), several airports at once.
+
+**Tablet enroute maps from the bridge.**
+
+- The A350's and the PMDG 737/777's enroute maps come from tiles drawn ahead
+  (`amdbgen enroute-tiles --from sim|<database.s3db>`): IFR low and high, VFR and world,
+  zoom 0 to 10, kept losslessly in packs of a column each. The bridge serves the set for
+  the aircraft's own cycle when it is drawn, otherwise the newest.
+
+**FlyByWire's OANS no longer loses an airport over a sliver of a polygon.**
+
+- A shape that collapses to a line once its coordinates are rounded to the answer's
+  precision is left out. FlyByWire's OANS runs every polygon through Turf's cleanCoords,
+  which throws on such a ring, and the whole airport failed to load.
+
+**Charts.**
+
+- Terrain is traced as contours through the terrain model (marching squares), so a coast
+  or a ridge runs as the ground does, each outline thinned to the points that change its
+  shape; a finer model round the airport meets the coarse one round it with no seam.
+  Pages are a few tens of kilobytes.
+- Every PDF page is compressed (FlateDecode) and its numbers written to the hundredth of
+  a point: an airport diagram 586 KB -> 132 KB, an ILS chart 892 KB -> 133 KB, a STAR
+  2.1 MB -> 303 KB, drawn the same.
+- Turns onto a heading are drawn as the aircraft flies them, the shorter way round at
+  its turn radius.
+- Each chart has a `.geo.json` beside its PDF giving where its plan view is on the
+  ground.
+- Drawing is several times faster: open-sea squares the terrain source has no file for
+  are remembered rather than asked for again, and decoded terrain is kept in memory
+  across charts.
+- `amdbgen redraw-charts --airports DIR` draws every built airport's `chart.pdf` again,
+  several at once. `--uncompressed-pdf` (redraw-charts, cifp-charts, navdata-charts)
+  writes the pages uncompressed but still rounded, for a pack compressed as a whole.
+
+**The simulator's navigation data is read correctly.**
+
+- Fix regions in MSFS 2020 data were read as empty and MSFS 2024 identifiers cut to 32
+  bits (WIZAD lost its W), so airways were spliced across the world. This also corrects
+  the AMDB Navdata converter's output.
+
+**Airport maps for aircraft with no bridge, such as on a console.**
+
+- `amdb-bridge export-web --to DIR` writes the built airports as plain files for a web
+  host, and `amdb-bridge bundle-web` packs them to ship inside an aircraft.
+- `amdb-bridge export-split --gateway DIR --osm DIR --to DIR` writes them as two
+  separately licensed halves, each from a build that never saw the other's source:
+  X-Plane Scenery Gateway data (GPL v2 or later) and OpenStreetMap (ODbL), each with its
+  licence text and a notice, and search lists from public-domain data only.
+- `amdbgen build --no-xplane-install` never reads the local X-Plane install, whose Custom
+  Scenery folder may hold airports that are not free to pass on.
+
+**A320 OANS 1.0.9, A330 OANS 1.0.1.** Rebuilt with this version's client: no change in
+use.
 
 ## 1.2.10 (2026-09-29) · A330 OANS 1.0.0 · A320 OANS 1.0.8
 

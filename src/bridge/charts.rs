@@ -260,8 +260,11 @@ fn drawn_meta(dir: &std::path::Path, id: &str) -> Option<Value> {
 ///
 /// Asking for the list starts every chart on it drawing in the background, approaches
 /// first, so that by the time one is chosen it is usually waiting.
-pub fn index_json(icao: &str, base: &str) -> Result<Value> {
+pub fn index_json(icao: &str, base: &str, aircraft: Option<&str>) -> Result<Value> {
     let icao = icao.to_uppercase();
+    if let Some(v) = filed_index_json(&icao, base, aircraft) {
+        return Ok(v);
+    }
     let found = procedures_for(&icao)?;
     let (width, height) = approach::picture_size(SCALE);
     let date = crate::sources::msfs::airac_dates().map(|(from, _)| from).unwrap_or_default();
@@ -327,6 +330,68 @@ pub fn index_json(icao: &str, base: &str) -> Result<Value> {
     Ok(json!({ "charts": charts }))
 }
 
+/// Where the enroute map's tiles are kept: `enroute` beside the built airports.
+pub(crate) fn enroute_root() -> Option<PathBuf> {
+    GROUND.get().map(|cfg| cfg.out.join("enroute"))
+}
+
+/// The built airport's folder, when the bridge has been told where they are.
+fn airport_dir(icao: &str) -> Option<PathBuf> {
+    GROUND.get().map(|cfg| cfg.out.join(icao)).filter(|d| d.is_dir())
+}
+
+/// The chart list out of the charts drawn ahead into the airport's own folder (see
+/// `filed`), when it has any: the set of the asking aircraft's cycle.
+fn filed_index_json(icao: &str, base: &str, aircraft: Option<&str>) -> Option<Value> {
+    let dir = airport_dir(icao)?;
+    let sets = super::filed::sets(&dir);
+    let cycle = aircraft.and_then(super::filed::aircraft_cycle);
+    let set = super::filed::pick(&sets, cycle.as_deref(), crate::sources::navdata::sim_cycle().as_deref())?;
+    let date = super::filed::in_force(&dir, &set);
+    let list = super::filed::list(icao, &dir, &set);
+    let (portrait_w, portrait_h) = approach::picture_size(SCALE);
+    let charts: Vec<Value> = list
+        .iter()
+        .map(|e| {
+            let id = &e.id;
+            let url = |kind: &str, theme: &str| format!("{base}/v2/charts/{icao}/{id}{kind}?theme={theme}");
+            let (width, height) = super::filed::size(&e.path, SCALE).unwrap_or((portrait_w, portrait_h));
+            let planview = super::filed::georef(&e.path, SCALE);
+            json!({
+                "id": id,
+                "icao_airport_identifier": icao,
+                "category": e.category,
+                "type_code": e.type_code,
+                "precision_approach": e.precision,
+                "index_number": e.index_number,
+                "name": e.name,
+                "revision_date": date,
+                "width": width,
+                "height": height,
+                "procedures": e.procedures.iter().map(|p| json!({ "ident": p })).collect::<Vec<_>>(),
+                "runways": e.runways,
+                "image_day_url": url(".png", "day"),
+                "image_night_url": url(".png", "night"),
+                "thumb_day_url": url(".thumb.png", "day"),
+                "thumb_night_url": url(".thumb.png", "night"),
+                "image_day": format!("{id}.png"),
+                "image_night": format!("{id}.night.png"),
+                "thumb_day": format!("{id}.thumb.png"),
+                "thumb_night": format!("{id}.thumb.night.png"),
+                "is_georeferenced": planview.is_some(),
+                "bounding_boxes": planview.map(|pv| json!({ "planview": pv, "insets": [] })).unwrap_or(Value::Null),
+            })
+        })
+        .collect();
+    crate::term::info(&format!(
+        "[{icao}] Chart list from {set} in the airport's folder, for {} ({}): {} pages",
+        aircraft.unwrap_or("a flight bag the bridge cannot tell"),
+        cycle.map(|c| format!("AIRAC {c}")).unwrap_or_else(|| "cycle unknown".to_string()),
+        charts.len()
+    ));
+    Some(json!({ "charts": charts }))
+}
+
 /// Draw an airport's charts in the background, once per airport while the bridge runs.
 fn draw_ahead(icao: &str, ids: Vec<String>) {
     static STARTED: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -350,7 +415,11 @@ fn draw_ahead(icao: &str, ids: Vec<String>) {
 /// What `getAirportInfo` returns, as much of it as the simulator's data says.
 pub fn airport_json(icao: &str, store: &Store) -> Result<Value> {
     let icao = icao.to_uppercase();
-    let found = procedures_for(&icao)?;
+    // From the simulator's data, or from the built airport for one it has no procedures
+    // for but whose folder has charts.
+    let found = procedures_for(&icao).ok();
+    let built = airport_dir(&icao).and_then(|d| std::fs::read_to_string(d.join("manifest.json")).ok()).and_then(|t| serde_json::from_str::<crate::output::manifest::Manifest>(&t).ok()).map(|m| (m.arp[0], m.arp[1]));
+    let (lat, lon) = found.as_ref().map(|f| (f.lat, f.lon)).or(built).ok_or_else(|| anyhow!("{icao} has no procedures in the simulator's navigation data and is not built"))?;
     let name = store
         .search(&icao)
         .into_iter()
@@ -362,9 +431,9 @@ pub fn airport_json(icao: &str, store: &Store) -> Result<Value> {
         "iata_airport_designator": "",
         "name": name,
         "city": "",
-        "latitude": found.lat,
-        "longitude": found.lon,
-        "magnetic_variation": found.magnetic_variation_deg.unwrap_or(0.0),
+        "latitude": lat,
+        "longitude": lon,
+        "magnetic_variation": found.as_ref().and_then(|f| f.magnetic_variation_deg).unwrap_or(0.0),
         "elevation": 0,
         "longest_runway": 0,
         "country_code": "",
@@ -376,7 +445,7 @@ pub fn airport_json(icao: &str, store: &Store) -> Result<Value> {
         "repairs": [],
         "landing_fee": false,
         "jet_starting_unit": false,
-        "precision_airport": approach::approaches(&found).iter().any(|p| p.approach_type == Some(ApproachType::Ils)),
+        "precision_airport": found.as_ref().is_some_and(|f| approach::approaches(f).iter().any(|p| p.approach_type == Some(ApproachType::Ils))),
         "beacon": false,
         "customs": false,
         "airport_type": "",
@@ -400,6 +469,11 @@ pub fn airport_json(icao: &str, store: &Store) -> Result<Value> {
 pub fn image(icao: &str, id: &str, night: bool) -> Result<Vec<u8>> {
     static DRAWING: Mutex<()> = Mutex::new(());
     let icao = icao.to_uppercase();
+    // One drawn ahead into the airport's folder: rendered from its PDF.
+    if id.contains('~') {
+        let path = airport_dir(&icao).and_then(|d| super::filed::path_of(&icao, &d, id)).ok_or_else(|| anyhow!("{id} is not one of {icao}'s charts"))?;
+        return super::filed::picture(&path, SCALE, night);
+    }
     let dir = cache_dir(&icao);
     let file = dir.join(format!("{id}.{}.png", if night { "night" } else { "day" }));
     if let Ok(bytes) = std::fs::read(&file) {
@@ -443,6 +517,12 @@ pub fn image(icao: &str, id: &str, night: bool) -> Result<Vec<u8>> {
 /// A card naming a chart, cheap enough to answer for a whole list at once.
 pub fn thumbnail(icao: &str, id: &str, night: bool) -> Result<Vec<u8>> {
     let icao = icao.to_uppercase();
+    if id.contains('~') {
+        let dir = airport_dir(&icao).ok_or_else(|| anyhow!("{icao} is not built"))?;
+        let set = id.split('~').nth(1).unwrap_or("charts");
+        let title = super::filed::list(&icao, &dir, set).into_iter().find(|e| e.id == id).map(|e| e.name).ok_or_else(|| anyhow!("{id} is not one of {icao}'s charts"))?;
+        return approach::thumbnail(&title, &icao, night);
+    }
     let found = procedures_for(&icao)?;
     let title = entries(&icao, &found).into_iter().find(|e| e.id == id).map(|e| e.name).ok_or_else(|| anyhow!("{id} is not one of {icao}'s charts"))?;
     approach::thumbnail(&title, &icao, night)
@@ -476,7 +556,7 @@ mod tests {
         let mut cfg = crate::bridge::cli::config(&Default::default(), &Default::default());
         cfg.out = "out".into();
         super::set_ground(cfg);
-        let list = index_json("WSSS", "http://127.0.0.1:8770").unwrap();
+        let list = index_json("WSSS", "http://127.0.0.1:8770", None).unwrap();
         let charts = list["charts"].as_array().unwrap();
         let apt = charts.iter().find(|c| c["id"] == "WSSS-APT").expect("the diagram is on the list");
         assert_eq!(apt["category"], "APT");
@@ -489,7 +569,7 @@ mod tests {
         assert_eq!(&png[1..4], b"PNG");
         assert_ne!(png, image("WSSS", "WSSS-APT", true).unwrap());
         // Asked again, the list now knows where the diagram's map lies on the ground.
-        let again = index_json("WSSS", "http://127.0.0.1:8770").unwrap();
+        let again = index_json("WSSS", "http://127.0.0.1:8770", None).unwrap();
         let apt = again["charts"].as_array().unwrap().iter().find(|c| c["id"] == "WSSS-APT").unwrap().clone();
         assert_eq!(apt["is_georeferenced"], true);
         let b = &apt["bounding_boxes"]["planview"]["latlng"];
@@ -531,7 +611,7 @@ mod tests {
     #[test]
     #[ignore]
     fn answers_what_flybywire_reads() {
-        let list = index_json("WSSS", "http://127.0.0.1:8770").unwrap();
+        let list = index_json("WSSS", "http://127.0.0.1:8770", None).unwrap();
         let charts = list["charts"].as_array().unwrap();
         assert!(!charts.is_empty());
         for c in charts {
@@ -563,7 +643,7 @@ mod tests {
     #[test]
     #[ignore]
     fn draws_a_real_airport() {
-        let list = index_json("LPMA", "http://127.0.0.1:8770").unwrap();
+        let list = index_json("LPMA", "http://127.0.0.1:8770", None).unwrap();
         let charts = list["charts"].as_array().unwrap();
         assert!(!charts.is_empty());
         let first = &charts[0];
@@ -577,7 +657,7 @@ mod tests {
         std::fs::write(out.join(format!("{id}.day.png")), &day).unwrap();
         std::fs::write(out.join(format!("{id}.night.png")), &night).unwrap();
         std::fs::write(out.join(format!("{id}.thumb.png")), thumbnail("LPMA", &id, false).unwrap()).unwrap();
-        let again = index_json("LPMA", "http://127.0.0.1:8770").unwrap();
+        let again = index_json("LPMA", "http://127.0.0.1:8770", None).unwrap();
         let drawn = again["charts"].as_array().unwrap().iter().find(|c| c["id"] == id.as_str()).unwrap();
         assert_eq!(drawn["is_georeferenced"], true);
         let pv = &drawn["bounding_boxes"]["planview"];

@@ -433,5 +433,8 @@ export class FenixBtv implements Instrument {
 
 /** A line in the bridge's log, for following a rollout from outside the simulator. */
 function log(what: string): void {
+  if (!AMDB_BRIDGE) {
+    return;
+  }
   fetch(`http://127.0.0.1:8770/amdb-oans-event?btv-${what}`).catch(() => undefined);
 }

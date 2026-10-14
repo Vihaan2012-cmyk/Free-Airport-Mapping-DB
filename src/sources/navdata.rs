@@ -134,6 +134,31 @@ fn cifp_only() -> Option<&'static crate::sources::cifp::Nav> {
     REDISTRIBUTABLE.get()
 }
 
+/// The one database to read, when charts are drawn from its own procedures.
+static PINNED: OnceLock<PathBuf> = OnceLock::new();
+
+/// The AIRAC cycle of a navigation database file (`2503`), when it is one and says.
+pub fn database_cycle(path: &std::path::Path) -> Option<String> {
+    Database::open(path)?.airac
+}
+
+/// The cycle the simulator's own navigation data is for (`2610`), from the days its cycle
+/// file says it is in force.
+pub fn sim_cycle() -> Option<String> {
+    let (from, _) = crate::sources::msfs::airac_dates()?;
+    chrono::NaiveDate::parse_from_str(&from, "%d %b %Y").ok().map(crate::sources::dtpp::cycle)
+}
+
+/// Read this database and no other from now on: for charts whose procedures come out of
+/// it, so that the navaids, holds, safe altitudes and dates beside them are the same
+/// cycle's. Returns its name and cycle, or None when it is not a navigation database.
+/// Called before anything else here is asked, since the database is found only once.
+pub fn use_database(path: &std::path::Path) -> Option<(String, Option<String>)> {
+    let db = Database::open(path)?;
+    let _ = PINNED.set(path.to_path_buf());
+    Some((db.name, db.airac))
+}
+
 /// Where a navaid is, the nearest of its name to a place.
 pub fn navaid_near(ident: &str, near: (f64, f64)) -> Option<(f64, f64)> {
     if let Some(n) = cifp_only() {
@@ -146,6 +171,9 @@ pub fn navaid_near(ident: &str, near: (f64, f64)) -> Option<(f64, f64)> {
 pub fn cycle_dates() -> Option<(String, String)> {
     if let Some(n) = cifp_only() {
         return n.dates();
+    }
+    if PINNED.get().is_some() {
+        return database().and_then(Database::effective_dates);
     }
     crate::sources::msfs::airac_dates()
 }
@@ -295,7 +323,10 @@ fn database() -> Option<&'static Database> {
     }
     static DB: OnceLock<Option<Database>> = OnceLock::new();
     DB.get_or_init(|| {
-        let found = Database::find();
+        let found = match PINNED.get() {
+            Some(path) => Database::open(path),
+            None => Database::find(),
+        };
         match &found {
             Some(db) => log::info!("navigation database: {} ({})", db.name, db.path.display()),
             None => log::debug!("no aircraft navigation database found"),
@@ -339,6 +370,8 @@ pub struct Database {
     name: String,
     airac: Option<String>,
     tables: std::collections::HashMap<String, String>,
+    /// Every fix the database has, by ident, read when first asked for.
+    fixes: OnceLock<std::collections::HashMap<String, Vec<(f64, f64)>>>,
 }
 
 impl Database {
@@ -404,11 +437,19 @@ impl Database {
                 (part.contains('-') && !part.ends_with(".s3db")).then_some(part)
             })
             .unwrap_or_else(|| path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
-        Some(Database { path: path.to_path_buf(), name, airac, tables })
+        Some(Database { path: path.to_path_buf(), name, airac, tables, fixes: OnceLock::new() })
     }
 
     fn table(&self, wanted: &str) -> Option<&str> {
         self.tables.get(wanted).map(String::as_str)
+    }
+
+    /// The days the cycle is in force, from the header's `effective_fromto`.
+    fn effective_dates(&self) -> Option<(String, String)> {
+        let connection = read_only(&self.path)?;
+        let table = self.table("header")?;
+        let value: String = connection.query_row(&format!("select effective_fromto from \"{table}\" limit 1"), [], |row| row.get(0)).ok()?;
+        effective_dates(&value)
     }
 
     fn beacons_near(&self, lat: f64, lon: f64, radius_nm: f64) -> Vec<Beacon> {
@@ -603,32 +644,48 @@ impl Database {
 impl Database {
     /// Where each of a list of fixes is, taking the one nearest a point where a name is
     /// used more than once in the world, as five-letter names are.
-    fn fixes_near(&self, idents: &[String], near: (f64, f64)) -> std::collections::HashMap<String, (f64, f64)> {
-        let mut out = std::collections::HashMap::new();
-        let Some(connection) = read_only(&self.path) else { return out };
-        let cos = near.0.to_radians().cos().max(0.05);
-        let far = |lat: f64, lon: f64| ((lat - near.0) * 60.0).hypot((lon - near.1) * 60.0 * cos);
-        let sources = [
-            ("terminal_waypoints", "waypoint_identifier", "waypoint_latitude", "waypoint_longitude"),
-            ("enroute_waypoints", "waypoint_identifier", "waypoint_latitude", "waypoint_longitude"),
-            ("vhfnavaids", "vor_identifier", "vor_latitude", "vor_longitude"),
-            ("enroute_ndbnavaids", "ndb_identifier", "ndb_latitude", "ndb_longitude"),
-            ("terminal_ndbnavaids", "ndb_identifier", "ndb_latitude", "ndb_longitude"),
-        ];
-        for ident in idents {
-            let mut best: Option<(f64, (f64, f64))> = None;
+    /// Every waypoint, navaid and NDB in the database, by ident. Read whole, once: the
+    /// tables have no index on the ident, so asking for one fix by name reads all five, and
+    /// reading every airport in the simulator's data asks for hundreds of thousands.
+    fn all_fixes(&self) -> &std::collections::HashMap<String, Vec<(f64, f64)>> {
+        self.fixes.get_or_init(|| {
+            let mut out: std::collections::HashMap<String, Vec<(f64, f64)>> = std::collections::HashMap::new();
+            let Some(connection) = read_only(&self.path) else {
+                return out;
+            };
+            let sources = [
+                ("terminal_waypoints", "waypoint_identifier", "waypoint_latitude", "waypoint_longitude"),
+                ("enroute_waypoints", "waypoint_identifier", "waypoint_latitude", "waypoint_longitude"),
+                ("vhfnavaids", "vor_identifier", "vor_latitude", "vor_longitude"),
+                ("enroute_ndbnavaids", "ndb_identifier", "ndb_latitude", "ndb_longitude"),
+                ("terminal_ndbnavaids", "ndb_identifier", "ndb_latitude", "ndb_longitude"),
+            ];
             for (wanted, id_col, lat_col, lon_col) in sources {
-                let Some(table) = self.table(wanted) else { continue };
-                let sql = format!("select {lat_col}, {lon_col} from \"{table}\" where {id_col} = ?1");
-                let Ok(mut statement) = connection.prepare_cached(&sql) else { continue };
-                let Ok(rows) = statement.query_map([ident.as_str()], |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?))) else { continue };
-                for (lat, lon) in rows.flatten() {
-                    let d = far(lat, lon);
-                    if best.map_or(true, |(b, _)| d < b) {
-                        best = Some((d, (lat, lon)));
-                    }
+                let Some(table) = self.table(wanted) else {
+                    continue;
+                };
+                let sql = format!("select {id_col}, {lat_col}, {lon_col} from \"{table}\"");
+                let Ok(mut statement) = connection.prepare(&sql) else {
+                    continue;
+                };
+                let Ok(rows) = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?, row.get::<_, f64>(2)?))) else {
+                    continue;
+                };
+                for (ident, lat, lon) in rows.flatten() {
+                    out.entry(ident.trim().to_string()).or_default().push((lat, lon));
                 }
             }
+            out
+        })
+    }
+
+    fn fixes_near(&self, idents: &[String], near: (f64, f64)) -> std::collections::HashMap<String, (f64, f64)> {
+        let all = self.all_fixes();
+        let cos = near.0.to_radians().cos().max(0.05);
+        let far = |lat: f64, lon: f64| ((lat - near.0) * 60.0).hypot((lon - near.1) * 60.0 * cos);
+        let mut out = std::collections::HashMap::new();
+        for ident in idents {
+            let best = all.get(ident.as_str()).into_iter().flatten().map(|&(lat, lon)| (far(lat, lon), (lat, lon))).min_by(|a, b| a.0.total_cmp(&b.0));
             // Further than a procedure reaches is a different fix of the same name.
             if let Some((_, at)) = best.filter(|(d, _)| *d < 400.0) {
                 out.insert(ident.clone(), at);
@@ -940,11 +997,27 @@ impl Database {
         let Some(connection) = read_only(&self.path) else { return out };
         let Some(table) = self.table("grid_mora") else { return out };
         let columns: String = (1..=30).map(|i| format!("mora{i:02}")).collect::<Vec<_>>().join(", ");
-        let sql = format!("select starting_latitude, starting_longitude, {columns} from \"{table}\" where starting_latitude between ?1 and ?2");
+        // The corner is a number in PMDG's layout and text in Navigraph's (`N00`, `W120`),
+        // so every row is read and the band asked for picked out here; there are a few
+        // thousand.
+        let sql = format!("select starting_latitude, starting_longitude, {columns} from \"{table}\"");
         let Ok(mut statement) = connection.prepare(&sql) else { return out };
-        let rows = statement.query_map([south.floor() - 1.0, north.ceil()], |row| {
-            let lat: f64 = row.get(0)?;
-            let lon: f64 = row.get(1)?;
+        let degrees = |v: rusqlite::types::ValueRef| -> Option<f64> {
+            match v {
+                rusqlite::types::ValueRef::Real(f) => Some(f),
+                rusqlite::types::ValueRef::Integer(i) => Some(i as f64),
+                rusqlite::types::ValueRef::Text(t) => {
+                    let t = String::from_utf8_lossy(t);
+                    let t = t.trim();
+                    let (hemisphere, digits) = t.split_at(t.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) as usize);
+                    let v: f64 = digits.parse().ok()?;
+                    Some(if hemisphere == "S" || hemisphere == "W" { -v } else { v })
+                }
+                _ => None,
+            }
+        };
+        let rows = statement.query_map([], |row| {
+            let (Some(lat), Some(lon)) = (degrees(row.get_ref(0)?), degrees(row.get_ref(1)?)) else { return Err(rusqlite::Error::InvalidQuery) };
             let values: Vec<Option<String>> = (0..30).map(|i| row.get::<_, Option<String>>(2 + i).ok().flatten()).collect();
             Ok((lat, lon, values))
         });
@@ -1386,7 +1459,7 @@ impl Database {
 }
 
 /// True bearing from one point to another, degrees.
-fn bearing(from: (f64, f64), to: (f64, f64)) -> f64 {
+pub(crate) fn bearing(from: (f64, f64), to: (f64, f64)) -> f64 {
     let cos = from.0.to_radians().cos().max(0.05);
     let (dn, de) = (to.0 - from.0, (to.1 - from.1) * cos);
     (de.atan2(dn).to_degrees() + 360.0) % 360.0
@@ -1394,7 +1467,7 @@ fn bearing(from: (f64, f64), to: (f64, f64)) -> f64 {
 
 /// Points round an arc about an origin at a radius in miles, from one bearing to another,
 /// clockwise or not.
-fn arc(origin: (f64, f64), radius_nm: f64, from_deg: f64, to_deg: f64, clockwise: bool) -> Vec<(f64, f64)> {
+pub(crate) fn arc(origin: (f64, f64), radius_nm: f64, from_deg: f64, to_deg: f64, clockwise: bool) -> Vec<(f64, f64)> {
     let cos = origin.0.to_radians().cos().max(0.05);
     let mut sweep = if clockwise { (to_deg - from_deg + 360.0) % 360.0 } else { -((from_deg - to_deg + 360.0) % 360.0) };
     if sweep.abs() < 1e-6 {
@@ -1420,7 +1493,16 @@ pub fn runway_threshold(icao: &str, runway: &str) -> Option<(f64, f64)> {
     if let Some(n) = cifp_only() {
         return n.runway_threshold(icao, runway);
     }
-    database()?.runway_threshold(icao, runway)
+    // Remembered: a departure page asks after every runway an airport could have, both
+    // ends, and a run draws thousands of pages.
+    static SEEN: OnceLock<std::sync::Mutex<std::collections::HashMap<(String, String), Option<(f64, f64)>>>> = OnceLock::new();
+    let key = (icao.to_uppercase(), runway.to_uppercase());
+    if let Some(found) = SEEN.get_or_init(Default::default).lock().unwrap().get(&key) {
+        return *found;
+    }
+    let found = database().and_then(|db| db.runway_threshold(icao, runway));
+    SEEN.get_or_init(Default::default).lock().unwrap().insert(key, found);
+    found
 }
 
 /// The tables worth finding, by what their names end with.
@@ -1445,9 +1527,25 @@ const WANTED: &[&str] = &[
     "header",
 ];
 
+/// `2003160425`: in force from 20 March to 16 April 2025, the day and month the cycle
+/// starts, the day and month it ends, then the year it ends in. Printed as the simulator's
+/// cycle dates are, `20 MAR 2025`.
+fn effective_dates(value: &str) -> Option<(String, String)> {
+    let v = value.trim();
+    if v.len() != 10 || !v.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let n = |at: usize| v[at..at + 2].parse::<u32>().ok();
+    let (from_day, from_month, to_day, to_month, year) = (n(0)?, n(2)?, n(4)?, n(6)?, 2000 + n(8)? as i32);
+    // A cycle that starts in December ends in the next year.
+    let from_year = if from_month > to_month { year - 1 } else { year };
+    let day = |d: u32, m: u32, y: i32| chrono::NaiveDate::from_ymd_opt(y, m, d).map(|date| date.format("%d %b %Y").to_string().to_uppercase());
+    Some((day(from_day, from_month, from_year)?, day(to_day, to_month, year)?))
+}
+
 /// Opened read-only and immutable, so that a database an aircraft is using is never
 /// locked or written to.
-fn read_only(path: &std::path::Path) -> Option<rusqlite::Connection> {
+pub(crate) fn read_only(path: &std::path::Path) -> Option<rusqlite::Connection> {
     let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
     let uri = format!("file:{}?mode=ro&immutable=1", path.to_string_lossy().replace('\\', "/").replace(' ', "%20").replace('?', "%3f").replace('#', "%23"));
     rusqlite::Connection::open_with_flags(uri, flags).ok()
@@ -1716,5 +1814,12 @@ mod tests {
     fn a_category_is_written_the_way_a_chart_writes_it() {
         assert_eq!(category("3"), "CAT III");
         assert_eq!(category("1"), "CAT I");
+    }
+
+    #[test]
+    fn a_cycle_is_in_force_between_the_header_dates() {
+        assert_eq!(effective_dates("2003160425"), Some(("20 MAR 2025".to_string(), "16 APR 2025".to_string())));
+        assert_eq!(effective_dates("2712240126"), Some(("27 DEC 2025".to_string(), "24 JAN 2026".to_string())));
+        assert_eq!(effective_dates(""), None);
     }
 }

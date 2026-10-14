@@ -29,7 +29,7 @@ pub(crate) struct Feat {
 }
 
 pub(crate) fn load_layer(dir: &Path, name: &str) -> Vec<Feat> {
-    let Ok(text) = std::fs::read_to_string(dir.join(format!("{name}.geojson"))) else { return vec![] };
+    let Some(text) = crate::output::layers::read(dir, name) else { return vec![] };
     let Ok(fc) = serde_json::from_str::<Value>(&text) else { return vec![] };
     fc.get("features")
         .and_then(Value::as_array)
@@ -816,6 +816,7 @@ pub fn write(dir: &Path, out: &Path) -> Result<u64> {
         }
     }
     std::fs::write(out, &bytes).with_context(|| format!("write {}", out.display()))?;
+    crate::output::approach::save_georef_at(out, (page_w, page_h), sheet.plan_pt, sheet.plan_deg)?;
     Ok(bytes.len() as u64)
 }
 

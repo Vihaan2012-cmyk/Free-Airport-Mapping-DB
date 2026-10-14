@@ -106,13 +106,12 @@ pub fn validate_dir(dir: &std::path::Path) -> anyhow::Result<Report> {
         .and_then(|m| m.get("layers")?.as_object().map(|o| o.keys().filter_map(|k| Layer::from_name(k)).collect()))
         .unwrap_or_else(|| crate::model::ALL_LAYERS.to_vec());
     for l in &expected {
-        let p = dir.join(format!("{}.geojson", l.name()));
-        match std::fs::read_to_string(&p) {
-            Ok(t) => {
+        match crate::output::layers::read(dir, l.name()) {
+            Some(t) => {
                 let (_, v) = crate::output::geojson::parse_feature_collection(&t, *l)?;
                 feats.insert(*l, v);
             }
-            Err(_) => missing.push(l.name().to_string()),
+            None => missing.push(l.name().to_string()),
         }
     }
     let mut rep = validate_and_fix(&mut feats);

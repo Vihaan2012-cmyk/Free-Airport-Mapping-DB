@@ -133,6 +133,12 @@ impl Settings {
         if !self.cache {
             return "caching off (airports rebuilt every session, nothing kept on disk)".to_string();
         }
+        // Measuring the folder visits every file in it: millions, once charts and map tiles
+        // are kept there, which held the bridge up for minutes before it served anything.
+        // Without a limit to measure against, the figure is not worth that.
+        if self.limit_mb == 0 {
+            return format!("cache on at {}, no limit", self.cache_dir.display());
+        }
         let used = dir_size(&self.cache_dir);
         format!(
             "cache on at {} using {}{}",
@@ -229,7 +235,8 @@ fn modified(p: &Path) -> std::time::SystemTime {
 }
 
 /// Bring the cache folder under `limit` bytes by deleting the least recently built
-/// airports (never `keep`) and then the oldest downloads. Returns what was removed.
+/// airports (never `keep`) and then the oldest downloads. Returns what was removed. Only
+/// airports go: a folder with no manifest (the enroute map's tiles) is left alone.
 pub fn prune(s: &Settings, keep: &str) -> Vec<String> {
     let Some(limit) = s.limit_bytes() else { return vec![] };
     let mut removed = Vec::new();
@@ -239,7 +246,7 @@ pub fn prune(s: &Settings, keep: &str) -> Vec<String> {
     }
     let airports = s.airports_dir();
     let mut folders: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(&airports)
-        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir() && p.file_name().map_or(false, |n| n != keep)).map(|p| (modified(&p.join("manifest.json")), p)).collect())
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.join("manifest.json").is_file() && p.file_name().map_or(false, |n| n != keep)).map(|p| (modified(&p.join("manifest.json")), p)).collect())
         .unwrap_or_default();
     folders.sort();
     for (_, p) in folders {

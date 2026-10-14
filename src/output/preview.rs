@@ -90,9 +90,8 @@ pub fn write(dir: &Path, kind: Preview, out: &Path) -> Result<u64> {
         .context("parse manifest.json")?;
     let mut layers = Map::new();
     for name in kind.layers() {
-        let p = dir.join(format!("{name}.geojson"));
-        let Ok(text) = std::fs::read_to_string(&p) else { continue };
-        let fc: Value = serde_json::from_str(&text).with_context(|| format!("parse {}", p.display()))?;
+        let Some(text) = crate::output::layers::read(dir, name) else { continue };
+        let fc: Value = serde_json::from_str(&text).with_context(|| format!("parse layer {name} of {}", dir.display()))?;
         let keep = kind.keep(name);
         let slim: Vec<Value> = fc
             .get("features")

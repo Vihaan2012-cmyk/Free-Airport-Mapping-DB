@@ -149,8 +149,7 @@ impl Thresholds {
     /// Read them from a built airport, in the same local metre frame the features are put
     /// into, so a distance is a distance.
     pub fn read(dir: &std::path::Path, frame: &crate::geom::LocalFrame, is_wgs84: bool) -> Thresholds {
-        let p = dir.join(format!("{}.geojson", Layer::RunwayThreshold.name()));
-        let Ok(text) = std::fs::read_to_string(&p) else { return Thresholds::default() };
+        let Some(text) = crate::output::layers::read(dir, Layer::RunwayThreshold.name()) else { return Thresholds::default() };
         let Ok((_, feats)) = crate::output::geojson::parse_feature_collection(&text, Layer::RunwayThreshold) else {
             return Thresholds::default();
         };

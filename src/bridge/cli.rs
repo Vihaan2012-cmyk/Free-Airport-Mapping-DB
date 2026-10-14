@@ -97,6 +97,10 @@ fn wipe_cache(cfg: &Config) {
     if let Ok(rd) = std::fs::read_dir(&cfg.out) {
         for e in rd.flatten() {
             let p = e.path();
+            // The enroute map's tiles are not an airport's, and take a while to draw again.
+            if e.file_name() == "enroute" {
+                continue;
+            }
             let ok = if p.is_dir() { std::fs::remove_dir_all(&p).is_ok() } else { std::fs::remove_file(&p).is_ok() };
             if ok {
                 removed += 1;
@@ -365,6 +369,64 @@ enum Cmd {
         #[arg(long = "progress-port", default_value_t = super::progress::DEFAULT_PORT)]
         progress_port: u16,
     },
+    /// Write the built airports as plain files for a web host (a Hugging Face dataset), so
+    /// an aircraft can load its airport maps over HTTPS with no program running: what a
+    /// console needs. One JSON an airport, and the search and nearest indexes.
+    ExportWeb {
+        #[command(flatten)]
+        data: DataArgs,
+        /// Where the files go.
+        #[arg(long)]
+        to: PathBuf,
+        /// Only these airports (for a look at the format); every built one when left out.
+        icaos: Vec<String>,
+    },
+    /// Write the airports for a web host as two separately licensed halves, each from its
+    /// own build: `gateway/` from airports built from X-Plane Scenery Gateway data alone
+    /// (GPL v2 or later) and `osm/` from airports built from OpenStreetMap alone (ODbL), both
+    /// with public-domain FAA and OurAirports data, and the search and nearest lists from
+    /// public-domain data only. Neither build may have seen the other's source:
+    /// `amdbgen build --aptdat <Global Airports apt.dat> --no-gateway --no-xplane-install
+    /// --osm off` for the one, `amdbgen build --no-gateway --no-xplane-install` for the other.
+    ExportSplit {
+        #[command(flatten)]
+        data: DataArgs,
+        /// The airports built from Gateway data alone.
+        #[arg(long)]
+        gateway: PathBuf,
+        /// The airports built from OpenStreetMap alone.
+        #[arg(long)]
+        osm: PathBuf,
+        /// Where the files go.
+        #[arg(long)]
+        to: PathBuf,
+        /// Only these airports (for a look at the format); every built one when left out.
+        icaos: Vec<String>,
+    },
+    /// Pack an `export-web` folder to ship inside an aircraft: deflated airports in packs of
+    /// about 2 MB and an index, read by the aircraft when the web host cannot be reached.
+    BundleWeb {
+        /// The folder `export-web` wrote.
+        #[arg(long)]
+        from: PathBuf,
+        /// Where the packs go (into the aircraft's html_ui, e.g. .../Instruments/<aircraft>/amdb).
+        #[arg(long)]
+        to: PathBuf,
+        /// Only the large and medium airports (the list an OANS opens with): about half the size.
+        #[arg(long)]
+        listed_only: bool,
+        /// Only airports with a paved runway at least this many metres long (an aircraft's
+        /// "can fly to": 1800 for a 787).
+        #[arg(long)]
+        min_runway_m: Option<f64>,
+        /// With --min-runway-m: and at least this wide (scenery widths are approximate, so a
+        /// little under the aircraft's planning width; 40 for a 787's 45).
+        #[arg(long, default_value_t = 40.0)]
+        min_width_m: f64,
+        /// Every large airport as well, whatever its runways are recorded as.
+        #[arg(long)]
+        large_too: bool,
+    },
     /// Show redirect, certificate, storage and aircraft status.
     Status,
     /// Change the storage settings (cache on/off, folder, size limit) asked at first run.
@@ -438,7 +500,8 @@ enum Cmd {
     /// own, `status` says which each is. No administrator rights needed. While on, the
     /// tablet's charts come only from the bridge, which has to be running.
     Charts {
-        /// on, off or status
+        /// on, off, refresh (name the aircraft in the addresses of flight bags already
+        /// pointed here, so each gets the charts of its own cycle) or status
         state: String,
         #[arg(long = "community")]
         community: Vec<PathBuf>,
@@ -497,7 +560,7 @@ pub(crate) fn config(d: &DataArgs, s: &Settings) -> Config {
         // and can sit on a query for many minutes. Giving up at two minutes and moving
         // to the next source in the pool is far quicker than waiting one out.
         http: Http::new(d.timeout.unwrap_or(120), 250),
-        formats: Formats { geojson: true, pbf: false },
+        formats: Formats { geojson: true, pbf: false, packed: true },
         projection: Projection::Wgs84,
         xplane_dir: d.xplane_dir.clone().or_else(crate::sources::xplane::local::detect_install),
         aptdat_file: None,
@@ -730,6 +793,26 @@ pub fn run() -> Result<()> {
             }
             Ok(())
         }
+        Cmd::ExportWeb { data, to, icaos } => {
+            let settings = effective_settings(&data)?;
+            let store = make_store(&data, &settings)?;
+            super::export::export(&store, &to, &icaos)
+        }
+        Cmd::ExportSplit { data, gateway, osm, to, icaos } => {
+            let settings = effective_settings(&data)?;
+            // Opened only to read what the two builds wrote, with an index of public-domain
+            // airports: no Gateway list, no X-Plane install, no X-Plane metadata.
+            let open = |out: &PathBuf| -> Result<Store> {
+                let mut c = config(&data, &settings);
+                c.out = out.clone();
+                c.use_gateway = false;
+                c.xplane_dir = None;
+                c.aptmeta = None;
+                Store::new(c)
+            };
+            super::export::export_split(&open(&gateway)?, &open(&osm)?, &to, &icaos)
+        }
+        Cmd::BundleWeb { from, to, listed_only, min_runway_m, min_width_m, large_too } => super::export::bundle(&from, &to, &super::export::Select { listed_only, min_runway_m, min_width_m, large_too }),
         Cmd::Status => {
             let domain = super::NAVIGRAPH_AMDB_DOMAIN;
             println!("hosts redirect for {domain}: {}", if hosts::is_installed(domain) { "ACTIVE" } else { "not installed" });
@@ -860,12 +943,18 @@ pub fn run() -> Result<()> {
                             crate::term::success(&format!("Own charts restored: {}", f.display()));
                         }
                     }
+                    "refresh" => {
+                        for f in patcher::refresh_charts(d, port)? {
+                            crate::term::success(&format!("Charts addresses now name the aircraft: {}", f.display()));
+                        }
+                    }
                     "status" => {}
-                    other => return Err(anyhow!("charts takes on, off or status, not {other}")),
+                    other => return Err(anyhow!("charts takes on, off, refresh or status, not {other}")),
                 }
                 for (pkg, f, patched) in patcher::scan_charts(d) {
                     found += 1;
-                    println!("  {pkg}  {}: {}", f.file_name().unwrap_or_default().to_string_lossy(), if patched { "charts from the bridge" } else { "its own (Navigraph) charts" });
+                    let named = patched && std::fs::read_to_string(&f).is_ok_and(|t| t.contains(&format!("/efb/{pkg}/")));
+                    println!("  {pkg}  {}: {}", f.file_name().unwrap_or_default().to_string_lossy(), if named { "charts from the bridge, by its own cycle" } else if patched { "charts from the bridge" } else { "its own (Navigraph) charts" });
                 }
             }
             if found == 0 {

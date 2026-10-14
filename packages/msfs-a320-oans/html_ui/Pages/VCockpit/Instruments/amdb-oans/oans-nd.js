@@ -412,7 +412,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               }
               document.cookie = cookie.join("; ");
             },
-            read: function read(name) {
+            read: function read2(name) {
               var match = document.cookie.match(new RegExp("(^|;\\s*)(" + name + ")=([^;]*)"));
               return match ? decodeURIComponent(match[3]) : null;
             },
@@ -427,7 +427,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           return {
             write: function write() {
             },
-            read: function read() {
+            read: function read2() {
               return null;
             },
             remove: function remove() {
@@ -1432,7 +1432,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       var safeRe = exports.safeRe = [];
       var src = exports.src = [];
       var t = exports.t = {};
-      var R = 0;
+      var R2 = 0;
       var LETTERDASHNUMBER = "[a-zA-Z0-9-]";
       var safeRegexReplacements = [
         ["\\s", 1],
@@ -1440,14 +1440,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         [LETTERDASHNUMBER, MAX_SAFE_BUILD_LENGTH]
       ];
       var makeSafeRegex = (value) => {
-        for (const [token, max] of safeRegexReplacements) {
-          value = value.split("".concat(token, "*")).join("".concat(token, "{0,").concat(max, "}")).split("".concat(token, "+")).join("".concat(token, "{1,").concat(max, "}"));
+        for (const [token, max2] of safeRegexReplacements) {
+          value = value.split("".concat(token, "*")).join("".concat(token, "{0,").concat(max2, "}")).split("".concat(token, "+")).join("".concat(token, "{1,").concat(max2, "}"));
         }
         return value;
       };
       var createToken = (name, value, isGlobal) => {
         const safe = makeSafeRegex(value);
-        const index = R++;
+        const index = R2++;
         debug(name, index, value);
         t[name] = index;
         src[index] = value;
@@ -2059,11 +2059,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           }
         });
         var codePointAt = _core.String.codePointAt;
-        var max = Math.max;
+        var max2 = Math.max;
         var min = Math.min;
         var _toAbsoluteIndex = function(index, length3) {
           index = _toInteger(index);
-          return index < 0 ? max(index + length3, 0) : min(index, length3);
+          return index < 0 ? max2(index + length3, 0) : min(index, length3);
         };
         var fromCharCode = String.fromCharCode;
         var $fromCodePoint = String.fromCodePoint;
@@ -2200,7 +2200,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             return String.fromCodePoint(source.codePointAt(pos));
           }
         }
-        function read() {
+        function read2() {
           var c2 = peek();
           if (c2 === "\n") {
             line++;
@@ -2228,18 +2228,18 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               case "\r":
               case "\u2028":
               case "\u2029":
-                read();
+                read2();
                 return;
               case "/":
-                read();
+                read2();
                 lexState = "comment";
                 return;
               case void 0:
-                read();
+                read2();
                 return newToken("eof");
             }
             if (util.isSpaceSeparator(c)) {
-              read();
+              read2();
               return;
             }
             return lexStates[parseState]();
@@ -2247,40 +2247,40 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           comment: function comment() {
             switch (c) {
               case "*":
-                read();
+                read2();
                 lexState = "multiLineComment";
                 return;
               case "/":
-                read();
+                read2();
                 lexState = "singleLineComment";
                 return;
             }
-            throw invalidChar(read());
+            throw invalidChar(read2());
           },
           multiLineComment: function multiLineComment() {
             switch (c) {
               case "*":
-                read();
+                read2();
                 lexState = "multiLineCommentAsterisk";
                 return;
               case void 0:
-                throw invalidChar(read());
+                throw invalidChar(read2());
             }
-            read();
+            read2();
           },
           multiLineCommentAsterisk: function multiLineCommentAsterisk() {
             switch (c) {
               case "*":
-                read();
+                read2();
                 return;
               case "/":
-                read();
+                read2();
                 lexState = "default";
                 return;
               case void 0:
-                throw invalidChar(read());
+                throw invalidChar(read2());
             }
-            read();
+            read2();
             lexState = "multiLineComment";
           },
           singleLineComment: function singleLineComment() {
@@ -2289,45 +2289,45 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               case "\r":
               case "\u2028":
               case "\u2029":
-                read();
+                read2();
                 lexState = "default";
                 return;
               case void 0:
-                read();
+                read2();
                 return newToken("eof");
             }
-            read();
+            read2();
           },
           value: function value() {
             switch (c) {
               case "{":
               case "[":
-                return newToken("punctuator", read());
+                return newToken("punctuator", read2());
               case "n":
-                read();
+                read2();
                 literal("ull");
                 return newToken("null", null);
               case "t":
-                read();
+                read2();
                 literal("rue");
                 return newToken("boolean", true);
               case "f":
-                read();
+                read2();
                 literal("alse");
                 return newToken("boolean", false);
               case "-":
               case "+":
-                if (read() === "-") {
+                if (read2() === "-") {
                   sign = -1;
                 }
                 lexState = "sign";
                 return;
               case ".":
-                buffer = read();
+                buffer = read2();
                 lexState = "decimalPointLeading";
                 return;
               case "0":
-                buffer = read();
+                buffer = read2();
                 lexState = "zero";
                 return;
               case "1":
@@ -2339,31 +2339,31 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               case "7":
               case "8":
               case "9":
-                buffer = read();
+                buffer = read2();
                 lexState = "decimalInteger";
                 return;
               case "I":
-                read();
+                read2();
                 literal("nfinity");
                 return newToken("numeric", Infinity);
               case "N":
-                read();
+                read2();
                 literal("aN");
                 return newToken("numeric", NaN);
               case '"':
               case "'":
-                doubleQuote = read() === '"';
+                doubleQuote = read2() === '"';
                 buffer = "";
                 lexState = "string";
                 return;
             }
-            throw invalidChar(read());
+            throw invalidChar(read2());
           },
           identifierNameStartEscape: function identifierNameStartEscape() {
             if (c !== "u") {
-              throw invalidChar(read());
+              throw invalidChar(read2());
             }
-            read();
+            read2();
             var u7 = unicodeEscape();
             switch (u7) {
               case "$":
@@ -2384,24 +2384,24 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               case "_":
               case "\u200C":
               case "\u200D":
-                buffer += read();
+                buffer += read2();
                 return;
               case "\\":
-                read();
+                read2();
                 lexState = "identifierNameEscape";
                 return;
             }
             if (util.isIdContinueChar(c)) {
-              buffer += read();
+              buffer += read2();
               return;
             }
             return newToken("identifier", buffer);
           },
           identifierNameEscape: function identifierNameEscape() {
             if (c !== "u") {
-              throw invalidChar(read());
+              throw invalidChar(read2());
             }
-            read();
+            read2();
             var u7 = unicodeEscape();
             switch (u7) {
               case "$":
@@ -2421,11 +2421,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           sign: function sign$1() {
             switch (c) {
               case ".":
-                buffer = read();
+                buffer = read2();
                 lexState = "decimalPointLeading";
                 return;
               case "0":
-                buffer = read();
+                buffer = read2();
                 lexState = "zero";
                 return;
               case "1":
@@ -2437,34 +2437,34 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               case "7":
               case "8":
               case "9":
-                buffer = read();
+                buffer = read2();
                 lexState = "decimalInteger";
                 return;
               case "I":
-                read();
+                read2();
                 literal("nfinity");
                 return newToken("numeric", sign * Infinity);
               case "N":
-                read();
+                read2();
                 literal("aN");
                 return newToken("numeric", NaN);
             }
-            throw invalidChar(read());
+            throw invalidChar(read2());
           },
           zero: function zero() {
             switch (c) {
               case ".":
-                buffer += read();
+                buffer += read2();
                 lexState = "decimalPoint";
                 return;
               case "e":
               case "E":
-                buffer += read();
+                buffer += read2();
                 lexState = "decimalExponent";
                 return;
               case "x":
               case "X":
-                buffer += read();
+                buffer += read2();
                 lexState = "hexadecimal";
                 return;
             }
@@ -2473,39 +2473,39 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           decimalInteger: function decimalInteger() {
             switch (c) {
               case ".":
-                buffer += read();
+                buffer += read2();
                 lexState = "decimalPoint";
                 return;
               case "e":
               case "E":
-                buffer += read();
+                buffer += read2();
                 lexState = "decimalExponent";
                 return;
             }
             if (util.isDigit(c)) {
-              buffer += read();
+              buffer += read2();
               return;
             }
             return newToken("numeric", sign * Number(buffer));
           },
           decimalPointLeading: function decimalPointLeading() {
             if (util.isDigit(c)) {
-              buffer += read();
+              buffer += read2();
               lexState = "decimalFraction";
               return;
             }
-            throw invalidChar(read());
+            throw invalidChar(read2());
           },
           decimalPoint: function decimalPoint() {
             switch (c) {
               case "e":
               case "E":
-                buffer += read();
+                buffer += read2();
                 lexState = "decimalExponent";
                 return;
             }
             if (util.isDigit(c)) {
-              buffer += read();
+              buffer += read2();
               lexState = "decimalFraction";
               return;
             }
@@ -2515,12 +2515,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             switch (c) {
               case "e":
               case "E":
-                buffer += read();
+                buffer += read2();
                 lexState = "decimalExponent";
                 return;
             }
             if (util.isDigit(c)) {
-              buffer += read();
+              buffer += read2();
               return;
             }
             return newToken("numeric", sign * Number(buffer));
@@ -2529,43 +2529,43 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             switch (c) {
               case "+":
               case "-":
-                buffer += read();
+                buffer += read2();
                 lexState = "decimalExponentSign";
                 return;
             }
             if (util.isDigit(c)) {
-              buffer += read();
+              buffer += read2();
               lexState = "decimalExponentInteger";
               return;
             }
-            throw invalidChar(read());
+            throw invalidChar(read2());
           },
           decimalExponentSign: function decimalExponentSign() {
             if (util.isDigit(c)) {
-              buffer += read();
+              buffer += read2();
               lexState = "decimalExponentInteger";
               return;
             }
-            throw invalidChar(read());
+            throw invalidChar(read2());
           },
           decimalExponentInteger: function decimalExponentInteger() {
             if (util.isDigit(c)) {
-              buffer += read();
+              buffer += read2();
               return;
             }
             return newToken("numeric", sign * Number(buffer));
           },
           hexadecimal: function hexadecimal() {
             if (util.isHexDigit(c)) {
-              buffer += read();
+              buffer += read2();
               lexState = "hexadecimalInteger";
               return;
             }
-            throw invalidChar(read());
+            throw invalidChar(read2());
           },
           hexadecimalInteger: function hexadecimalInteger() {
             if (util.isHexDigit(c)) {
-              buffer += read();
+              buffer += read2();
               return;
             }
             return newToken("numeric", sign * Number(buffer));
@@ -2573,40 +2573,40 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           string: function string() {
             switch (c) {
               case "\\":
-                read();
+                read2();
                 buffer += escape();
                 return;
               case '"':
                 if (doubleQuote) {
-                  read();
+                  read2();
                   return newToken("string", buffer);
                 }
-                buffer += read();
+                buffer += read2();
                 return;
               case "'":
                 if (!doubleQuote) {
-                  read();
+                  read2();
                   return newToken("string", buffer);
                 }
-                buffer += read();
+                buffer += read2();
                 return;
               case "\n":
               case "\r":
-                throw invalidChar(read());
+                throw invalidChar(read2());
               case "\u2028":
               case "\u2029":
                 separatorChar(c);
                 break;
               case void 0:
-                throw invalidChar(read());
+                throw invalidChar(read2());
             }
-            buffer += read();
+            buffer += read2();
           },
           start: function start() {
             switch (c) {
               case "{":
               case "[":
-                return newToken("punctuator", read());
+                return newToken("punctuator", read2());
             }
             lexState = "value";
           },
@@ -2614,33 +2614,33 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             switch (c) {
               case "$":
               case "_":
-                buffer = read();
+                buffer = read2();
                 lexState = "identifierName";
                 return;
               case "\\":
-                read();
+                read2();
                 lexState = "identifierNameStartEscape";
                 return;
               case "}":
-                return newToken("punctuator", read());
+                return newToken("punctuator", read2());
               case '"':
               case "'":
-                doubleQuote = read() === '"';
+                doubleQuote = read2() === '"';
                 lexState = "string";
                 return;
             }
             if (util.isIdStartChar(c)) {
-              buffer += read();
+              buffer += read2();
               lexState = "identifierName";
               return;
             }
-            throw invalidChar(read());
+            throw invalidChar(read2());
           },
           afterPropertyName: function afterPropertyName() {
             if (c === ":") {
-              return newToken("punctuator", read());
+              return newToken("punctuator", read2());
             }
-            throw invalidChar(read());
+            throw invalidChar(read2());
           },
           beforePropertyValue: function beforePropertyValue() {
             lexState = "value";
@@ -2649,13 +2649,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             switch (c) {
               case ",":
               case "}":
-                return newToken("punctuator", read());
+                return newToken("punctuator", read2());
             }
-            throw invalidChar(read());
+            throw invalidChar(read2());
           },
           beforeArrayValue: function beforeArrayValue() {
             if (c === "]") {
-              return newToken("punctuator", read());
+              return newToken("punctuator", read2());
             }
             lexState = "value";
           },
@@ -2663,12 +2663,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             switch (c) {
               case ",":
               case "]":
-                return newToken("punctuator", read());
+                return newToken("punctuator", read2());
             }
-            throw invalidChar(read());
+            throw invalidChar(read2());
           },
           end: function end() {
-            throw invalidChar(read());
+            throw invalidChar(read2());
           }
         };
         function newToken(type, value) {
@@ -2684,53 +2684,53 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             var c2 = list[i];
             var p = peek();
             if (p !== c2) {
-              throw invalidChar(read());
+              throw invalidChar(read2());
             }
-            read();
+            read2();
           }
         }
         function escape() {
           var c2 = peek();
           switch (c2) {
             case "b":
-              read();
+              read2();
               return "\b";
             case "f":
-              read();
+              read2();
               return "\f";
             case "n":
-              read();
+              read2();
               return "\n";
             case "r":
-              read();
+              read2();
               return "\r";
             case "t":
-              read();
+              read2();
               return "	";
             case "v":
-              read();
+              read2();
               return "\v";
             case "0":
-              read();
+              read2();
               if (util.isDigit(peek())) {
-                throw invalidChar(read());
+                throw invalidChar(read2());
               }
               return "\0";
             case "x":
-              read();
+              read2();
               return hexEscape();
             case "u":
-              read();
+              read2();
               return unicodeEscape();
             case "\n":
             case "\u2028":
             case "\u2029":
-              read();
+              read2();
               return "";
             case "\r":
-              read();
+              read2();
               if (peek() === "\n") {
-                read();
+                read2();
               }
               return "";
             case "1":
@@ -2742,24 +2742,24 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             case "7":
             case "8":
             case "9":
-              throw invalidChar(read());
+              throw invalidChar(read2());
             case void 0:
-              throw invalidChar(read());
+              throw invalidChar(read2());
           }
-          return read();
+          return read2();
         }
         function hexEscape() {
           var buffer2 = "";
           var c2 = peek();
           if (!util.isHexDigit(c2)) {
-            throw invalidChar(read());
+            throw invalidChar(read2());
           }
-          buffer2 += read();
+          buffer2 += read2();
           c2 = peek();
           if (!util.isHexDigit(c2)) {
-            throw invalidChar(read());
+            throw invalidChar(read2());
           }
-          buffer2 += read();
+          buffer2 += read2();
           return String.fromCodePoint(parseInt(buffer2, 16));
         }
         function unicodeEscape() {
@@ -2768,9 +2768,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           while (count-- > 0) {
             var c2 = peek();
             if (!util.isHexDigit(c2)) {
-              throw invalidChar(read());
+              throw invalidChar(read2());
             }
-            buffer2 += read();
+            buffer2 += read2();
           }
           return String.fromCodePoint(parseInt(buffer2, 16));
         }
@@ -2949,10 +2949,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           return c2;
         }
         function syntaxError(message) {
-          var err = new SyntaxError(message);
-          err.lineNumber = line;
-          err.columnNumber = column;
-          return err;
+          var err2 = new SyntaxError(message);
+          err2.lineNumber = line;
+          err2.columnNumber = column;
+          return err2;
         }
         var stringify = function stringify2(value, replacer, space) {
           var stack2 = [];
@@ -3192,7 +3192,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           !function t3(n2, r3, e3, a3, h3) {
             for (; a3 > e3; ) {
               if (a3 - e3 > 600) {
-                var o2 = a3 - e3 + 1, s2 = r3 - e3 + 1, l2 = Math.log(o2), f2 = 0.5 * Math.exp(2 * l2 / 3), u8 = 0.5 * Math.sqrt(l2 * f2 * (o2 - f2) / o2) * (s2 - o2 / 2 < 0 ? -1 : 1), m2 = Math.max(e3, Math.floor(r3 - s2 * f2 / o2 + u8)), c2 = Math.min(a3, Math.floor(r3 + (o2 - s2) * f2 / o2 + u8));
+                var o2 = a3 - e3 + 1, s2 = r3 - e3 + 1, l2 = Math.log(o2), f2 = 0.5 * Math.exp(2 * l2 / 3), u9 = 0.5 * Math.sqrt(l2 * f2 * (o2 - f2) / o2) * (s2 - o2 / 2 < 0 ? -1 : 1), m2 = Math.max(e3, Math.floor(r3 - s2 * f2 / o2 + u9)), c2 = Math.min(a3, Math.floor(r3 + (o2 - s2) * f2 / o2 + u9));
                 t3(n2, r3, m2, c2, h3);
               }
               var p2 = n2[r3], d2 = e3, x = a3;
@@ -3356,10 +3356,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           var s2 = Math.ceil(h2 / o2), l2 = s2 * Math.ceil(Math.sqrt(o2));
           d(t2, i2, n2, l2, this.compareMinX);
           for (var f2 = i2; f2 <= n2; f2 += l2) {
-            var u8 = Math.min(f2 + l2 - 1, n2);
-            d(t2, f2, u8, s2, this.compareMinY);
-            for (var m2 = f2; m2 <= u8; m2 += s2) {
-              var c2 = Math.min(m2 + s2 - 1, u8);
+            var u9 = Math.min(f2 + l2 - 1, n2);
+            d(t2, f2, u9, s2, this.compareMinY);
+            for (var m2 = f2; m2 <= u9; m2 += s2) {
+              var c2 = Math.min(m2 + s2 - 1, u9);
               e2.children.push(this._build(t2, m2, c2, r2 - 1));
             }
           }
@@ -3367,8 +3367,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         }, r.prototype._chooseSubtree = function(t2, i2, n2, r2) {
           for (; r2.push(i2), !i2.leaf && r2.length - 1 !== n2; ) {
             for (var e2 = 1 / 0, a2 = 1 / 0, h2 = void 0, o2 = 0; o2 < i2.children.length; o2++) {
-              var s2 = i2.children[o2], l2 = f(s2), u8 = (m2 = t2, c2 = s2, (Math.max(c2.maxX, m2.maxX) - Math.min(c2.minX, m2.minX)) * (Math.max(c2.maxY, m2.maxY) - Math.min(c2.minY, m2.minY)) - l2);
-              u8 < a2 ? (a2 = u8, e2 = l2 < e2 ? l2 : e2, h2 = s2) : u8 === a2 && l2 < e2 && (e2 = l2, h2 = s2);
+              var s2 = i2.children[o2], l2 = f(s2), u9 = (m2 = t2, c2 = s2, (Math.max(c2.maxX, m2.maxX) - Math.min(c2.minX, m2.minX)) * (Math.max(c2.maxY, m2.maxY) - Math.min(c2.minY, m2.minY)) - l2);
+              u9 < a2 ? (a2 = u9, e2 = l2 < e2 ? l2 : e2, h2 = s2) : u9 === a2 && l2 < e2 && (e2 = l2, h2 = s2);
             }
             i2 = h2 || i2.children[0];
           }
@@ -3387,8 +3387,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         }, r.prototype._splitRoot = function(t2, i2) {
           this.data = p([t2, i2]), this.data.height = t2.height + 1, this.data.leaf = false, a(this.data, this.toBBox);
         }, r.prototype._chooseSplitIndex = function(t2, i2, n2) {
-          for (var r2, e2, a2, o2, s2, l2, u8, m2 = 1 / 0, c2 = 1 / 0, p2 = i2; p2 <= n2 - i2; p2++) {
-            var d2 = h(t2, 0, p2, this.toBBox), x = h(t2, p2, n2, this.toBBox), v3 = (e2 = d2, a2 = x, o2 = void 0, s2 = void 0, l2 = void 0, u8 = void 0, o2 = Math.max(e2.minX, a2.minX), s2 = Math.max(e2.minY, a2.minY), l2 = Math.min(e2.maxX, a2.maxX), u8 = Math.min(e2.maxY, a2.maxY), Math.max(0, l2 - o2) * Math.max(0, u8 - s2)), M = f(d2) + f(x);
+          for (var r2, e2, a2, o2, s2, l2, u9, m2 = 1 / 0, c2 = 1 / 0, p2 = i2; p2 <= n2 - i2; p2++) {
+            var d2 = h(t2, 0, p2, this.toBBox), x = h(t2, p2, n2, this.toBBox), v3 = (e2 = d2, a2 = x, o2 = void 0, s2 = void 0, l2 = void 0, u9 = void 0, o2 = Math.max(e2.minX, a2.minX), s2 = Math.max(e2.minY, a2.minY), l2 = Math.min(e2.maxX, a2.maxX), u9 = Math.min(e2.maxY, a2.maxY), Math.max(0, l2 - o2) * Math.max(0, u9 - s2)), M = f(d2) + f(x);
             v3 < m2 ? (m2 = v3, r2 = p2, c2 = M < c2 ? M : c2) : v3 === m2 && M < c2 && (c2 = M, r2 = p2);
           }
           return r2 || n2 - i2;
@@ -4097,13 +4097,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This subject, after its consumer has been set.
      */
     setConsumer(consumer) {
-      var _a7;
+      var _a8;
       if (!this._isAlive) {
         return this;
       }
       this.needSetDefaultValue = false;
       delete this.defaultValue;
-      (_a7 = this.consumerSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      (_a8 = this.consumerSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       this.consumerSub = consumer === null || consumer === void 0 ? void 0 : consumer.handle(this.consumerHandler, this._isPaused);
       return this;
     }
@@ -4117,13 +4117,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This subject, after its consumer has been set.
      */
     setConsumerWithDefault(consumer, defaultVal) {
-      var _a7;
+      var _a8;
       if (!this._isAlive) {
         return this;
       }
       this.defaultValue = defaultVal;
       this.needSetDefaultValue = true;
-      (_a7 = this.consumerSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      (_a8 = this.consumerSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       this.consumerSub = consumer === null || consumer === void 0 ? void 0 : consumer.handle(this.consumerHandler, this._isPaused);
       if (!this._isPaused && this.needSetDefaultValue) {
         const defaultValue = this.defaultValue;
@@ -4145,14 +4145,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This subject, after it has been reset.
      */
     reset(initialVal, consumer = null) {
-      var _a7;
+      var _a8;
       if (!this._isAlive) {
         return this;
       }
       this.isValueConsumed = false;
       this.needSetDefaultValue = false;
       delete this.defaultValue;
-      (_a7 = this.consumerSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      (_a8 = this.consumerSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       this.consumerSub = consumer === null || consumer === void 0 ? void 0 : consumer.handle(this.consumerHandler, this._isPaused);
       if (!this.isValueConsumed) {
         this.setValue(initialVal);
@@ -4164,11 +4164,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This subject, after it has been paused.
      */
     pause() {
-      var _a7;
+      var _a8;
       if (this._isPaused) {
         return this;
       }
-      (_a7 = this.consumerSub) === null || _a7 === void 0 ? void 0 : _a7.pause();
+      (_a8 = this.consumerSub) === null || _a8 === void 0 ? void 0 : _a8.pause();
       this._isPaused = true;
       return this;
     }
@@ -4181,12 +4181,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This subject, after it has been resumed.
      */
     resume() {
-      var _a7;
+      var _a8;
       if (!this._isPaused) {
         return this;
       }
       this._isPaused = false;
-      (_a7 = this.consumerSub) === null || _a7 === void 0 ? void 0 : _a7.resume(true);
+      (_a8 = this.consumerSub) === null || _a8 === void 0 ? void 0 : _a8.resume(true);
       if (this.needSetDefaultValue) {
         const defaultValue = this.defaultValue;
         this.needSetDefaultValue = false;
@@ -4199,9 +4199,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Destroys this subject. Once destroyed, it will no longer consume events to update its value.
      */
     destroy() {
-      var _a7;
+      var _a8;
       this._isAlive = false;
-      (_a7 = this.consumerSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      (_a8 = this.consumerSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
     }
     /** @inheritdoc */
     withLifecycle(lifecycle) {
@@ -4261,13 +4261,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This object, after its consumer has been set.
      */
     setConsumer(consumer) {
-      var _a7;
+      var _a8;
       if (!this._isAlive) {
         return this;
       }
       this.needSetDefaultValue = false;
       delete this.defaultValue;
-      (_a7 = this.sub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      (_a8 = this.sub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       this.sub = consumer === null || consumer === void 0 ? void 0 : consumer.handle(this.consumerHandler, this._isPaused);
       return this;
     }
@@ -4281,13 +4281,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This object, after its consumer has been set.
      */
     setConsumerWithDefault(consumer, defaultVal) {
-      var _a7;
+      var _a8;
       if (!this._isAlive) {
         return this;
       }
       this.defaultValue = defaultVal;
       this.needSetDefaultValue = true;
-      (_a7 = this.sub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      (_a8 = this.sub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       this.sub = consumer === null || consumer === void 0 ? void 0 : consumer.handle(this.consumerHandler, this._isPaused);
       if (!this._isPaused && this.needSetDefaultValue) {
         this.value = this.defaultValue;
@@ -4315,11 +4315,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This object, after it has been paused.
      */
     pause() {
-      var _a7;
+      var _a8;
       if (this._isPaused) {
         return this;
       }
-      (_a7 = this.sub) === null || _a7 === void 0 ? void 0 : _a7.pause();
+      (_a8 = this.sub) === null || _a8 === void 0 ? void 0 : _a8.pause();
       this._isPaused = true;
       return this;
     }
@@ -4332,12 +4332,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This object, after it has been resumed.
      */
     resume() {
-      var _a7;
+      var _a8;
       if (!this._isPaused) {
         return this;
       }
       this._isPaused = false;
-      (_a7 = this.sub) === null || _a7 === void 0 ? void 0 : _a7.resume(true);
+      (_a8 = this.sub) === null || _a8 === void 0 ? void 0 : _a8.resume(true);
       if (this.needSetDefaultValue) {
         this.value = this.defaultValue;
         this.needSetDefaultValue = false;
@@ -4349,9 +4349,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Destroys this object. Once destroyed, it will no longer consume events to update its value.
      */
     destroy() {
-      var _a7;
+      var _a8;
       this._isAlive = false;
-      (_a7 = this.sub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      (_a8 = this.sub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
     }
     /**
      * Creates a new ConsumerValue.
@@ -4821,14 +4821,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param topic The subscribed topic to check.
      */
     tryMatchIndexedSubscribedTopic(topic) {
-      var _a7;
+      var _a8;
       if (this.indexedSimVars.size === 0) {
         return;
       }
       let entry = this.indexedSimVars.get(topic);
       if (entry) {
         if (entry.defaultIndex !== null) {
-          const resolved = this.resolveIndexedSimVar(topic, entry, (_a7 = entry.defaultIndex) !== null && _a7 !== void 0 ? _a7 : 1);
+          const resolved = this.resolveIndexedSimVar(topic, entry, (_a8 = entry.defaultIndex) !== null && _a8 !== void 0 ? _a8 : 1);
           if (resolved !== void 0) {
             this.onTopicSubscribed(resolved);
           }
@@ -5169,8 +5169,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The number of subscribers.
      **/
     getTopicSubscriberCount(topic) {
-      var _a7, _b5;
-      return (_b5 = (_a7 = this._topicSubsMap.get(topic)) === null || _a7 === void 0 ? void 0 : _a7.handlerSubscriptions.length) !== null && _b5 !== void 0 ? _b5 : 0;
+      var _a8, _b6;
+      return (_b6 = (_a8 = this._topicSubsMap.get(topic)) === null || _a8 === void 0 ? void 0 : _a8.handlerSubscriptions.length) !== null && _b6 !== void 0 ? _b6 : 0;
     }
     /**
      * Executes a function once for each topic with at least one subscriber.
@@ -5379,8 +5379,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Responds to changes in document attributes.
      */
     onAttributesChanged() {
-      var _a7;
-      if ((_a7 = window.parent) === null || _a7 === void 0 ? void 0 : _a7.document.body.hasAttribute("gamestate")) {
+      var _a8;
+      if ((_a8 = window.parent) === null || _a8 === void 0 ? void 0 : _a8.document.body.hasAttribute("gamestate")) {
         const attribute = window.parent.document.body.getAttribute("gamestate");
         if (attribute !== null) {
           const state = GameState[attribute];
@@ -5406,8 +5406,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns A subscribable which provides the current game state.
      */
     static get() {
-      var _a7;
-      return ((_a7 = _GameStateProvider.INSTANCE) !== null && _a7 !== void 0 ? _a7 : _GameStateProvider.INSTANCE = new _GameStateProvider()).gameState;
+      var _a8;
+      return ((_a8 = _GameStateProvider.INSTANCE) !== null && _a8 !== void 0 ? _a8 : _GameStateProvider.INSTANCE = new _GameStateProvider()).gameState;
     }
   };
   var KeyEventManager = class _KeyEventManager {
@@ -5521,8 +5521,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @experimental This API is still under development and should not be used for production code.
      */
     static initListener() {
-      var _a7;
-      return (_a7 = _SharedGlobal.listenerPromise) !== null && _a7 !== void 0 ? _a7 : _SharedGlobal.listenerPromise = new Promise((resolve) => {
+      var _a8;
+      return (_a8 = _SharedGlobal.listenerPromise) !== null && _a8 !== void 0 ? _a8 : _SharedGlobal.listenerPromise = new Promise((resolve) => {
         const listener = RegisterViewListener("JS_LISTENER_SHAREDGLOBAL", () => {
           listener.on("SharedGlobalAttached", _SharedGlobal.onGlobalAttached);
           listener.on("SharedGlobalDetached", _SharedGlobal.onGlobalDetached);
@@ -5609,12 +5609,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param isViewOwner Whether the CoherentGT view that received the callback is the owner of the attached global.
      */
     static onGlobalAttached(name, isViewOwner) {
-      var _a7;
+      var _a8;
       const entry = _SharedGlobal.globalEntries.get(name);
       if (entry) {
         entry.status = "attached";
         entry.isViewOwner = isViewOwner;
-        (_a7 = entry.resolve) === null || _a7 === void 0 ? void 0 : _a7.call(entry);
+        (_a8 = entry.resolve) === null || _a8 === void 0 ? void 0 : _a8.call(entry);
       } else {
         _SharedGlobal.globalEntries.set(name, {
           attachPromise: Promise.resolve(),
@@ -5629,13 +5629,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param name The name of detached global.
      */
     static onGlobalDetached(name) {
-      var _a7;
+      var _a8;
       const entry = _SharedGlobal.globalEntries.get(name);
       if (entry) {
         _SharedGlobal.globalEntries.delete(name);
         delete window[name];
         entry.status = "detached";
-        (_a7 = entry.reject) === null || _a7 === void 0 ? void 0 : _a7.call(entry, "SharedGlobal: shared global object with name ".concat(name, " was detached"));
+        (_a8 = entry.reject) === null || _a8 === void 0 ? void 0 : _a8.call(entry, "SharedGlobal: shared global object with name ".concat(name, " was detached"));
         entry.isDetached.set(true);
       }
     }
@@ -6662,7 +6662,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param pacer An optional pacer to use to control the rate of publishing.
      */
     constructor(bus, pacer) {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h;
       const simvars = /* @__PURE__ */ new Map([
         ["indicated_alt", { name: "INDICATED ALTITUDE:#index#", type: SimVarValueType.Feet, indexed: true }],
         ["altimeter_baro_setting_inhg", { name: "KOHLSMAN SETTING HG:#index#", type: SimVarValueType.InHG, indexed: true }],
@@ -6693,12 +6693,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         ambientPressure: SimVar.GetRegisteredId("AMBIENT PRESSURE", SimVarValueType.InHG, ""),
         ambientTemperature: SimVar.GetRegisteredId("AMBIENT TEMPERATURE", SimVarValueType.Celsius, "")
       };
-      (_a7 = this.needPublish) !== null && _a7 !== void 0 ? _a7 : this.needPublish = {
+      (_a8 = this.needPublish) !== null && _a8 !== void 0 ? _a8 : this.needPublish = {
         "mach_number": false,
         "ambient_pressure_inhg": false,
         "ambient_temp_c": false
       };
-      (_b5 = this.needPublishIasTopics) !== null && _b5 !== void 0 ? _b5 : this.needPublishIasTopics = /* @__PURE__ */ new Map();
+      (_b6 = this.needPublishIasTopics) !== null && _b6 !== void 0 ? _b6 : this.needPublishIasTopics = /* @__PURE__ */ new Map();
       (_c = this.needRetrievePressure) !== null && _c !== void 0 ? _c : this.needRetrievePressure = false;
       (_d = this.needRetrieveTemperature) !== null && _d !== void 0 ? _d : this.needRetrieveTemperature = false;
       (_e = this.needRetrieveMach) !== null && _e !== void 0 ? _e : this.needRetrieveMach = false;
@@ -6708,13 +6708,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     handleSubscribedTopic(topic) {
-      var _a7, _b5;
-      (_a7 = this.needPublish) !== null && _a7 !== void 0 ? _a7 : this.needPublish = {
+      var _a8, _b6;
+      (_a8 = this.needPublish) !== null && _a8 !== void 0 ? _a8 : this.needPublish = {
         "mach_number": false,
         "ambient_pressure_inhg": false,
         "ambient_temp_c": false
       };
-      (_b5 = this.needPublishIasTopics) !== null && _b5 !== void 0 ? _b5 : this.needPublishIasTopics = /* @__PURE__ */ new Map();
+      (_b6 = this.needPublishIasTopics) !== null && _b6 !== void 0 ? _b6 : this.needPublishIasTopics = /* @__PURE__ */ new Map();
       if (this.resolvedSimVars.has(topic) || topic in this.needPublish || _AdcPublisher.TOPIC_REGEXES["ias"].test(topic) || _AdcPublisher.TOPIC_REGEXES["tas"].test(topic) || _AdcPublisher.TOPIC_REGEXES["indicated_mach_number"].test(topic) || _AdcPublisher.TOPIC_REGEXES["indicated_tas"].test(topic) || _AdcPublisher.TOPIC_REGEXES["mach_to_kias_factor"].test(topic) || _AdcPublisher.TOPIC_REGEXES["tas_to_ias_factor"].test(topic) || _AdcPublisher.TOPIC_REGEXES["indicated_mach_to_kias_factor"].test(topic) || _AdcPublisher.TOPIC_REGEXES["indicated_tas_to_ias_factor"].test(topic)) {
         this.onTopicSubscribed(topic);
       } else {
@@ -7033,8 +7033,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      *
      * @returns The clamped numerical value..
      */
-    static clamp(value, min, max) {
-      return Math.max(min, Math.min(max, value));
+    static clamp(value, min, max2) {
+      return Math.max(min, Math.min(max2, value));
     }
     /**
      * Rounds a number.
@@ -7648,8 +7648,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param source The new source value.
      */
     onSourceChanged(source) {
-      var _a7;
-      (_a7 = this.pipe) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      var _a8;
+      (_a8 = this.pipe) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       const mappedSource = this.sourceMap(source);
       if (mappedSource) {
         if (this.pipeMap) {
@@ -7666,14 +7666,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     pause() {
-      var _a7;
+      var _a8;
       if (!this._isAlive) {
         throw new Error("Subscription: cannot pause a dead Subscription.");
       }
       this._isPaused = true;
       this.isPipePaused = true;
       this.sourceSub.pause();
-      (_a7 = this.pipe) === null || _a7 === void 0 ? void 0 : _a7.pause();
+      (_a8 = this.pipe) === null || _a8 === void 0 ? void 0 : _a8.pause();
       return this;
     }
     /** @inheritDoc */
@@ -7696,13 +7696,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     destroy() {
-      var _a7;
+      var _a8;
       if (!this._isAlive) {
         return;
       }
       this._isAlive = false;
       this.sourceSub.destroy();
-      (_a7 = this.pipe) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      (_a8 = this.pipe) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       this.pipe = void 0;
     }
     /** @inheritdoc */
@@ -10001,12 +10001,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      */
     static binarySearch(array, element, comparator, first = true) {
       let min = 0;
-      let max = array.length;
-      let index = Math.floor((min + max) / 2);
-      while (min < max) {
+      let max2 = array.length;
+      let index = Math.floor((min + max2) / 2);
+      while (min < max2) {
         const compare2 = comparator(element, array[index]);
         if (compare2 < 0) {
-          max = index;
+          max2 = index;
         } else if (compare2 > 0) {
           min = index + 1;
         } else {
@@ -10016,7 +10016,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           }
           return index;
         }
-        index = Math.floor((min + max) / 2);
+        index = Math.floor((min + max2) / 2);
       }
       return -(index + 1);
     }
@@ -11055,8 +11055,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param max The maximum value to clamp to.
      * @returns The clamped value.
      */
-    static clamp(val, min, max) {
-      return Math.min(Math.max(val, min), max);
+    static clamp(val, min, max2) {
+      return Math.min(Math.max(val, min), max2);
     }
     /**
      * Normalizes a heading to a 0-360 range.
@@ -12619,7 +12619,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * options are ignored and all configuration is instead synced with the associated primary computer.
      */
     constructor(index, bus, ephemerisFile, sbasFile, updateInterval, enabledSBASGroups, syncRole = "none", options) {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
       var _v, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _87;
       this.index = index;
       this.bus = bus;
@@ -12673,7 +12673,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return sat !== null && _GPSSatComputer.COLLECTING_DATA_SATELLITE_STATES.has(sat.state.get());
       };
       this.nominalSbasChannelCount = (options === null || options === void 0 ? void 0 : options.sbasChannelCount) === void 0 || !isFinite(options.sbasChannelCount) ? null : Math.max(Math.round(options.sbasChannelCount), 0);
-      this.desiredTotalChannelCount = Math.max(Math.round((_a7 = options === null || options === void 0 ? void 0 : options.channelCount) !== null && _a7 !== void 0 ? _a7 : Infinity), 4 + ((_b5 = this.nominalSbasChannelCount) !== null && _b5 !== void 0 ? _b5 : 0));
+      this.desiredTotalChannelCount = Math.max(Math.round((_a8 = options === null || options === void 0 ? void 0 : options.channelCount) !== null && _a8 !== void 0 ? _a8 : Infinity), 4 + ((_b6 = this.nominalSbasChannelCount) !== null && _b6 !== void 0 ? _b6 : 0));
       this.nominalChannelCount = isFinite(this.desiredTotalChannelCount) ? this.desiredTotalChannelCount : null;
       this.satInUseMaxCount = (_c = options === null || options === void 0 ? void 0 : options.satInUseMaxCount) !== null && _c !== void 0 ? _c : Infinity;
       this.satInUsePdopTarget = (_d = options === null || options === void 0 ? void 0 : options.satInUsePdopTarget) !== null && _d !== void 0 ? _d : -1;
@@ -13366,7 +13366,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * method does nothing.
      */
     updateFromSharedData() {
-      var _a7;
+      var _a8;
       if (!this.sharedGlobalData) {
         return;
       }
@@ -13379,7 +13379,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         if (assignment === null) {
           channels[i] = null;
         } else {
-          channels[i] = (_a7 = satellites[this.activeSimulationContext.getSatelliteIndexFromPrn(assignment)]) !== null && _a7 !== void 0 ? _a7 : null;
+          channels[i] = (_a8 = satellites[this.activeSimulationContext.getSatelliteIndexFromPrn(assignment)]) !== null && _a8 !== void 0 ? _a8 : null;
         }
       }
       for (let i = 0; i < satellites.length; i++) {
@@ -14040,8 +14040,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * satellite.
      */
     getSatelliteIndexFromPrn(prn) {
-      var _a7;
-      return (_a7 = this.satellitePrnMap.get(prn)) !== null && _a7 !== void 0 ? _a7 : -1;
+      var _a8;
+      return (_a8 = this.satellitePrnMap.get(prn)) !== null && _a8 !== void 0 ? _a8 : -1;
     }
     /**
      * Sets the spatial and temporal location of this context's receiver.
@@ -15180,8 +15180,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param bits The bytes to format.
      * @returns The input bits as a hexadecimal string.
      */
-    static bytesToHexString(bits) {
-      let string = (bits >>> 0).toString(16);
+    static bytesToHexString(bits2) {
+      let string = (bits2 >>> 0).toString(16);
       string = "00000000".substring(string.length) + string;
       return string;
     }
@@ -15728,8 +15728,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     render() {
-      var _a7;
-      const children = (_a7 = this.props.children) !== null && _a7 !== void 0 ? _a7 : [];
+      var _a8;
+      const children = (_a8 = this.props.children) !== null && _a8 !== void 0 ? _a8 : [];
       return FSComponent.buildComponent(FSComponent.Fragment, this.props, ...children);
     }
   };
@@ -15887,7 +15887,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           const pluginSystem = window._pluginSystem;
           try {
             instance = type(props);
-          } catch (_a7) {
+          } catch (_a8) {
             let pluginInstance = void 0;
             if (pluginSystem !== void 0) {
               pluginInstance = pluginSystem.onComponentCreating(type, props);
@@ -16027,16 +16027,16 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     FSComponent2.render = render;
     function insertNode(node, position, element) {
-      var _a7, _b5, _c, _d, _e, _f;
+      var _a8, _b6, _c, _d, _e, _f;
       if (node.instance instanceof HTMLElement || node.instance instanceof SVGElement) {
         switch (position) {
           case RenderPosition.In:
             element.appendChild(node.instance);
-            node.root = (_a7 = element.lastChild) !== null && _a7 !== void 0 ? _a7 : void 0;
+            node.root = (_a8 = element.lastChild) !== null && _a8 !== void 0 ? _a8 : void 0;
             break;
           case RenderPosition.Before:
             element.insertAdjacentElement("beforebegin", node.instance);
-            node.root = (_b5 = element.previousSibling) !== null && _b5 !== void 0 ? _b5 : void 0;
+            node.root = (_b6 = element.previousSibling) !== null && _b6 !== void 0 ? _b6 : void 0;
             break;
           case RenderPosition.After:
             element.insertAdjacentElement("afterend", node.instance);
@@ -16289,7 +16289,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   var Fragment = FSComponent.Fragment;
   var BingComponent = class _BingComponent extends DisplayComponent {
     constructor() {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h;
       super(...arguments);
       this.bingFlags = this.getBingFlags(EBingReference.SEA);
       this.isListenerRegistered = false;
@@ -16300,8 +16300,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.isDestroyed = false;
       this.pos = new LatLong(0, 0);
       this.radius = 10;
-      this.resolution = (_a7 = this.props.resolution) !== null && _a7 !== void 0 ? _a7 : Vec2Subject.create(Vec2Math.create(_BingComponent.DEFAULT_RESOLUTION, _BingComponent.DEFAULT_RESOLUTION));
-      this.earthColors = (_b5 = this.props.earthColors) !== null && _b5 !== void 0 ? _b5 : ArraySubject.create(ArrayUtils.create(2, () => _BingComponent.hexaToRGBColor("#000000")));
+      this.resolution = (_a8 = this.props.resolution) !== null && _a8 !== void 0 ? _a8 : Vec2Subject.create(Vec2Math.create(_BingComponent.DEFAULT_RESOLUTION, _BingComponent.DEFAULT_RESOLUTION));
+      this.earthColors = (_b6 = this.props.earthColors) !== null && _b6 !== void 0 ? _b6 : ArraySubject.create(ArrayUtils.create(2, () => _BingComponent.hexaToRGBColor("#000000")));
       this.earthColorsElevationRange = (_c = this.props.earthColorsElevationRange) !== null && _c !== void 0 ? _c : Vec2Subject.create(Vec2Math.create(0, 3e4));
       this.skyColor = (_d = this.props.skyColor) !== null && _d !== void 0 ? _d : Subject.create(_BingComponent.hexaToRGBColor("#000000"));
       this.reference = (_e = this.props.reference) !== null && _e !== void 0 ? _e : Subject.create(EBingReference.SEA);
@@ -16399,12 +16399,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.registerListener();
       } else {
         this.gameStateSub = gameStateSubscribable.sub((state) => {
-          var _a7;
+          var _a8;
           if (this.isDestroyed) {
             return;
           }
           if (state === GameState.briefing || state === GameState.ingame) {
-            (_a7 = this.gameStateSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+            (_a8 = this.gameStateSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
             this.registerListener();
           }
         });
@@ -16415,8 +16415,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Registers this component's Bing map listener.
      */
     registerListener() {
-      var _a7;
-      if (((_a7 = this.props.delay) !== null && _a7 !== void 0 ? _a7 : 0) > 0) {
+      var _a8;
+      if (((_a8 = this.props.delay) !== null && _a8 !== void 0 ? _a8 : 0) > 0) {
         setTimeout(() => {
           if (this.isDestroyed) {
             return;
@@ -16526,7 +16526,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * it is bound.
      */
     wake() {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h;
       this._isAwake = true;
       if (!this._isBound) {
         return;
@@ -16539,8 +16539,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       if (!is3D) {
         this.setCurrentMapParamsTimer = setInterval(this.setCurrentMapParams, 200);
       }
-      (_a7 = this.earthColorsSub) === null || _a7 === void 0 ? void 0 : _a7.resume(true);
-      (_b5 = this.earthColorsElevationRangeSub) === null || _b5 === void 0 ? void 0 : _b5.resume(true);
+      (_a8 = this.earthColorsSub) === null || _a8 === void 0 ? void 0 : _a8.resume(true);
+      (_b6 = this.earthColorsElevationRangeSub) === null || _b6 === void 0 ? void 0 : _b6.resume(true);
       (_c = this.skyColorSub) === null || _c === void 0 ? void 0 : _c.resume(true);
       (_d = this.referenceSub) === null || _d === void 0 ? void 0 : _d.resume(true);
       (_e = this.wxrModeSub) === null || _e === void 0 ? void 0 : _e.resume(true);
@@ -16560,7 +16560,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * it is bound.
      */
     sleep() {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h;
       this._isAwake = false;
       if (!this._isBound) {
         return;
@@ -16568,8 +16568,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       if (this.setCurrentMapParamsTimer !== null) {
         clearInterval(this.setCurrentMapParamsTimer);
       }
-      (_a7 = this.earthColorsSub) === null || _a7 === void 0 ? void 0 : _a7.pause();
-      (_b5 = this.earthColorsElevationRangeSub) === null || _b5 === void 0 ? void 0 : _b5.pause();
+      (_a8 = this.earthColorsSub) === null || _a8 === void 0 ? void 0 : _a8.pause();
+      (_b6 = this.earthColorsElevationRangeSub) === null || _b6 === void 0 ? void 0 : _b6.pause();
       (_c = this.skyColorSub) === null || _c === void 0 ? void 0 : _c.pause();
       (_d = this.referenceSub) === null || _d === void 0 ? void 0 : _d.pause();
       (_e = this.wxrModeSub) === null || _e === void 0 ? void 0 : _e.pause();
@@ -16675,19 +16675,19 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     render() {
-      var _a7;
-      return FSComponent.buildComponent("img", { ref: this.imgRef, src: "", style: "position: absolute; left: 0; top: 0; width: 100%; height: 100%;", class: (_a7 = this.props.class) !== null && _a7 !== void 0 ? _a7 : "" });
+      var _a8;
+      return FSComponent.buildComponent("img", { ref: this.imgRef, src: "", style: "position: absolute; left: 0; top: 0; width: 100%; height: 100%;", class: (_a8 = this.props.class) !== null && _a8 !== void 0 ? _a8 : "" });
     }
     /** @inheritdoc */
     destroy() {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p;
       this.isDestroyed = true;
       this._isBound = false;
       if (this.setCurrentMapParamsTimer !== null) {
         clearInterval(this.setCurrentMapParamsTimer);
       }
-      (_a7 = this.gameStateSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
-      (_b5 = this.earthColorsSub) === null || _b5 === void 0 ? void 0 : _b5.destroy();
+      (_a8 = this.gameStateSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
+      (_b6 = this.earthColorsSub) === null || _b6 === void 0 ? void 0 : _b6.destroy();
       (_c = this.earthColorsElevationRangeSub) === null || _c === void 0 ? void 0 : _c.destroy();
       (_d = this.skyColorSub) === null || _d === void 0 ? void 0 : _d.destroy();
       (_e = this.referenceSub) === null || _e === void 0 ? void 0 : _e.destroy();
@@ -16980,13 +16980,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     render() {
-      var _a7;
-      return FSComponent.buildComponent("div", { class: (_a7 = this.props.class) !== null && _a7 !== void 0 ? _a7 : "", style: "white-space: nowrap;" }, this.text);
+      var _a8;
+      return FSComponent.buildComponent("div", { class: (_a8 = this.props.class) !== null && _a8 !== void 0 ? _a8 : "", style: "white-space: nowrap;" }, this.text);
     }
     /** @inheritdoc */
     destroy() {
-      var _a7;
-      (_a7 = this.valueSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      var _a8;
+      (_a8 = this.valueSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
     }
   };
   DurationDisplay.DEFAULT_OPTIONS = {
@@ -17382,11 +17382,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param parameters The new parameters.
      */
     set(parameters) {
-      var _a7, _b5, _c, _d, _e, _f, _g;
+      var _a8, _b6, _c, _d, _e, _f, _g;
       this.storeParameters(this.oldParameters);
       parameters.position !== void 0 && this.position.set(parameters.position);
-      this.altitude = (_a7 = parameters.altitude) !== null && _a7 !== void 0 ? _a7 : this.altitude;
-      this.heading = (_b5 = parameters.heading) !== null && _b5 !== void 0 ? _b5 : this.heading;
+      this.altitude = (_a8 = parameters.altitude) !== null && _a8 !== void 0 ? _a8 : this.altitude;
+      this.heading = (_b6 = parameters.heading) !== null && _b6 !== void 0 ? _b6 : this.heading;
       this.pitch = (_c = parameters.pitch) !== null && _c !== void 0 ? _c : this.pitch;
       this.roll = (_d = parameters.roll) !== null && _d !== void 0 ? _d : this.roll;
       parameters.offset !== void 0 && this.offset.set(parameters.offset);
@@ -17882,8 +17882,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     destroy() {
-      var _a7;
-      (_a7 = this.bingRef.getOrDefault()) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      var _a8;
+      (_a8 = this.bingRef.getOrDefault()) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       super.destroy();
     }
   };
@@ -17895,7 +17895,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   })(HorizonSyntheticVisionCameraParamMode || (HorizonSyntheticVisionCameraParamMode = {}));
   var HorizonSyntheticVisionLayer = class _HorizonSyntheticVisionLayer extends HorizonLayer {
     constructor() {
-      var _a7, _b5, _c, _d, _e;
+      var _a8, _b6, _c, _d, _e;
       super(...arguments);
       this.synVisRef = FSComponent.createRef();
       this.rootStyle = ObjectSubject.create({
@@ -17908,8 +17908,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       });
       this.resolution = Vec2Subject.create(Vec2Math.create(100, 100));
       this.fov = Subject.create(BingComponent.DEFAULT_3D_FOV);
-      this.cameraPositionMode = SubscribableUtils.toSubscribable((_a7 = this.props.cameraPositionMode) !== null && _a7 !== void 0 ? _a7 : HorizonSyntheticVisionCameraParamMode.Default, true);
-      this.cameraRotationMode = SubscribableUtils.toSubscribable((_b5 = this.props.cameraRotationMode) !== null && _b5 !== void 0 ? _b5 : HorizonSyntheticVisionCameraParamMode.Default, true);
+      this.cameraPositionMode = SubscribableUtils.toSubscribable((_a8 = this.props.cameraPositionMode) !== null && _a8 !== void 0 ? _a8 : HorizonSyntheticVisionCameraParamMode.Default, true);
+      this.cameraRotationMode = SubscribableUtils.toSubscribable((_b6 = this.props.cameraRotationMode) !== null && _b6 !== void 0 ? _b6 : HorizonSyntheticVisionCameraParamMode.Default, true);
       this.cameraOffsetMode = SubscribableUtils.toSubscribable((_c = this.props.cameraOffsetMode) !== null && _c !== void 0 ? _c : HorizonSyntheticVisionCameraParamMode.Default, true);
       this.updateCameraParamChangeFlags = MappedSubject.create((_arrArg_1) => {
         let positionMode = _arrArg_1[0], rotationMode = _arrArg_1[1], offsetMode = _arrArg_1[2];
@@ -17954,31 +17954,31 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.subscriptions.push(this.customCameraOffsetSub = this.props.cameraOffset.sub(scheduleCameraParamsUpdate, false, true));
       }
       this.subscriptions.push(this.cameraPositionMode.sub((mode) => {
-        var _a7, _b5, _c, _d;
+        var _a8, _b6, _c, _d;
         if (mode === HorizonSyntheticVisionCameraParamMode.Custom) {
-          (_a7 = this.customCameraPositionSub) === null || _a7 === void 0 ? void 0 : _a7.resume();
-          (_b5 = this.customCameraAltitudeReferenceSub) === null || _b5 === void 0 ? void 0 : _b5.resume();
+          (_a8 = this.customCameraPositionSub) === null || _a8 === void 0 ? void 0 : _a8.resume();
+          (_b6 = this.customCameraAltitudeReferenceSub) === null || _b6 === void 0 ? void 0 : _b6.resume();
         } else {
           (_c = this.customCameraPositionSub) === null || _c === void 0 ? void 0 : _c.pause();
           (_d = this.customCameraAltitudeReferenceSub) === null || _d === void 0 ? void 0 : _d.pause();
         }
         scheduleCameraParamsUpdate();
       }, true), this.cameraRotationMode.sub((mode) => {
-        var _a7, _b5, _c, _d;
+        var _a8, _b6, _c, _d;
         if (mode === HorizonSyntheticVisionCameraParamMode.Custom) {
-          (_a7 = this.customCameraRotationSub) === null || _a7 === void 0 ? void 0 : _a7.resume();
-          (_b5 = this.customCameraRotationReferenceSub) === null || _b5 === void 0 ? void 0 : _b5.resume();
+          (_a8 = this.customCameraRotationSub) === null || _a8 === void 0 ? void 0 : _a8.resume();
+          (_b6 = this.customCameraRotationReferenceSub) === null || _b6 === void 0 ? void 0 : _b6.resume();
         } else {
           (_c = this.customCameraRotationSub) === null || _c === void 0 ? void 0 : _c.pause();
           (_d = this.customCameraRotationReferenceSub) === null || _d === void 0 ? void 0 : _d.pause();
         }
         scheduleCameraParamsUpdate();
       }, true), this.cameraOffsetMode.sub((mode) => {
-        var _a7, _b5;
+        var _a8, _b6;
         if (mode === HorizonSyntheticVisionCameraParamMode.Custom) {
-          (_a7 = this.customCameraOffsetSub) === null || _a7 === void 0 ? void 0 : _a7.resume();
+          (_a8 = this.customCameraOffsetSub) === null || _a8 === void 0 ? void 0 : _a8.resume();
         } else {
-          (_b5 = this.customCameraOffsetSub) === null || _b5 === void 0 ? void 0 : _b5.pause();
+          (_b6 = this.customCameraOffsetSub) === null || _b6 === void 0 ? void 0 : _b6.pause();
         }
         scheduleCameraParamsUpdate();
       }, true));
@@ -18118,17 +18118,17 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     render() {
-      var _a7;
+      var _a8;
       return FSComponent.buildComponent(
         "div",
-        { class: (_a7 = this.props.class) !== null && _a7 !== void 0 ? _a7 : "", style: this.rootStyle },
+        { class: (_a8 = this.props.class) !== null && _a8 !== void 0 ? _a8 : "", style: this.rootStyle },
         FSComponent.buildComponent(SynVisComponent, { ref: this.synVisRef, bingId: this.props.bingId, bingDelay: this.props.bingDelay, bingSkipUnbindOnDestroy: this.props.bingSkipUnbindOnDestroy, resolution: this.resolution, earthColors: this.props.earthColors, earthColorsElevationRange: this.props.earthColorsElevationRange, skyColor: this.props.skyColor, fov: this.fov })
       );
     }
     /** @inheritDoc */
     destroy() {
-      var _a7;
-      (_a7 = this.synVisRef.getOrDefault()) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      var _a8;
+      (_a8 = this.synVisRef.getOrDefault()) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       const _arr_1 = this.subscriptions;
       for (let _i_1 = 0; _i_1 < _arr_1.length; ++_i_1) {
         const sub2 = _arr_1[_i_1];
@@ -19481,16 +19481,16 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The target array, after the copy is complete.
      */
     static deepCopyVectorArray(from, to, fromStartIndex = 0, fromEndIndex = from.length, toStartIndex = 0) {
-      var _a7, _b5;
+      var _a8, _b6;
       var _c, _d;
       const offset = toStartIndex - fromStartIndex;
       if (offset < 0) {
         for (let i = fromStartIndex; i < fromEndIndex; i++) {
-          Object.assign((_a7 = to[_c = i + offset]) !== null && _a7 !== void 0 ? _a7 : to[_c] = _FlightPathUtils.createEmptyVector(), from[i]);
+          Object.assign((_a8 = to[_c = i + offset]) !== null && _a8 !== void 0 ? _a8 : to[_c] = _FlightPathUtils.createEmptyVector(), from[i]);
         }
       } else {
         for (let i = fromEndIndex - 1; i >= fromStartIndex; i--) {
-          Object.assign((_b5 = to[_d = i + offset]) !== null && _b5 !== void 0 ? _b5 : to[_d] = _FlightPathUtils.createEmptyVector(), from[i]);
+          Object.assign((_b6 = to[_d = i + offset]) !== null && _b6 !== void 0 ? _b6 : to[_d] = _FlightPathUtils.createEmptyVector(), from[i]);
         }
       }
       return to;
@@ -19503,7 +19503,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The flight plan leg calculations, after the ingress to egress vectors have been resolved.
      */
     static resolveIngressToEgress(legCalc) {
-      var _a7, _b5, _c, _d, _e, _f;
+      var _a8, _b6, _c, _d, _e, _f;
       var _g, _h, _j, _k, _l, _m;
       const vectors = legCalc.ingressToEgress;
       let vectorIndex = 0;
@@ -19523,9 +19523,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           if (ingressEndAlongVectorDistance < 1 - normalizedTolerance) {
             if (ingressEndAlongVectorDistance > normalizedTolerance) {
               ingressJoinVectorCircle.closest(ingressEnd, ingressEnd);
-              _FlightPathUtils.setVectorFromCircle((_a7 = vectors[_g = vectorIndex++]) !== null && _a7 !== void 0 ? _a7 : vectors[_g] = _FlightPathUtils.createEmptyVector(), ingressJoinVectorCircle, ingressEnd, ingressJoinVectorEnd, ingressJoinVector.flags, ingressJoinVector.heading, ingressJoinVector.isHeadingTrue);
+              _FlightPathUtils.setVectorFromCircle((_a8 = vectors[_g = vectorIndex++]) !== null && _a8 !== void 0 ? _a8 : vectors[_g] = _FlightPathUtils.createEmptyVector(), ingressJoinVectorCircle, ingressEnd, ingressJoinVectorEnd, ingressJoinVector.flags, ingressJoinVector.heading, ingressJoinVector.isHeadingTrue);
             } else {
-              Object.assign((_b5 = vectors[_h = vectorIndex++]) !== null && _b5 !== void 0 ? _b5 : vectors[_h] = _FlightPathUtils.createEmptyVector(), ingressJoinVector);
+              Object.assign((_b6 = vectors[_h = vectorIndex++]) !== null && _b6 !== void 0 ? _b6 : vectors[_h] = _FlightPathUtils.createEmptyVector(), ingressJoinVector);
             }
           }
           flightPathVectorIndex++;
@@ -19611,7 +19611,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The position of the leg terminator, or `undefined` if it could not be determined.
      */
     getTerminatorPosition(leg, out, icao) {
-      var _a7;
+      var _a8;
       if (leg.lat !== void 0 && leg.lon !== void 0) {
         return out.set(leg.lat, leg.lon);
       } else {
@@ -19630,7 +19630,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             case LegType.FC: {
               const origin = this.getPositionFromIcao(leg.fixIcaoStruct, out);
               if (origin) {
-                const course = leg.trueDegrees ? leg.course : MagVar.magneticToTrue(leg.course, (_a7 = this.getMagVarFromIcao(leg.fixIcaoStruct)) !== null && _a7 !== void 0 ? _a7 : MagVar.get(origin));
+                const course = leg.trueDegrees ? leg.course : MagVar.magneticToTrue(leg.course, (_a8 = this.getMagVarFromIcao(leg.fixIcaoStruct)) !== null && _a8 !== void 0 ? _a8 : MagVar.get(origin));
                 return origin.offset(course, UnitType.METER.convertTo(leg.distance, UnitType.GA_RADIAN));
               }
             }
@@ -19670,7 +19670,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The true course, in degrees, for the flight plan leg.
      */
     getLegTrueCourse(leg) {
-      var _a7;
+      var _a8;
       switch (leg.type) {
         case LegType.CF:
         case LegType.HF:
@@ -19700,7 +19700,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         case LegType.VI:
         case LegType.VM:
         case LegType.VR:
-          return leg.trueDegrees ? leg.course : MagVar.magneticToTrue(leg.course, (_a7 = this.getMagVarFromIcao(leg.originIcaoStruct)) !== null && _a7 !== void 0 ? _a7 : 0);
+          return leg.trueDegrees ? leg.course : MagVar.magneticToTrue(leg.course, (_a8 = this.getMagVarFromIcao(leg.originIcaoStruct)) !== null && _a8 !== void 0 ? _a8 : 0);
         case LegType.IF:
           if (ICAO.isValueFacility(leg.fixIcaoStruct, FacilityType.RWY)) {
             const facility = this.facilityCache.getFacility(leg.fixIcaoStruct);
@@ -19713,9 +19713,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     calculate(legs, calculateIndex, activeLegIndex, state, options) {
-      var _a7, _b5;
+      var _a8, _b6;
       var _c;
-      const calcs = (_a7 = (_c = legs[calculateIndex]).calculated) !== null && _a7 !== void 0 ? _a7 : _c.calculated = {
+      const calcs = (_a8 = (_c = legs[calculateIndex]).calculated) !== null && _a8 !== void 0 ? _a8 : _c.calculated = {
         courseMagVar: 0,
         startLat: void 0,
         startLon: void 0,
@@ -19742,7 +19742,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       const vectors = calcs.flightPath;
       if (this.canSkipWhenActive && activeLegIndex === calculateIndex && this.shouldSkipWhenActive(legs, calculateIndex, activeLegIndex, state, options)) {
         FlightPathUtils.getLegFinalPosition(calcs, state.currentPosition);
-        state.currentCourse = (_b5 = FlightPathUtils.getLegFinalCourse(calcs)) !== null && _b5 !== void 0 ? _b5 : state.currentCourse;
+        state.currentCourse = (_b6 = FlightPathUtils.getLegFinalCourse(calcs)) !== null && _b6 !== void 0 ? _b6 : state.currentCourse;
         state.isDiscontinuity = calcs.endsInDiscontinuity;
         state.isFallback = calcs.endsInFallback;
         return calcs;
@@ -19836,8 +19836,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The number of vectors that were built and added to the array, which is always equal to 1.
      */
     build(vectors, index, circle, start, end, flags = 0, heading = null, isHeadingTrue = false) {
-      var _a7;
-      FlightPathUtils.setVectorFromCircle((_a7 = vectors[index]) !== null && _a7 !== void 0 ? _a7 : vectors[index] = FlightPathUtils.createEmptyVector(), circle, start, end, flags, heading, isHeadingTrue);
+      var _a8;
+      FlightPathUtils.setVectorFromCircle((_a8 = vectors[index]) !== null && _a8 !== void 0 ? _a8 : vectors[index] = FlightPathUtils.createEmptyVector(), circle, start, end, flags, heading, isHeadingTrue);
       return 1;
     }
     // eslint-disable-next-line jsdoc/require-jsdoc
@@ -21338,7 +21338,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @throws Error if either the start or end path is not a great circle.
      */
     build(vectors, index, start, startPath, end, endPath, outboundCourse, desiredTurnRadius, desiredTurnDirection, initialCourse, finalCourse, flags = FlightPathVectorFlags.CourseReversal, includeTurnToCourseFlag = true, heading = null, isHeadingTrue = false) {
-      var _a7, _b5;
+      var _a8, _b6;
       if (!startPath.isGreatCircle() || !endPath.isGreatCircle()) {
         throw new Error("ProcedureTurnVectorBuilder::build(): start or end path is not a great circle");
       }
@@ -21352,7 +21352,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       initialCourse !== null && initialCourse !== void 0 ? initialCourse : initialCourse = startPath.bearingAt(start, Math.PI);
       finalCourse !== null && finalCourse !== void 0 ? finalCourse : finalCourse = endPath.bearingAt(end, Math.PI);
       const startPoint = _ProcedureTurnVectorBuilder.geoPointCache[0].setFromCartesian(start);
-      const initialTurnDirection = (_a7 = FlightPathUtils.getShortestTurnDirection(initialCourse, outboundCourse)) !== null && _a7 !== void 0 ? _a7 : "right";
+      const initialTurnDirection = (_a8 = FlightPathUtils.getShortestTurnDirection(initialCourse, outboundCourse)) !== null && _a8 !== void 0 ? _a8 : "right";
       const initialTurnDirectionSign = initialTurnDirection === "left" ? -1 : 1;
       const startPathEndPointDistance = startPath.distance(end);
       const isInitialTurnTowardEndPath = startPathEndPointDistance <= GeoMath.ANGULAR_TOLERANCE === (initialTurnDirection === "left");
@@ -21419,7 +21419,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             const desiredFinalTurnAlongTrackDistance = Math.asin(MathUtils.clamp(Math.tan(desiredTurnRadiusRad) / tanThetaInbound, -1, 1));
             const finalTurnAlongTrackDistance = Math.min(desiredFinalTurnAlongTrackDistance, Vec3Math.unitAngle(intersection3, turnEndVec), Vec3Math.unitAngle(intersection3, end));
             const finalTurnRadiusRad = finalTurnAlongTrackDistance === desiredFinalTurnAlongTrackDistance ? desiredTurnRadiusRad : Math.atan(Math.sin(finalTurnAlongTrackDistance) * tanThetaInbound);
-            finalTurnDirection = (_b5 = FlightPathUtils.getShortestTurnDirection(turnFinalCourse, finalCourse)) !== null && _b5 !== void 0 ? _b5 : "right";
+            finalTurnDirection = (_b6 = FlightPathUtils.getShortestTurnDirection(turnFinalCourse, finalCourse)) !== null && _b6 !== void 0 ? _b6 : "right";
             finalTurnRadius = UnitType.GA_RADIAN.convertTo(finalTurnRadiusRad, UnitType.METER);
             finalTurnStartPoint = turnInboundPath.offsetDistanceAlong(intersection3, -finalTurnAlongTrackDistance, _ProcedureTurnVectorBuilder.geoPointCache[7], Math.PI);
             finalTurnCenterPoint = finalTurnStartPoint.offset(turnFinalCourse + (finalTurnDirection === "left" ? -90 : 90), finalTurnRadiusRad, _ProcedureTurnVectorBuilder.geoPointCache[8]);
@@ -21519,7 +21519,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The number of vectors that were built and added to the array.
      */
     buildFallbackVectorsToInterceptPath(vectors, index, legIndex, isActiveLeg, state, options, pathToInterceptCourse, path, origin, requireJoinCourse) {
-      var _a7;
+      var _a8;
       let vectorIndex = index;
       const flags = (state.isDiscontinuity ? FlightPathVectorFlags.Discontinuity : FlightPathVectorFlags.None) | (state.isFallback ? FlightPathVectorFlags.Fallback : FlightPathVectorFlags.None);
       const desiredTurnRadius = state.getDesiredTurnRadius(legIndex);
@@ -21586,7 +21586,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           state.isFallback = false;
         } else {
           if (MathUtils.angularDistanceDeg(state.currentCourse, pathToInterceptCourse, 0) > 1) {
-            vectorIndex += this.circleVectorBuilder.buildTurnToCourse(vectors, vectorIndex, state.currentPosition, desiredTurnRadius, (_a7 = FlightPathUtils.getShortestTurnDirection(state.currentCourse, pathToInterceptCourse)) !== null && _a7 !== void 0 ? _a7 : "right", state.currentCourse, pathToInterceptCourse, FlightPathVectorFlags.Fallback | FlightPathVectorFlags.TurnToCourse);
+            vectorIndex += this.circleVectorBuilder.buildTurnToCourse(vectors, vectorIndex, state.currentPosition, desiredTurnRadius, (_a8 = FlightPathUtils.getShortestTurnDirection(state.currentCourse, pathToInterceptCourse)) !== null && _a8 !== void 0 ? _a8 : "right", state.currentCourse, pathToInterceptCourse, FlightPathVectorFlags.Fallback | FlightPathVectorFlags.TurnToCourse);
             if (vectorIndex > 0) {
               const lastVector = vectors[vectorIndex - 1];
               state.currentPosition.set(lastVector.endLat, lastVector.endLon);
@@ -22224,7 +22224,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     calculateVectors(legs, calculateIndex, activeLegIndex, state, options) {
-      var _a7, _b5, _c, _d, _e;
+      var _a8, _b6, _c, _d, _e;
       const leg = legs[calculateIndex];
       const vectors = leg.calculated.flightPath;
       const terminatorPos = this.getTerminatorPosition(leg.leg, this.geoPointCache[1], leg.leg.fixIcaoStruct);
@@ -22252,7 +22252,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           const startVec = endPath.offsetDistanceAlong(endVec, UnitType.NMILE.convertTo(-5, UnitType.GA_RADIAN), this.geoPointCache[2]);
           if (options.calculateDiscontinuityVectors && state.currentPosition.isValid()) {
             if (options.useGreatCirclePathForDiscontinuity) {
-              vectorIndex += this.circleVectorBuilder.buildGreatCircle(vectors, vectorIndex, state.currentPosition, startVec, (_a7 = state.currentCourse) !== null && _a7 !== void 0 ? _a7 : 0, FlightPathVectorFlags.Discontinuity);
+              vectorIndex += this.circleVectorBuilder.buildGreatCircle(vectors, vectorIndex, state.currentPosition, startVec, (_a8 = state.currentCourse) !== null && _a8 !== void 0 ? _a8 : 0, FlightPathVectorFlags.Discontinuity);
             } else {
               const startPath = state.currentCourse !== void 0 ? this.geoCircleCache[1].setAsGreatCircle(state.currentPosition, state.currentCourse) : void 0;
               vectorIndex += this.directToJoinGreatCircleToPointVectorBuilder.build(vectors, vectorIndex, state.currentPosition, startPath, startVec, endPath, minTurnRadius, void 0, FlightPathVectorFlags.Discontinuity, true);
@@ -22262,7 +22262,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         } else {
           const nextLeg = legs[calculateIndex + 1];
           const startPoint = state.currentPosition;
-          const currentCourse = (_b5 = state.currentCourse) !== null && _b5 !== void 0 ? _b5 : startPoint.bearingTo(terminatorPos);
+          const currentCourse = (_b6 = state.currentCourse) !== null && _b6 !== void 0 ? _b6 : startPoint.bearingTo(terminatorPos);
           const startVec = startPoint.toCartesian(this.vec3Cache[0]);
           const startPath = this.geoCircleCache[1].setAsGreatCircle(startPoint, currentCourse);
           const startToEndPath = this.geoCircleCache[3].setAsGreatCircle(startVec, endVec);
@@ -22439,7 +22439,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     calculateVectors(legs, calculateIndex, activeLegIndex, state, options) {
-      var _a7;
+      var _a8;
       const leg = legs[calculateIndex];
       const vectors = legs[calculateIndex].calculated.flightPath;
       const originPos = this.getPositionFromIcao(leg.leg.fixIcaoStruct, this.geoPointCache[0]);
@@ -22505,7 +22505,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             vectorIndex += this.circleVectorBuilder.build(vectors, vectorIndex, finalPath, startVec, finalPath.offsetDistanceAlong(startVec, distance2 + distanceToOrigin, this.vec3Cache[2], Math.PI));
           } else {
             if (MathUtils.angularDistanceDeg(state.currentCourse, course, 0) > 1) {
-              vectorIndex += this.circleVectorBuilder.buildTurnToCourse(vectors, vectorIndex, state.currentPosition, desiredTurnRadius, (_a7 = FlightPathUtils.getShortestTurnDirection(state.currentCourse, course)) !== null && _a7 !== void 0 ? _a7 : "right", state.currentCourse, course, FlightPathVectorFlags.Fallback | FlightPathVectorFlags.TurnToCourse);
+              vectorIndex += this.circleVectorBuilder.buildTurnToCourse(vectors, vectorIndex, state.currentPosition, desiredTurnRadius, (_a8 = FlightPathUtils.getShortestTurnDirection(state.currentCourse, course)) !== null && _a8 !== void 0 ? _a8 : "right", state.currentCourse, course, FlightPathVectorFlags.Fallback | FlightPathVectorFlags.TurnToCourse);
               if (vectorIndex > 0) {
                 const lastVector = vectors[vectorIndex - 1];
                 state.currentPosition.set(lastVector.endLat, lastVector.endLon);
@@ -22844,12 +22844,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      */
     findIndex(element, first = true) {
       let min = 0;
-      let max = this._array.length;
-      let index = Math.floor((min + max) / 2);
-      while (min < max) {
+      let max2 = this._array.length;
+      let index = Math.floor((min + max2) / 2);
+      while (min < max2) {
         const compare2 = this.comparatorFunc(element, this._array[index]);
         if (compare2 < 0) {
-          max = index;
+          max2 = index;
         } else if (compare2 > 0) {
           min = index + 1;
         } else {
@@ -22859,7 +22859,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           }
           return index;
         }
-        index = Math.floor((min + max) / 2);
+        index = Math.floor((min + max2) / 2);
       }
       return -(index + 1);
     }
@@ -23377,9 +23377,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * added.
      */
     setEgressVector(legCalc, joinIngress, path, start, end, flags, setEgressArrayLength) {
-      var _a7;
-      var _b5;
-      const vector = (_a7 = (_b5 = legCalc.egress)[0]) !== null && _a7 !== void 0 ? _a7 : _b5[0] = FlightPathUtils.createEmptyVector();
+      var _a8;
+      var _b6;
+      const vector = (_a8 = (_b6 = legCalc.egress)[0]) !== null && _a8 !== void 0 ? _a8 : _b6[0] = FlightPathUtils.createEmptyVector();
       if (setEgressArrayLength) {
         legCalc.egress.length = 1;
       }
@@ -23399,9 +23399,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * been added.
      */
     setIngressVector(legCalc, path, start, end, flags, setIngressArrayLength) {
-      var _a7;
-      var _b5;
-      const ingress = (_a7 = (_b5 = legCalc.ingress)[0]) !== null && _a7 !== void 0 ? _a7 : _b5[0] = FlightPathUtils.createEmptyVector();
+      var _a8;
+      var _b6;
+      const ingress = (_a8 = (_b6 = legCalc.ingress)[0]) !== null && _a8 !== void 0 ? _a8 : _b6[0] = FlightPathUtils.createEmptyVector();
       if (setIngressArrayLength) {
         legCalc.ingress.length = 1;
       }
@@ -23415,13 +23415,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param legCalc The flight path calculations for the ingress transition's leg.
      */
     resolveIngressJoinedToAnticipatedTurn(legCalc) {
-      var _a7, _b5;
+      var _a8, _b6;
       var _c, _d;
       const joinIndex = legCalc.ingressBase.length - 1;
       const joinVector = legCalc.ingressBase[joinIndex];
       const firstEgressVector = legCalc.egress[0];
       for (let i = 0; i < joinIndex; i++) {
-        Object.assign((_a7 = (_c = legCalc.ingress)[i]) !== null && _a7 !== void 0 ? _a7 : _c[i] = FlightPathUtils.createEmptyVector(), legCalc.ingressBase[i]);
+        Object.assign((_a8 = (_c = legCalc.ingress)[i]) !== null && _a8 !== void 0 ? _a8 : _c[i] = FlightPathUtils.createEmptyVector(), legCalc.ingressBase[i]);
       }
       const egressStart = this.resolveIngressCache.geoPoint[0].set(firstEgressVector.startLat, firstEgressVector.startLon);
       const joinVectorStart = this.resolveIngressCache.geoPoint[1].set(joinVector.startLat, joinVector.startLon);
@@ -23430,7 +23430,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       const egressStartAlongVectorDistance = FlightPathUtils.getAlongArcNormalizedDistance(joinVectorCircle, joinVectorStart, joinVectorEnd, egressStart);
       const normalizedTolerance = GeoMath.ANGULAR_TOLERANCE / UnitType.METER.convertTo(joinVector.distance, UnitType.GA_RADIAN);
       if (egressStartAlongVectorDistance > normalizedTolerance) {
-        const copiedJoinVector = Object.assign((_b5 = (_d = legCalc.ingress)[joinIndex]) !== null && _b5 !== void 0 ? _b5 : _d[joinIndex] = FlightPathUtils.createEmptyVector(), joinVector);
+        const copiedJoinVector = Object.assign((_b6 = (_d = legCalc.ingress)[joinIndex]) !== null && _b6 !== void 0 ? _b6 : _d[joinIndex] = FlightPathUtils.createEmptyVector(), joinVector);
         if (egressStartAlongVectorDistance < 1 - normalizedTolerance) {
           joinVectorCircle.closest(egressStart, egressStart);
           copiedJoinVector.endLat = egressStart.lat;
@@ -23524,7 +23524,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The number of consecutive leg-to-leg transitions calculated by this method.
      */
     calculateTrackTrackCourseReversal(legs, fromIndex, toIndex, endIndex, state, fromVector, toVector) {
-      var _a7;
+      var _a8;
       let calculatedCount = 1;
       const fromLegCalc = legs[fromIndex].calculated;
       const toLegCalc = legs[toIndex].calculated;
@@ -23541,7 +23541,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       if (toLegCalc.flightPath.length === 1) {
         let needCheckEgressJoin = true;
         if (toIndex < endIndex) {
-          const nextLegCalc = (_a7 = legs[toIndex + 1]) === null || _a7 === void 0 ? void 0 : _a7.calculated;
+          const nextLegCalc = (_a8 = legs[toIndex + 1]) === null || _a8 === void 0 ? void 0 : _a8.calculated;
           if (nextLegCalc) {
             if (_FlightPathLegToLegCalculator.canCalculateTransition(toLegCalc.egressBase) && _FlightPathLegToLegCalculator.canCalculateTransition(nextLegCalc.ingressBase)) {
               if (legs[toIndex].leg.flyOver) {
@@ -23615,7 +23615,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The number of consecutive leg-to-leg transitions calculated by this method.
      */
     calculateTrackTrackAnticipatedTurn(legs, fromIndex, toIndex, endIndex, state, fromLegUseIngress, fromVector, toVector, anticipationLimit, previousTanTheta, previousDesiredD) {
-      var _a7, _b5;
+      var _a8, _b6;
       let calculatedCount = 1;
       const fromLegCalc = legs[fromIndex].calculated;
       const toLegCalc = legs[toIndex].calculated;
@@ -23658,7 +23658,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       if (toLegCalc.flightPath.length === 1) {
         let nextTransitionRestrictedD;
         if (toIndex < endIndex && _FlightPathLegToLegCalculator.canCalculateTransition(toLegCalc.egressBase)) {
-          const nextLegCalc = (_a7 = legs[toIndex + 1]) === null || _a7 === void 0 ? void 0 : _a7.calculated;
+          const nextLegCalc = (_a8 = legs[toIndex + 1]) === null || _a8 === void 0 ? void 0 : _a8.calculated;
           if (nextLegCalc && _FlightPathLegToLegCalculator.canCalculateTransition(nextLegCalc.ingressBase)) {
             if (legs[toIndex].leg.flyOver) {
               nextTransitionRestrictedD = Infinity;
@@ -23693,7 +23693,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return calculatedCount;
       }
       fromVectorEnd.set(fromVector.endLat, fromVector.endLon);
-      const turnDirection = (_b5 = FlightPathUtils.getShortestTurnDirection(fromVectorCourse, toVectorCourse)) !== null && _b5 !== void 0 ? _b5 : "right";
+      const turnDirection = (_b6 = FlightPathUtils.getShortestTurnDirection(fromVectorCourse, toVectorCourse)) !== null && _b6 !== void 0 ? _b6 : "right";
       const turnBisectorBearing = toVectorCourse + theta * (turnDirection === "left" ? -1 : 1);
       const turnCenterVec = fromVectorEnd.offset(turnBisectorBearing, H, this.trackTrackCache.geoPoint[1]).toCartesian(this.trackTrackCache.vec3[0]);
       const turnStart = fromVectorEnd.offset(fromVectorCourse, -D3, this.trackTrackCache.geoPoint[1]);
@@ -23894,7 +23894,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The number of consecutive leg-to-leg transitions calculated by this method.
      */
     calculateTurnXAnticipatedTurn(legs, fromIndex, toIndex, endIndex, state, fromLegUseIngress, fromVector, toVector, fromVectorPath, toVectorPath, turn, transitionTurnRadius, intersectionFromVectorEndOffset, intersectionToVectorStartOffset) {
-      var _a7, _b5, _c;
+      var _a8, _b6, _c;
       var _d, _e, _f;
       const fromLegCalc = legs[fromIndex].calculated;
       const toLegCalc = legs[toIndex].calculated;
@@ -23927,13 +23927,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       if (Math.abs(transitionStartFromVectorEndOffset) > 1e-5) {
         if (transitionStartFromVectorEndOffset < 0 || egressVectorCount === 0) {
           if (egressVectorCount > 0) {
-            const movedVector = (_a7 = (_d = fromLegCalc.egress)[1]) !== null && _a7 !== void 0 ? _a7 : _d[1] = FlightPathUtils.createEmptyVector();
+            const movedVector = (_a8 = (_d = fromLegCalc.egress)[1]) !== null && _a8 !== void 0 ? _a8 : _d[1] = FlightPathUtils.createEmptyVector();
             Object.assign(movedVector, fromLegCalc.egress[0]);
           }
           const vectorEnd = this.turnXAnticipatedTurnCache.geoPoint[0].setFromCartesian(transitionTurnStartVec);
           const vectorStart = transitionStartFromVectorEndOffset < 0 ? this.turnXAnticipatedTurnCache.geoPoint[1].set(fromVector.endLat, fromVector.endLon) : vectorEnd;
           const flags = FlightPathVectorFlags.LegToLegTurn | FlightPathVectorFlags.AnticipatedTurn | fromVector.flags & FlightPathVectorFlags.Fallback;
-          FlightPathUtils.setVectorFromCircle((_b5 = (_e = fromLegCalc.egress)[0]) !== null && _b5 !== void 0 ? _b5 : _e[0] = FlightPathUtils.createEmptyVector(), fromVectorPath, vectorStart, vectorEnd, flags, fromVector.heading, fromVector.isHeadingTrue);
+          FlightPathUtils.setVectorFromCircle((_b6 = (_e = fromLegCalc.egress)[0]) !== null && _b6 !== void 0 ? _b6 : _e[0] = FlightPathUtils.createEmptyVector(), fromVectorPath, vectorStart, vectorEnd, flags, fromVector.heading, fromVector.isHeadingTrue);
           fromLegCalc.egressJoinIndex = fromLegCalc.flightPath.length - 1;
           egressVectorCount += 1;
         }
@@ -24377,7 +24377,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns A flight plan leg, or `null` if one could not be found at the specified index.
      */
     _tryGetLeg(arg1, arg2) {
-      var _a7, _b5;
+      var _a8, _b6;
       if (typeof arg1 === "object" || arg2 !== void 0) {
         let segmentIndex;
         let segmentLegIndex;
@@ -24387,7 +24387,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           segmentIndex = arg1;
           segmentLegIndex = arg2;
         }
-        return (_b5 = (_a7 = this.planSegments[segmentIndex]) === null || _a7 === void 0 ? void 0 : _a7.legs[segmentLegIndex]) !== null && _b5 !== void 0 ? _b5 : null;
+        return (_b6 = (_a8 = this.planSegments[segmentIndex]) === null || _a8 === void 0 ? void 0 : _a8.legs[segmentLegIndex]) !== null && _b6 !== void 0 ? _b6 : null;
       } else {
         const legIndex = arg1;
         for (let i = 0; i < this.planSegments.length; i++) {
@@ -24495,7 +24495,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     // eslint-disable-next-line jsdoc/require-jsdoc
     getPrevLeg(arg1, arg2) {
-      var _a7, _b5;
+      var _a8, _b6;
       let segmentIndex;
       let segmentLegIndex;
       if (arg2 === void 0) {
@@ -24508,7 +24508,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return null;
       }
       segmentIndex = Math.min(segmentIndex, this.planSegments.length);
-      segmentLegIndex = Math.min(segmentLegIndex, (_b5 = (_a7 = this.planSegments[segmentIndex]) === null || _a7 === void 0 ? void 0 : _a7.legs.length) !== null && _b5 !== void 0 ? _b5 : 0);
+      segmentLegIndex = Math.min(segmentLegIndex, (_b6 = (_a8 = this.planSegments[segmentIndex]) === null || _a8 === void 0 ? void 0 : _a8.legs.length) !== null && _b6 !== void 0 ? _b6 : 0);
       let segment = this.planSegments[segmentIndex];
       let leg = segment === null || segment === void 0 ? void 0 : segment.legs[segmentLegIndex - 1];
       while (!leg && --segmentIndex >= 0) {
@@ -25394,7 +25394,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns the newLeg with the copied calcs.
      */
     static copyLegCalculations(existingLeg, newLeg) {
-      var _a7, _b5, _c, _d;
+      var _a8, _b6, _c, _d;
       if (existingLeg.calculated !== void 0) {
         const copyVector = (vector) => Object.assign({}, vector);
         newLeg.calculated = {
@@ -25411,8 +25411,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           flightPath: existingLeg.calculated.flightPath.map(copyVector),
           // NOTE: Nullish coalesce is added for backwards compatibility with older versions of FlightPlan that did not
           // have the ingressBase/egressBase properties on the leg calculations.
-          ingressBase: ((_a7 = existingLeg.calculated.ingressBase) !== null && _a7 !== void 0 ? _a7 : existingLeg.calculated.ingress).map(copyVector),
-          ingressBaseJoinIndex: (_b5 = existingLeg.calculated.ingressBaseJoinIndex) !== null && _b5 !== void 0 ? _b5 : existingLeg.calculated.ingressJoinIndex,
+          ingressBase: ((_a8 = existingLeg.calculated.ingressBase) !== null && _a8 !== void 0 ? _a8 : existingLeg.calculated.ingress).map(copyVector),
+          ingressBaseJoinIndex: (_b6 = existingLeg.calculated.ingressBaseJoinIndex) !== null && _b6 !== void 0 ? _b6 : existingLeg.calculated.ingressJoinIndex,
           egressBase: ((_c = existingLeg.calculated.egressBase) !== null && _c !== void 0 ? _c : existingLeg.calculated.egress).map(copyVector),
           egressBaseJoinIndex: (_d = existingLeg.calculated.egressBaseJoinIndex) !== null && _d !== void 0 ? _d : existingLeg.calculated.egressJoinIndex,
           ingress: existingLeg.calculated.ingress.map(copyVector),
@@ -25435,14 +25435,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns A new flight plan leg.
      */
     static createLeg(partial) {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y;
       partial = Object.assign({}, partial);
       _FlightPlan.reconcileFlightPlanLegIcaoPropPair(partial, "fixIcaoStruct", "fixIcao");
       _FlightPlan.reconcileFlightPlanLegIcaoPropPair(partial, "originIcaoStruct", "originIcao");
       _FlightPlan.reconcileFlightPlanLegIcaoPropPair(partial, "arcCenterFixIcaoStruct", "arcCenterFixIcao");
       return {
-        type: (_a7 = partial.type) !== null && _a7 !== void 0 ? _a7 : LegType.Unknown,
-        fixIcao: (_b5 = partial.fixIcao) !== null && _b5 !== void 0 ? _b5 : ICAO.EMPTY_V1,
+        type: (_a8 = partial.type) !== null && _a8 !== void 0 ? _a8 : LegType.Unknown,
+        fixIcao: (_b6 = partial.fixIcao) !== null && _b6 !== void 0 ? _b6 : ICAO.EMPTY_V1,
         fixIcaoStruct: (_c = partial.fixIcaoStruct) !== null && _c !== void 0 ? _c : ICAO.emptyValue(),
         arcCenterFixIcao: (_d = partial.arcCenterFixIcao) !== null && _d !== void 0 ? _d : ICAO.EMPTY_V1,
         arcCenterFixIcaoStruct: (_e = partial.arcCenterFixIcaoStruct) !== null && _e !== void 0 ? _e : ICAO.emptyValue(),
@@ -25539,7 +25539,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param options Options with which to configure the flight planner.
      */
     constructor(id, bus, options) {
-      var _a7;
+      var _a8;
       this.id = id;
       this.bus = bus;
       this.eventSuffix = this.id === "" ? "" : "_".concat(this.id);
@@ -25550,7 +25550,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.syncedBatchEntries = [];
       this.flightPlanSynced = new SubEvent();
       this.calculator = options.calculator;
-      this.getLegNameFunc = (_a7 = options === null || options === void 0 ? void 0 : options.getLegName) !== null && _a7 !== void 0 ? _a7 : _FlightPlanner.buildDefaultLegName;
+      this.getLegNameFunc = (_a8 = options === null || options === void 0 ? void 0 : options.getLegName) !== null && _a8 !== void 0 ? _a8 : _FlightPlanner.buildDefaultLegName;
       this.publisher = bus.getPublisher();
       const subscriber = bus.getSubscriber();
       subscriber.on("fplsync_fplRequest".concat(this.eventSuffix)).handle((data) => !this.ignoreSync && this.onFlightPlanRequest(data));
@@ -25813,8 +25813,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param copyCalcs Whether to leg calculations were copied.
      */
     sendPlanCopied(planIndex, targetPlanIndex, copyCalcs) {
-      var _a7;
-      const data = { planIndex, targetPlanIndex, copyCalcs, batch: (_a7 = this.flightPlans[targetPlanIndex]) === null || _a7 === void 0 ? void 0 : _a7.getBatchStack() };
+      var _a8;
+      const data = { planIndex, targetPlanIndex, copyCalcs, batch: (_a8 = this.flightPlans[targetPlanIndex]) === null || _a8 === void 0 ? void 0 : _a8.getBatchStack() };
       this.sendSyncEvent("fplsync_fplCopied", data);
       this.sendLocalEvent("fplCopied", data);
     }
@@ -26345,14 +26345,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param data The event data.
      */
     onBatchOpened(data) {
-      var _a7;
-      var _b5, _c;
+      var _a8;
+      var _b6, _c;
       const plan = this.flightPlans[data.planIndex];
       if (!plan) {
         return;
       }
       const localData = { planIndex: data.planIndex, isSynced: true, batch: data.batch };
-      const entries = (_a7 = (_b5 = this.syncedBatchEntries)[_c = data.planIndex]) !== null && _a7 !== void 0 ? _a7 : _b5[_c] = /* @__PURE__ */ new Map();
+      const entries = (_a8 = (_b6 = this.syncedBatchEntries)[_c = data.planIndex]) !== null && _a8 !== void 0 ? _a8 : _b6[_c] = /* @__PURE__ */ new Map();
       entries.set(data.batch.uuid, { batch: data.batch, isClosed: false, pendingCalculateCount: 0, eventData: localData });
       this.sendLocalEvent("fplBatchOpened", localData);
     }
@@ -26570,8 +26570,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The standard string representation for the specified runway number.
      */
     static getNumberString(runwayNumber) {
-      var _a7;
-      return (_a7 = _RunwayUtils.RUNWAY_NUMBER_STRINGS[runwayNumber]) !== null && _a7 !== void 0 ? _a7 : "";
+      var _a8;
+      return (_a8 = _RunwayUtils.RUNWAY_NUMBER_STRINGS[runwayNumber]) !== null && _a8 !== void 0 ? _a8 : "";
     }
     /**
      * Gets the letter for a runway designator.
@@ -27270,7 +27270,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         } else {
           return facility;
         }
-      } catch (_a7) {
+      } catch (_a8) {
         return void 0;
       }
     }
@@ -28628,9 +28628,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     onAfterRender(thisNode) {
-      var _a7;
+      var _a8;
       this.thisNode = thisNode;
-      this._content = (_a7 = thisNode.children) === null || _a7 === void 0 ? void 0 : _a7[0].instance;
+      this._content = (_a8 = thisNode.children) === null || _a8 === void 0 ? void 0 : _a8[0].instance;
     }
     /** @inheritdoc */
     getAnchor() {
@@ -28819,18 +28819,18 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param style The style of the line to stroke.
      */
     strokeLine(context, style) {
-      var _a7, _b5;
+      var _a8, _b6;
       if (style.outlineWidth > 0) {
         const outlineWidth = style.strokeWidth + 2 * style.outlineWidth;
         context.lineWidth = outlineWidth;
         context.strokeStyle = style.outlineStyle;
-        context.setLineDash((_a7 = style.outlineDash) !== null && _a7 !== void 0 ? _a7 : _FlightPathLegLineRenderer.EMPTY_DASH);
+        context.setLineDash((_a8 = style.outlineDash) !== null && _a8 !== void 0 ? _a8 : _FlightPathLegLineRenderer.EMPTY_DASH);
         context.stroke();
       }
       if (style.strokeWidth > 0) {
         context.lineWidth = style.strokeWidth;
         context.strokeStyle = style.strokeStyle;
-        context.setLineDash((_b5 = style.strokeDash) !== null && _b5 !== void 0 ? _b5 : _FlightPathLegLineRenderer.EMPTY_DASH);
+        context.setLineDash((_b6 = style.strokeDash) !== null && _b6 !== void 0 ? _b6 : _FlightPathLegLineRenderer.EMPTY_DASH);
         context.stroke();
       }
     }
@@ -30297,8 +30297,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param stream A transforming path stream.
      */
     push(stream) {
-      var _a7;
-      stream.setConsumer((_a7 = this.stack[this.stack.length - 1]) !== null && _a7 !== void 0 ? _a7 : this.consumer);
+      var _a8;
+      stream.setConsumer((_a8 = this.stack[this.stack.length - 1]) !== null && _a8 !== void 0 ? _a8 : this.consumer);
       this.stack.push(stream);
     }
     /**
@@ -30327,47 +30327,47 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The removed path stream, or undefined if this stack was empty.
      */
     shift() {
-      var _a7;
+      var _a8;
       const removed = this.stack.shift();
       removed === null || removed === void 0 ? void 0 : removed.setConsumer(NullPathStream.INSTANCE);
-      (_a7 = this.stack[0]) === null || _a7 === void 0 ? void 0 : _a7.setConsumer(this.consumer);
+      (_a8 = this.stack[0]) === null || _a8 === void 0 ? void 0 : _a8.setConsumer(this.consumer);
       return removed;
     }
     /** @inheritdoc */
     setConsumer(consumer) {
-      var _a7;
-      (_a7 = this.stack[0]) === null || _a7 === void 0 ? void 0 : _a7.setConsumer(consumer);
+      var _a8;
+      (_a8 = this.stack[0]) === null || _a8 === void 0 ? void 0 : _a8.setConsumer(consumer);
       super.setConsumer(consumer);
     }
     /** @inheritdoc */
     beginPath() {
-      var _a7;
-      ((_a7 = this.stack[this.stack.length - 1]) !== null && _a7 !== void 0 ? _a7 : this.consumer).beginPath();
+      var _a8;
+      ((_a8 = this.stack[this.stack.length - 1]) !== null && _a8 !== void 0 ? _a8 : this.consumer).beginPath();
     }
     /** @inheritdoc */
     moveTo(x, y) {
-      var _a7;
-      ((_a7 = this.stack[this.stack.length - 1]) !== null && _a7 !== void 0 ? _a7 : this.consumer).moveTo(x, y);
+      var _a8;
+      ((_a8 = this.stack[this.stack.length - 1]) !== null && _a8 !== void 0 ? _a8 : this.consumer).moveTo(x, y);
     }
     /** @inheritdoc */
     lineTo(x, y) {
-      var _a7;
-      ((_a7 = this.stack[this.stack.length - 1]) !== null && _a7 !== void 0 ? _a7 : this.consumer).lineTo(x, y);
+      var _a8;
+      ((_a8 = this.stack[this.stack.length - 1]) !== null && _a8 !== void 0 ? _a8 : this.consumer).lineTo(x, y);
     }
     /** @inheritdoc */
     bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y) {
-      var _a7;
-      ((_a7 = this.stack[this.stack.length - 1]) !== null && _a7 !== void 0 ? _a7 : this.consumer).bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
+      var _a8;
+      ((_a8 = this.stack[this.stack.length - 1]) !== null && _a8 !== void 0 ? _a8 : this.consumer).bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y);
     }
     /** @inheritdoc */
     quadraticCurveTo(cpx, cpy, x, y) {
-      var _a7;
-      ((_a7 = this.stack[this.stack.length - 1]) !== null && _a7 !== void 0 ? _a7 : this.consumer).quadraticCurveTo(cpx, cpy, x, y);
+      var _a8;
+      ((_a8 = this.stack[this.stack.length - 1]) !== null && _a8 !== void 0 ? _a8 : this.consumer).quadraticCurveTo(cpx, cpy, x, y);
     }
     /** @inheritdoc */
     arc(x, y, radius, startAngle, endAngle, counterClockwise) {
-      var _a7;
-      ((_a7 = this.stack[this.stack.length - 1]) !== null && _a7 !== void 0 ? _a7 : this.consumer).arc(x, y, radius, startAngle, endAngle, counterClockwise);
+      var _a8;
+      ((_a8 = this.stack[this.stack.length - 1]) !== null && _a8 !== void 0 ? _a8 : this.consumer).arc(x, y, radius, startAngle, endAngle, counterClockwise);
     }
     /** @inheritdoc */
     closePath() {
@@ -31468,7 +31468,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   var MapComponent = class extends DisplayComponent {
     /** @inheritdoc */
     constructor(props) {
-      var _a7;
+      var _a8;
       super(props);
       this.layerEntries = [];
       this.lastUpdateTime = 0;
@@ -31479,7 +31479,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       if (this.props.projection !== void 0) {
         this.props.projection.set({ projectedSize: new Float64Array(initialSize) });
       }
-      this.mapProjection = (_a7 = this.props.projection) !== null && _a7 !== void 0 ? _a7 : new MapProjection(initialSize[0], initialSize[1]);
+      this.mapProjection = (_a8 = this.props.projection) !== null && _a8 !== void 0 ? _a8 : new MapProjection(initialSize[0], initialSize[1]);
     }
     /**
      * Gets the size of this map's projected window, in pixels.
@@ -31521,14 +31521,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     onAfterRender(thisNode) {
-      var _a7;
+      var _a8;
       this.mapProjection.addChangeListener(this.onMapProjectionChanged.bind(this));
       this.projectedSizeSub = this.projectedSize.sub((size) => {
         this.mapProjection.set({ projectedSize: size });
       });
-      (_a7 = this.props.updateFreq) === null || _a7 === void 0 ? void 0 : _a7.sub((freq) => {
-        var _a8;
-        (_a8 = this.updateCycleSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
+      (_a8 = this.props.updateFreq) === null || _a8 === void 0 ? void 0 : _a8.sub((freq) => {
+        var _a9;
+        (_a9 = this.updateCycleSub) === null || _a9 === void 0 ? void 0 : _a9.destroy();
         this.updateCycleSub = this.props.bus.getSubscriber().on("realTime").whenChanged().atFrequency(freq).handle(this.updateCycleHandler);
       }, true);
       this.attachLayers(thisNode);
@@ -31652,10 +31652,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     destroy() {
-      var _a7, _b5;
+      var _a8, _b6;
       super.destroy();
-      (_a7 = this.updateCycleSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
-      (_b5 = this.projectedSizeSub) === null || _b5 === void 0 ? void 0 : _b5.destroy();
+      (_a8 = this.updateCycleSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
+      (_b6 = this.projectedSizeSub) === null || _b6 === void 0 ? void 0 : _b6.destroy();
       const len = this.layerEntries.length;
       for (let i = 0; i < len; i++) {
         this.layerEntries[i].destroy();
@@ -31676,9 +31676,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Attaches this layer entry.
      */
     attach() {
-      var _a7, _b5;
-      (_a7 = this.updateFreqSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
-      this.updateFreqSub = (_b5 = this.layer.props.updateFreq) === null || _b5 === void 0 ? void 0 : _b5.sub((freq) => {
+      var _a8, _b6;
+      (_a8 = this.updateFreqSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
+      this.updateFreqSub = (_b6 = this.layer.props.updateFreq) === null || _b6 === void 0 ? void 0 : _b6.sub((freq) => {
         const clamped = Math.max(0, freq);
         this.updatePeriod = clamped === 0 ? 0 : 1e3 / clamped;
       }, true);
@@ -31698,8 +31698,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Detaches this layer entry.
      */
     detach() {
-      var _a7;
-      (_a7 = this.updateFreqSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      var _a8;
+      (_a8 = this.updateFreqSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       this.layer.onDetached();
     }
     /**
@@ -31718,11 +31718,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param options Options with which to initialize this label.
      */
     constructor(text, priority, options) {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
       this.text = SubscribableUtils.toSubscribable(text, true);
       this.priority = SubscribableUtils.toSubscribable(priority, true);
-      this.anchor = SubscribableUtils.toSubscribable((_a7 = options === null || options === void 0 ? void 0 : options.anchor) !== null && _a7 !== void 0 ? _a7 : Vec2Math.create(), true);
-      this.font = SubscribableUtils.toSubscribable((_b5 = options === null || options === void 0 ? void 0 : options.font) !== null && _b5 !== void 0 ? _b5 : "", true);
+      this.anchor = SubscribableUtils.toSubscribable((_a8 = options === null || options === void 0 ? void 0 : options.anchor) !== null && _a8 !== void 0 ? _a8 : Vec2Math.create(), true);
+      this.font = SubscribableUtils.toSubscribable((_b6 = options === null || options === void 0 ? void 0 : options.font) !== null && _b6 !== void 0 ? _b6 : "", true);
       this.fontSize = SubscribableUtils.toSubscribable((_c = options === null || options === void 0 ? void 0 : options.fontSize) !== null && _c !== void 0 ? _c : 10, true);
       this.fontStr = MappedSubject.create((_arrArg_1) => {
         let s = _arrArg_1[0], f = _arrArg_1[1];
@@ -31856,10 +31856,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param options Options with which to initialize this label.
      */
     constructor(text, priority, location, options) {
-      var _a7;
+      var _a8;
       super(text, priority, options);
       this.location = SubscribableUtils.toSubscribable(location, true);
-      this.offset = SubscribableUtils.toSubscribable((_a7 = options === null || options === void 0 ? void 0 : options.offset) !== null && _a7 !== void 0 ? _a7 : Vec2Math.create(), true);
+      this.offset = SubscribableUtils.toSubscribable((_a8 = options === null || options === void 0 ? void 0 : options.offset) !== null && _a8 !== void 0 ? _a8 : Vec2Math.create(), true);
     }
     /** @inheritdoc */
     getPosition(mapProjection, out) {
@@ -32308,9 +32308,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param vector An airspace shape vector.
      */
     buildStartSegment(projection, index, vector) {
-      var _a7;
-      var _b5;
-      const segment = (_a7 = (_b5 = this.segments)[index]) !== null && _a7 !== void 0 ? _a7 : _b5[index] = _Shape.createSegment();
+      var _a8;
+      var _b6;
+      const segment = (_a8 = (_b6 = this.segments)[index]) !== null && _a8 !== void 0 ? _a8 : _b6[index] = _Shape.createSegment();
       segment.type = "start";
       projection.project(vector.end, segment.end);
     }
@@ -32323,9 +32323,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param end The end point of the path.
      */
     buildSegmentFromGreatCircle(projection, index, circle, start, end) {
-      var _a7;
-      var _b5;
-      const segment = (_a7 = (_b5 = this.segments)[index]) !== null && _a7 !== void 0 ? _a7 : _b5[index] = _Shape.createSegment();
+      var _a8;
+      var _b6;
+      const segment = (_a8 = (_b6 = this.segments)[index]) !== null && _a8 !== void 0 ? _a8 : _b6[index] = _Shape.createSegment();
       segment.type = "line";
       projection.project(end, segment.end);
       const delta = Vec2Math.sub(segment.end, this.segments[index - 1].end, _Shape.vec2Cache[0]);
@@ -32340,8 +32340,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param end The end point of the path.
      */
     buildSegmentFromSmallCircle(projection, index, circle, start, end) {
-      var _a7;
-      var _b5;
+      var _a8;
+      var _b6;
       const isClockwise = circle.radius > Math.PI / 2;
       const center = _Shape.geoPointCache[0].setFromCartesian(isClockwise ? Vec3Math.multScalar(circle.center, -1, _Shape.vec3Cache[0]) : circle.center);
       const startProjected = this.segments[index - 1].end;
@@ -32352,7 +32352,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       const endRadial = Vec2Math.sub(endProjected, centerProjected, _Shape.vec2Cache[3]);
       const endRadialMag = Vec2Math.abs(endRadial);
       const radius = (startRadialMag + endRadialMag) / 2;
-      const segment = (_a7 = (_b5 = this.segments)[index]) !== null && _a7 !== void 0 ? _a7 : _b5[index] = _Shape.createSegment();
+      const segment = (_a8 = (_b6 = this.segments)[index]) !== null && _a8 !== void 0 ? _a8 : _b6[index] = _Shape.createSegment();
       segment.type = "arc";
       segment.radius = radius;
       segment.isClockwise = isClockwise;
@@ -32385,9 +32385,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Calculates vertex data for this shape.
      */
     calculateVertices() {
-      const max = this.isClosed ? this.length - 1 : this.length;
+      const max2 = this.isClosed ? this.length - 1 : this.length;
       for (let i = 0; i < this.length; i++) {
-        const next = this.isClosed ? i % max + 1 : (i + 1) % max;
+        const next = this.isClosed ? i % max2 + 1 : (i + 1) % max2;
         this.calculateVertex(i, next);
       }
     }
@@ -32971,12 +32971,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param options Options with which to initialize this icon.
      */
     constructor(waypoint, priority, size, options) {
-      var _a7, _b5;
+      var _a8, _b6;
       this.waypoint = waypoint;
       this.priority = SubscribableUtils.toSubscribable(priority, true);
       this.size = SubscribableUtils.toSubscribable(size, true);
-      this.anchor = SubscribableUtils.toSubscribable((_a7 = options === null || options === void 0 ? void 0 : options.anchor) !== null && _a7 !== void 0 ? _a7 : Vec2Math.create(0.5, 0.5), true);
-      this.offset = SubscribableUtils.toSubscribable((_b5 = options === null || options === void 0 ? void 0 : options.offset) !== null && _b5 !== void 0 ? _b5 : Vec2Math.create(), true);
+      this.anchor = SubscribableUtils.toSubscribable((_a8 = options === null || options === void 0 ? void 0 : options.anchor) !== null && _a8 !== void 0 ? _a8 : Vec2Math.create(0.5, 0.5), true);
+      this.offset = SubscribableUtils.toSubscribable((_b6 = options === null || options === void 0 ? void 0 : options.offset) !== null && _b6 !== void 0 ? _b6 : Vec2Math.create(), true);
     }
     /** @inheritdoc */
     draw(context, mapProjection) {
@@ -33276,7 +33276,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The nearest waypoint, or undefined if none found.
      */
     getNearestWaypoint(pos, first) {
-      var _a7, _b5;
+      var _a8, _b6;
       const ordered = [...this.registered.values()].sort((a, b) => this.orderByDistance(a.waypoint, b.waypoint, pos)).filter((w) => {
         const roleDef = this.getRenderRoleDefinition(w.lastRenderedRole);
         if (roleDef !== void 0) {
@@ -33285,9 +33285,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return false;
       });
       if (first !== void 0) {
-        return (_a7 = ordered.find((entry) => first(entry.waypoint))) === null || _a7 === void 0 ? void 0 : _a7.waypoint;
+        return (_a8 = ordered.find((entry) => first(entry.waypoint))) === null || _a8 === void 0 ? void 0 : _a8.waypoint;
       }
-      return (_b5 = ordered[0]) === null || _b5 === void 0 ? void 0 : _b5.waypoint;
+      return (_b6 = ordered[0]) === null || _b6 === void 0 ? void 0 : _b6.waypoint;
     }
     /**
      * Orders waypoints by their distance to the plane PPOS.
@@ -33397,9 +33397,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      */
     addRole(roles, sourceId) {
       BitFlags.forEach(roles, (value, index) => {
-        var _a7;
-        var _b5, _c;
-        ((_a7 = (_b5 = this.registrations)[_c = 1 << index]) !== null && _a7 !== void 0 ? _a7 : _b5[_c] = /* @__PURE__ */ new Set()).add(sourceId);
+        var _a8;
+        var _b6, _c;
+        ((_a8 = (_b6 = this.registrations)[_c = 1 << index]) !== null && _a8 !== void 0 ? _a8 : _b6[_c] = /* @__PURE__ */ new Set()).add(sourceId);
       }, true);
       this.roles = this.roles | roles;
     }
@@ -33425,15 +33425,15 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param showRole The role in which this entry should be rendered.
      */
     prepareRender(showRole) {
-      var _a7, _b5, _c, _d, _e;
+      var _a8, _b6, _c, _d, _e;
       if (showRole === this.lastRenderedRole) {
         return;
       }
-      const roleDef = (_a7 = this.roleDefinitions.get(showRole)) !== null && _a7 !== void 0 ? _a7 : null;
+      const roleDef = (_a8 = this.roleDefinitions.get(showRole)) !== null && _a8 !== void 0 ? _a8 : null;
       let iconFactory = null;
       let labelFactory = null;
       if (roleDef) {
-        iconFactory = (_b5 = roleDef.iconFactory) !== null && _b5 !== void 0 ? _b5 : null;
+        iconFactory = (_b6 = roleDef.iconFactory) !== null && _b6 !== void 0 ? _b6 : null;
         labelFactory = (_c = roleDef.labelFactory) !== null && _c !== void 0 ? _c : null;
       }
       this.icon = (_d = iconFactory === null || iconFactory === void 0 ? void 0 : iconFactory.getIcon(showRole, this.waypoint)) !== null && _d !== void 0 ? _d : null;
@@ -33698,8 +33698,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     render() {
-      var _a7;
-      return FSComponent.buildComponent("canvas", { ref: this.displayCanvasRef, class: (_a7 = this.props.class) !== null && _a7 !== void 0 ? _a7 : "", width: "0", height: "0", style: "position: absolute;" });
+      var _a8;
+      return FSComponent.buildComponent("canvas", { ref: this.displayCanvasRef, class: (_a8 = this.props.class) !== null && _a8 !== void 0 ? _a8 : "", width: "0", height: "0", style: "position: absolute;" });
     }
   };
   var MapSyncedCanvasLayer = class extends MapCanvasLayer {
@@ -34739,7 +34739,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The waypoint's location.
      */
     getWaypointLocation(leg, distanceFromEnd, out) {
-      var _a7, _b5;
+      var _a8, _b6;
       if (leg.calculated !== void 0) {
         const vectors = [...leg.calculated.ingress, ...leg.calculated.ingressToEgress, ...leg.calculated.egress];
         let vectorIndex = vectors.length - 1;
@@ -34757,7 +34757,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         if (vectors.length > 0) {
           out.set(vectors[0].startLat, vectors[0].startLon);
         } else {
-          out.set((_a7 = leg.calculated.endLat) !== null && _a7 !== void 0 ? _a7 : 0, (_b5 = leg.calculated.endLon) !== null && _b5 !== void 0 ? _b5 : 0);
+          out.set((_a8 = leg.calculated.endLat) !== null && _a8 !== void 0 ? _a8 : 0, (_b6 = leg.calculated.endLon) !== null && _b6 !== void 0 ? _b6 : 0);
         }
       }
       return out;
@@ -34805,8 +34805,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns A FacilityWaypointCache instance.
      */
     static getCache(bus) {
-      var _a7;
-      return (_a7 = _DefaultFacilityWaypointCache.INSTANCE) !== null && _a7 !== void 0 ? _a7 : _DefaultFacilityWaypointCache.INSTANCE = new _DefaultFacilityWaypointCache(bus, 1e3);
+      var _a8;
+      return (_a8 = _DefaultFacilityWaypointCache.INSTANCE) !== null && _a8 !== void 0 ? _a8 : _DefaultFacilityWaypointCache.INSTANCE = new _DefaultFacilityWaypointCache(bus, 1e3);
     }
     /**
      * Gets the cache key for a facility.
@@ -35568,7 +35568,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     // eslint-disable-next-line jsdoc/require-jsdoc
     constructor(arg1, arg2) {
-      var _a7, _b5;
+      var _a8, _b6;
       this.table = new SortedArray(_LerpVectorLookupTable.BREAKPOINT_COMPARATOR);
       if (typeof arg1 === "number") {
         this._dimensionCount = isFinite(arg1) ? Math.max(0, arg1) : 0;
@@ -35578,7 +35578,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         let leastVectorLength = Infinity;
         for (let i = 0; i < arg1.length; i++) {
           leastBreakpointDimension = Math.min(leastBreakpointDimension, Math.max(arg1[i].length - 1, 0));
-          leastVectorLength = Math.min(leastVectorLength, (_b5 = (_a7 = arg1[i][0]) === null || _a7 === void 0 ? void 0 : _a7.length) !== null && _b5 !== void 0 ? _b5 : 0);
+          leastVectorLength = Math.min(leastVectorLength, (_b6 = (_a8 = arg1[i][0]) === null || _a8 === void 0 ? void 0 : _a8.length) !== null && _b6 !== void 0 ? _b6 : 0);
         }
         this._dimensionCount = isFinite(leastBreakpointDimension) ? leastBreakpointDimension : 0;
         this._vectorLength = isFinite(leastVectorLength) ? leastVectorLength : 0;
@@ -35842,7 +35842,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This boundary's processed LOD levels.
      */
     processLods() {
-      var _a7;
+      var _a8;
       const lodShapes = [];
       const originalShapes = this.processShapes(this.facility.vectors);
       if (Array.isArray(this.facility.lods)) {
@@ -35852,7 +35852,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         }
       } else {
         let startIndex = 0;
-        if (this.lodDistanceThresholds[0] === 0 && ((_a7 = this.lodVectorCountTargets[0]) !== null && _a7 !== void 0 ? _a7 : 0) <= 0) {
+        if (this.lodDistanceThresholds[0] === 0 && ((_a8 = this.lodVectorCountTargets[0]) !== null && _a8 !== void 0 ? _a8 : 0) <= 0) {
           lodShapes.push(originalShapes);
           startIndex = 1;
         }
@@ -36073,14 +36073,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param edgeIndex The index from which to retrieve an edge from the edge cache, if needed.
      */
     computeAndInsertEdgeToQueue(distanceThreshold, shape, startIndex, endIndex, queue, edgeIndex) {
-      var _a7;
-      var _b5;
+      var _a8;
+      var _b6;
       const start = shape[startIndex].end;
       const end = shape[endIndex - 1].end;
       const reference = start.equals(end) ? start : _LodBoundary.geoCircleCache[0].setAsGreatCircle(start, end);
       const farthest = this.findFarthestVector(shape, startIndex + 1, endIndex - 1, reference);
       if (farthest.distance >= distanceThreshold) {
-        const edge = (_a7 = (_b5 = _LodBoundary.edgeCache)[edgeIndex]) !== null && _a7 !== void 0 ? _a7 : _b5[edgeIndex] = _LodBoundary.createEdge();
+        const edge = (_a8 = (_b6 = _LodBoundary.edgeCache)[edgeIndex]) !== null && _a8 !== void 0 ? _a8 : _b6[edgeIndex] = _LodBoundary.createEdge();
         edge.startIndex = startIndex;
         edge.endIndex = endIndex;
         edge.farthestVectorIndex = farthest.index;
@@ -36147,7 +36147,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param simplified The simplified shape to which to add the rebuilt vectors.
      */
     rebuildSimplifiedVectors(shape, retain, simplified) {
-      var _a7;
+      var _a8;
       let lastRetained;
       const len = shape.length;
       for (let i = 0; i < len; i++) {
@@ -36163,7 +36163,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               if (currentVector.circle && !currentVector.circle.isGreatCircle()) {
                 simplified.push({ circle: GeoCircle.createGreatCircle(lastRetained.end, prevVector.end), end: prevVector.end });
                 simplified.push(_LodBoundary.copyVector(currentVector));
-              } else if ((_a7 = currentVector.circle) === null || _a7 === void 0 ? void 0 : _a7.isGreatCircle()) {
+              } else if ((_a8 = currentVector.circle) === null || _a8 === void 0 ? void 0 : _a8.isGreatCircle()) {
                 simplified.push({ circle: GeoCircle.createGreatCircle(lastRetained.end, currentVector.end), end: currentVector.end });
               } else {
                 simplified.push(_LodBoundary.copyVector(currentVector));
@@ -36249,8 +36249,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns An instance of DefaultLodBoundaryCache.
      */
     static getCache() {
-      var _a7;
-      return (_a7 = _DefaultLodBoundaryCache.INSTANCE) !== null && _a7 !== void 0 ? _a7 : _DefaultLodBoundaryCache.INSTANCE = new LodBoundaryCache(_DefaultLodBoundaryCache.SIZE, _DefaultLodBoundaryCache.DISTANCE_THRESHOLDS, _DefaultLodBoundaryCache.VECTOR_COUNT_TARGETS);
+      var _a8;
+      return (_a8 = _DefaultLodBoundaryCache.INSTANCE) !== null && _a8 !== void 0 ? _a8 : _DefaultLodBoundaryCache.INSTANCE = new LodBoundaryCache(_DefaultLodBoundaryCache.SIZE, _DefaultLodBoundaryCache.DISTANCE_THRESHOLDS, _DefaultLodBoundaryCache.VECTOR_COUNT_TARGETS);
     }
   };
   DefaultLodBoundaryCache.SIZE = 500;
@@ -36506,13 +36506,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * retrieved.
      */
     dispatchCoherentFacilityRequest(queue, existingRequest, type, icao, isIntersection, airportDataFlags = 0) {
-      var _a7;
+      var _a8;
       const uid = ICAO.getUid(icao);
       const isAirport = type === FacilityType.Airport;
       const request = {
         isIcaoConfirmedValid: false,
         timeStamp: Date.now(),
-        resolveFuncs: (_a7 = existingRequest === null || existingRequest === void 0 ? void 0 : existingRequest.resolveFuncs) !== null && _a7 !== void 0 ? _a7 : [],
+        resolveFuncs: (_a8 = existingRequest === null || existingRequest === void 0 ? void 0 : existingRequest.resolveFuncs) !== null && _a8 !== void 0 ? _a8 : [],
         airportDataFlags
       };
       request.promise = new Promise((resolution) => {
@@ -36689,7 +36689,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns A cleaned version of the raw METAR object, or undefined if the raw METAR is empty.
      */
     static cleanMetar(raw) {
-      var _a7;
+      var _a8;
       if (raw.icao === "") {
         return void 0;
       }
@@ -36698,7 +36698,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       raw.minWindDir < 0 && delete raw.minWindDir;
       raw.windDir < 0 && delete raw.windDir;
       raw.gust < 0 && delete raw.gust;
-      (_a7 = raw.cavok) !== null && _a7 !== void 0 ? _a7 : raw.cavok = false;
+      (_a8 = raw.cavok) !== null && _a8 !== void 0 ? _a8 : raw.cavok = false;
       raw.vis === null && delete raw.vis;
       raw.vertVis === null && delete raw.vertVis;
       raw.temp === -2147483648 && delete raw.temp;
@@ -36731,7 +36731,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns A cleaned version of the raw TAF object, or undefined if the raw TAF is empty.
      */
     static cleanTaf(raw) {
-      var _a7;
+      var _a8;
       if (raw.icao === "") {
         return void 0;
       }
@@ -36747,7 +36747,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       raw.minWindDir < 0 && delete raw.minWindDir;
       raw.windDir < 0 && delete raw.windDir;
       raw.gust < 0 && delete raw.gust;
-      (_a7 = raw.cavok) !== null && _a7 !== void 0 ? _a7 : raw.cavok = false;
+      (_a8 = raw.cavok) !== null && _a8 !== void 0 ? _a8 : raw.cavok = false;
       raw.vis === null && delete raw.vis;
       raw.vertVis === null && delete raw.vertVis;
       raw.altimeterA < 0 && delete raw.altimeterA;
@@ -37275,11 +37275,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Initializes this cache's shared global object.
      */
     async initGlobal() {
-      var _a7, _b5, _c;
+      var _a8, _b6, _c;
       var _d, _e, _f;
       const globalRef = await SharedGlobal.get(this.sharedGlobalName);
-      (_a7 = (_d = globalRef.instance).facCache) !== null && _a7 !== void 0 ? _a7 : _d.facCache = /* @__PURE__ */ new Map();
-      (_b5 = (_e = globalRef.instance).intersectionFacCache) !== null && _b5 !== void 0 ? _b5 : _e.intersectionFacCache = /* @__PURE__ */ new Map();
+      (_a8 = (_d = globalRef.instance).facCache) !== null && _a8 !== void 0 ? _a8 : _d.facCache = /* @__PURE__ */ new Map();
+      (_b6 = (_e = globalRef.instance).intersectionFacCache) !== null && _b6 !== void 0 ? _b6 : _e.intersectionFacCache = /* @__PURE__ */ new Map();
       (_c = (_f = globalRef.instance).airwayCache) !== null && _c !== void 0 ? _c : _f.airwayCache = /* @__PURE__ */ new Map();
       this.global = globalRef.instance;
       const detachedSub = globalRef.isDetached.sub((isDetached) => {
@@ -37292,18 +37292,18 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     getFacility(uid) {
-      var _a7;
-      return (_a7 = this.global) === null || _a7 === void 0 ? void 0 : _a7.facCache.get(uid);
+      var _a8;
+      return (_a8 = this.global) === null || _a8 === void 0 ? void 0 : _a8.facCache.get(uid);
     }
     /** @inheritDoc */
     getIntersectionFacility(uid) {
-      var _a7;
-      return (_a7 = this.global) === null || _a7 === void 0 ? void 0 : _a7.intersectionFacCache.get(uid);
+      var _a8;
+      return (_a8 = this.global) === null || _a8 === void 0 ? void 0 : _a8.intersectionFacCache.get(uid);
     }
     /** @inheritDoc */
     getAirway(name) {
-      var _a7;
-      return (_a7 = this.global) === null || _a7 === void 0 ? void 0 : _a7.airwayCache.get(name);
+      var _a8;
+      return (_a8 = this.global) === null || _a8 === void 0 ? void 0 : _a8.airwayCache.get(name);
     }
     /** @inheritDoc */
     addFacility(facility) {
@@ -37373,7 +37373,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The number of facilities stored in this repository.
      */
     size(types) {
-      var _a7, _b5;
+      var _a8, _b6;
       let size = 0;
       if (types === void 0) {
         for (const repo of this.repos.values()) {
@@ -37381,7 +37381,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         }
       } else {
         for (let i = 0; i < types.length; i++) {
-          size += (_b5 = (_a7 = this.repos.get(types[i])) === null || _a7 === void 0 ? void 0 : _a7.size) !== null && _b5 !== void 0 ? _b5 : 0;
+          size += (_b6 = (_a8 = this.repos.get(types[i])) === null || _a8 === void 0 ? void 0 : _a8.size) !== null && _b6 !== void 0 ? _b6 : 0;
         }
       }
       return size;
@@ -37392,11 +37392,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The requested user facility, or undefined if it was not found in this repository.
      */
     get(icao) {
-      var _a7;
+      var _a8;
       if (!ICAO.isValueFacility(icao)) {
         return void 0;
       }
-      return (_a7 = this.repos.get(ICAO.getFacilityTypeFromValue(icao))) === null || _a7 === void 0 ? void 0 : _a7.get(ICAO.getUid(icao));
+      return (_a8 = this.repos.get(ICAO.getFacilityTypeFromValue(icao))) === null || _a8 === void 0 ? void 0 : _a8.get(ICAO.getUid(icao));
     }
     // eslint-disable-next-line jsdoc/require-jsdoc
     search(type, lat, lon, radius, arg5, out, filter) {
@@ -37460,14 +37460,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param types The types of facilities over which to iterate. Defaults to all facility types.
      */
     forEach(fn, types) {
-      var _a7;
+      var _a8;
       if (types === void 0) {
         for (const repo of this.repos.values()) {
           repo.forEach(fn);
         }
       } else {
         for (let i = 0; i < types.length; i++) {
-          (_a7 = this.repos.get(types[i])) === null || _a7 === void 0 ? void 0 : _a7.forEach(fn);
+          (_a8 = this.repos.get(types[i])) === null || _a8 === void 0 ? void 0 : _a8.forEach(fn);
         }
       }
     }
@@ -37658,8 +37658,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns an instance of FacilityRepository.
      */
     static getRepository(bus) {
-      var _a7;
-      return (_a7 = _FacilityRepository.INSTANCE) !== null && _a7 !== void 0 ? _a7 : _FacilityRepository.INSTANCE = new _FacilityRepository(bus);
+      var _a8;
+      return (_a8 = _FacilityRepository.INSTANCE) !== null && _a8 !== void 0 ? _a8 : _FacilityRepository.INSTANCE = new _FacilityRepository(bus);
     }
   };
   FacilityRepository.SYNC_TOPIC = "facilityrepo_sync";
@@ -38916,12 +38916,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   var TerrainProfileLoader = class _TerrainProfileLoader {
     /** @inheritdoc */
     constructor(options) {
-      var _a7;
+      var _a8;
       this.options = {
         terrainMinimumResolution: 250
       };
       this.options = {
-        terrainMinimumResolution: (_a7 = options === null || options === void 0 ? void 0 : options.terrainMinimumResolution) !== null && _a7 !== void 0 ? _a7 : this.options.terrainMinimumResolution
+        terrainMinimumResolution: (_a8 = options === null || options === void 0 ? void 0 : options.terrainMinimumResolution) !== null && _a8 !== void 0 ? _a8 : this.options.terrainMinimumResolution
       };
     }
     /**
@@ -38960,7 +38960,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns A leg terrain profile. If no valid terrain profile can be found then the profile is undefined.
      */
     async getTerrainProfileForLeg(leg, terrainDefinition = this.options.terrainMinimumResolution) {
-      var _a7, _b5;
+      var _a8, _b6;
       if (leg.calculated !== void 0 && _TerrainProfileLoader.isLegAllowed(leg.leg)) {
         const flightPath = leg.calculated.ingress.concat(leg.calculated.ingressToEgress, leg.calculated.egress);
         const profilePath = this.getPointsForLegFlightPath(flightPath, terrainDefinition);
@@ -38972,7 +38972,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           points: [],
           numElevationPoints: 0,
           profile: void 0,
-          legDistance: (_b5 = (_a7 = leg.calculated) === null || _a7 === void 0 ? void 0 : _a7.distanceWithTransitions) !== null && _b5 !== void 0 ? _b5 : 0
+          legDistance: (_b6 = (_a8 = leg.calculated) === null || _a8 === void 0 ? void 0 : _a8.distanceWithTransitions) !== null && _b6 !== void 0 ? _b6 : 0
         };
       }
     }
@@ -39280,11 +39280,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     onMapProjectionChanged(mapProjection, changeFlags) {
-      var _a7;
+      var _a8;
       if (BitFlags.isAll(changeFlags, MapProjectionChangeType.ProjectedSize)) {
         this.updateFromProjectedSize(mapProjection.getProjectedSize());
         this.display.invalidate();
-        (_a7 = this.tryGetBuffer()) === null || _a7 === void 0 ? void 0 : _a7.invalidate();
+        (_a8 = this.tryGetBuffer()) === null || _a8 === void 0 ? void 0 : _a8.invalidate();
       }
       this.needUpdateTransforms = true;
     }
@@ -39300,10 +39300,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Updates this layer's canvas instances' transforms.
      */
     updateTransforms() {
-      var _a7;
+      var _a8;
       const mapProjection = this.props.mapProjection;
       this.display.updateTransform(mapProjection);
-      (_a7 = this.tryGetBuffer()) === null || _a7 === void 0 ? void 0 : _a7.updateTransform(mapProjection);
+      (_a8 = this.tryGetBuffer()) === null || _a8 === void 0 ? void 0 : _a8.updateTransform(mapProjection);
       this.needUpdateTransforms = false;
     }
   };
@@ -39313,13 +39313,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param props The properties of the component.
      */
     constructor(props) {
-      var _a7, _b5, _c;
+      var _a8, _b6, _c;
       super(props);
       this.canvasLayerRef = FSComponent.createRef();
       this.clipBoundsSub = VecNSubject.createFromVector(new Float64Array(4));
-      this.facLoader = (_a7 = this.props.facilityLoader) !== null && _a7 !== void 0 ? _a7 : new FacilityLoader(FacilityRepository.getRepository(this.props.bus));
+      this.facLoader = (_a8 = this.props.facilityLoader) !== null && _a8 !== void 0 ? _a8 : new FacilityLoader(FacilityRepository.getRepository(this.props.bus));
       this.searchedAirspaces = /* @__PURE__ */ new Map();
-      this.searchDebounceDelay = (_b5 = this.props.searchDebounceDelay) !== null && _b5 !== void 0 ? _b5 : _MapAirspaceLayer.DEFAULT_SEARCH_DEBOUNCE_DELAY;
+      this.searchDebounceDelay = (_b6 = this.props.searchDebounceDelay) !== null && _b6 !== void 0 ? _b6 : _MapAirspaceLayer.DEFAULT_SEARCH_DEBOUNCE_DELAY;
       this.renderTimeBudget = (_c = this.props.renderTimeBudget) !== null && _c !== void 0 ? _c : _MapAirspaceLayer.DEFAULT_RENDER_TIME_BUDGET;
       this.activeRenderProcess = null;
       this.renderTaskQueueHandler = {
@@ -39757,10 +39757,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * options object.
      */
     static resolveOptions(options) {
-      var _a7;
+      var _a8;
       const resolved = {};
       for (const key in _NumberFormatter.DEFAULT_OPTIONS) {
-        resolved[key] = (_a7 = options === null || options === void 0 ? void 0 : options[key]) !== null && _a7 !== void 0 ? _a7 : _NumberFormatter.DEFAULT_OPTIONS[key];
+        resolved[key] = (_a8 = options === null || options === void 0 ? void 0 : options[key]) !== null && _a8 !== void 0 ? _a8 : _NumberFormatter.DEFAULT_OPTIONS[key];
       }
       let hysteresisLower;
       let hysteresisUpper;
@@ -39991,11 +39991,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   MapSystemKeys.WaypointDisplayController = "WaypointDisplayController";
   var MapAltitudeArcLayer = class _MapAltitudeArcLayer extends MapLayer {
     constructor() {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h;
       super(...arguments);
       this.layerRef = FSComponent.createRef();
-      this.arcAngularWidth = ((_a7 = this.props.arcAngularWidth) !== null && _a7 !== void 0 ? _a7 : _MapAltitudeArcLayer.DEFAULT_ARC_ANGULAR_WIDTH) * Avionics.Utils.DEG2RAD;
-      this.arcRadius = (_b5 = this.props.arcRadius) !== null && _b5 !== void 0 ? _b5 : _MapAltitudeArcLayer.DEFAULT_ARC_RADIUS;
+      this.arcAngularWidth = ((_a8 = this.props.arcAngularWidth) !== null && _a8 !== void 0 ? _a8 : _MapAltitudeArcLayer.DEFAULT_ARC_ANGULAR_WIDTH) * Avionics.Utils.DEG2RAD;
+      this.arcRadius = (_b6 = this.props.arcRadius) !== null && _b6 !== void 0 ? _b6 : _MapAltitudeArcLayer.DEFAULT_ARC_RADIUS;
       this.strokeWidth = (_c = this.props.strokeWidth) !== null && _c !== void 0 ? _c : _MapAltitudeArcLayer.DEFAULT_STROKE_WIDTH;
       this.strokeStyle = (_d = this.props.strokeStyle) !== null && _d !== void 0 ? _d : _MapAltitudeArcLayer.DEFAULT_STROKE_STYLE;
       this.strokeLineCap = (_e = this.props.strokeLineCap) !== null && _e !== void 0 ? _e : _MapAltitudeArcLayer.DEFAULT_STROKE_LINECAP;
@@ -40032,15 +40032,15 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     onVisibilityChanged(isVisible) {
-      var _a7;
-      (_a7 = this.layerRef.getOrDefault()) === null || _a7 === void 0 ? void 0 : _a7.setVisible(isVisible);
+      var _a8;
+      (_a8 = this.layerRef.getOrDefault()) === null || _a8 === void 0 ? void 0 : _a8.setVisible(isVisible);
       if (isVisible) {
         this.needUpdate = true;
       }
     }
     /** @inheritdoc */
     onAttached() {
-      var _a7, _b5;
+      var _a8, _b6;
       this.layerRef.instance.onAttached();
       this.subscriptions.push(this.ownAirplanePropsModule.position.sub(this.projectPlanePositionHandler));
       const scheduleUpdate = () => {
@@ -40051,7 +40051,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.isArcVisibleStatic = MappedSubject.create((_arrArg_3) => {
         let show = _arrArg_3[0], isGpsValid = _arrArg_3[1], isAdcValid = _arrArg_3[2];
         return show && isGpsValid && isAdcValid;
-      }, altitudeArcModule.show, (_a7 = dataIntegrityModule === null || dataIntegrityModule === void 0 ? void 0 : dataIntegrityModule.gpsSignalValid) !== null && _a7 !== void 0 ? _a7 : Subject.create(true), (_b5 = dataIntegrityModule === null || dataIntegrityModule === void 0 ? void 0 : dataIntegrityModule.adcSignalValid) !== null && _b5 !== void 0 ? _b5 : Subject.create(true));
+      }, altitudeArcModule.show, (_a8 = dataIntegrityModule === null || dataIntegrityModule === void 0 ? void 0 : dataIntegrityModule.gpsSignalValid) !== null && _a8 !== void 0 ? _a8 : Subject.create(true), (_b6 = dataIntegrityModule === null || dataIntegrityModule === void 0 ? void 0 : dataIntegrityModule.adcSignalValid) !== null && _b6 !== void 0 ? _b6 : Subject.create(true));
       const isArcVisibleDynamicSub = this.isArcVisibleDynamic.sub((isVisible) => {
         this.setVisible(isVisible);
       }, false, true);
@@ -40119,9 +40119,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     destroy() {
-      var _a7, _b5, _c, _d, _e;
-      (_a7 = this.layerRef.getOrDefault()) === null || _a7 === void 0 ? void 0 : _a7.destroy();
-      (_b5 = this.vsPrecisionMap) === null || _b5 === void 0 ? void 0 : _b5.destroy();
+      var _a8, _b6, _c, _d, _e;
+      (_a8 = this.layerRef.getOrDefault()) === null || _a8 === void 0 ? void 0 : _a8.destroy();
+      (_b6 = this.vsPrecisionMap) === null || _b6 === void 0 ? void 0 : _b6.destroy();
       (_c = this.vsThresholdMap) === null || _c === void 0 ? void 0 : _c.destroy();
       (_d = this.altDevThresholdMap) === null || _d === void 0 ? void 0 : _d.destroy();
       this.vsFpm.destroy();
@@ -40151,11 +40151,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     onVisibilityChanged(isVisible) {
-      var _a7, _b5;
+      var _a8, _b6;
       if (isVisible) {
         this.needUpdate = true;
       } else {
-        (_b5 = (_a7 = this.canvasLayerRef.getOrDefault()) === null || _a7 === void 0 ? void 0 : _a7.tryGetDisplay()) === null || _b5 === void 0 ? void 0 : _b5.clear();
+        (_b6 = (_a8 = this.canvasLayerRef.getOrDefault()) === null || _a8 === void 0 ? void 0 : _a8.tryGetDisplay()) === null || _b6 === void 0 ? void 0 : _b6.clear();
       }
     }
     /** @inheritdoc */
@@ -40212,8 +40212,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     destroy() {
-      var _a7;
-      (_a7 = this.canvasLayerRef.getOrDefault()) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      var _a8;
+      (_a8 = this.canvasLayerRef.getOrDefault()) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       this.subscriptions.forEach((sub2) => sub2.destroy());
       super.destroy();
     }
@@ -40439,17 +40439,17 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     render() {
-      var _a7;
+      var _a8;
       return FSComponent.buildComponent(
         "div",
-        { style: this.wrapperStyle, class: (_a7 = this.props.class) !== null && _a7 !== void 0 ? _a7 : "" },
+        { style: this.wrapperStyle, class: (_a8 = this.props.class) !== null && _a8 !== void 0 ? _a8 : "" },
         FSComponent.buildComponent(BingComponent, { ref: this.bingRef, id: this.props.bingId, onBoundCallback: this.onBingBound.bind(this), resolution: this.resolution, mode: EBingMode.PLANE, earthColors: this.props.earthColors, earthColorsElevationRange: this.props.earthColorsElevationRange, reference: this.props.reference, wxrMode: this.props.wxrMode, wxrColors: this.props.wxrColors, isoLines: this.props.isoLines, delay: this.props.bingDelay, skipUnbindOnDestroy: this.props.bingSkipUnbindOnDestroy })
       );
     }
     /** @inheritDoc */
     destroy() {
-      var _a7;
-      (_a7 = this.bingRef.getOrDefault()) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      var _a8;
+      (_a8 = this.bingRef.getOrDefault()) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       super.destroy();
     }
   };
@@ -40474,10 +40474,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   };
   var MapLineLayer = class _MapLineLayer extends MapSyncedCanvasLayer {
     constructor() {
-      var _a7, _b5, _c, _d, _e, _f;
+      var _a8, _b6, _c, _d, _e, _f;
       super(...arguments);
-      this.strokeWidth = (_a7 = this.props.strokeWidth) !== null && _a7 !== void 0 ? _a7 : _MapLineLayer.DEFAULT_STROKE_WIDTH;
-      this.strokeStyle = (_b5 = this.props.strokeStyle) !== null && _b5 !== void 0 ? _b5 : _MapLineLayer.DEFAULT_STROKE_STYLE;
+      this.strokeWidth = (_a8 = this.props.strokeWidth) !== null && _a8 !== void 0 ? _a8 : _MapLineLayer.DEFAULT_STROKE_WIDTH;
+      this.strokeStyle = (_b6 = this.props.strokeStyle) !== null && _b6 !== void 0 ? _b6 : _MapLineLayer.DEFAULT_STROKE_STYLE;
       this.strokeDash = (_c = this.props.strokeDash) !== null && _c !== void 0 ? _c : _MapLineLayer.DEFAULT_STROKE_DASH;
       this.outlineWidth = (_d = this.props.outlineWidth) !== null && _d !== void 0 ? _d : _MapLineLayer.DEFAULT_OUTLINE_WIDTH;
       this.outlineStyle = (_e = this.props.outlineStyle) !== null && _e !== void 0 ? _e : _MapLineLayer.DEFAULT_OUTLINE_STYLE;
@@ -40567,11 +40567,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param props The properties of the component.
      */
     constructor(props) {
-      var _a7, _b5, _c;
+      var _a8, _b6, _c;
       super(props);
       this.canvasLayerRef = FSComponent.createRef();
-      this.searchDebounceDelay = (_a7 = this.props.searchDebounceDelay) !== null && _a7 !== void 0 ? _a7 : 500;
-      this.facLoader = (_b5 = this.props.facilityLoader) !== null && _b5 !== void 0 ? _b5 : new FacilityLoader(FacilityRepository.getRepository(this.props.bus));
+      this.searchDebounceDelay = (_a8 = this.props.searchDebounceDelay) !== null && _a8 !== void 0 ? _a8 : 500;
+      this.facLoader = (_b6 = this.props.facilityLoader) !== null && _b6 !== void 0 ? _b6 : new FacilityLoader(FacilityRepository.getRepository(this.props.bus));
       this.facilityForIcaoFunc = (_c = this.props.facilityForIcao) !== null && _c !== void 0 ? _c : this.defaultFacilityForIcao.bind(this);
       this.searchRadius = 0;
       this.searchMargin = 0;
@@ -40702,9 +40702,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     onUpdated(time, elapsed) {
-      var _a7;
+      var _a8;
       if (this.userFacilityHasChanged) {
-        const search = (_a7 = this.facilitySearches) === null || _a7 === void 0 ? void 0 : _a7[FacilitySearchType.User];
+        const search = (_a8 = this.facilitySearches) === null || _a8 === void 0 ? void 0 : _a8[FacilitySearchType.User];
         if (search !== void 0) {
           this.userFacilityHasChanged = false;
           this.scheduleSearchRefresh(FacilitySearchType.User, search, this.getSearchCenter(), this.searchRadius);
@@ -40853,7 +40853,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           }
           this.registerWaypointWithRenderer(this.props.waypointRenderer, facility);
         }
-      } catch (_a7) {
+      } catch (_a8) {
       }
     }
     /**
@@ -40876,7 +40876,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       let facility = null;
       try {
         facility = await this.facilityForIcaoFunc(this.facLoader, icao);
-      } catch (_a7) {
+      } catch (_a8) {
       }
       if (this.icaosToRender.has(uid)) {
         return;
@@ -40908,13 +40908,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     render() {
-      var _a7;
-      return FSComponent.buildComponent(MapSyncedCanvasLayer, { ref: this.canvasLayerRef, model: this.props.model, mapProjection: this.props.mapProjection, class: (_a7 = this.props.class) !== null && _a7 !== void 0 ? _a7 : "" });
+      var _a8;
+      return FSComponent.buildComponent(MapSyncedCanvasLayer, { ref: this.canvasLayerRef, model: this.props.model, mapProjection: this.props.mapProjection, class: (_a8 = this.props.class) !== null && _a8 !== void 0 ? _a8 : "" });
     }
     /** @inheritdoc */
     destroy() {
-      var _a7;
-      (_a7 = this.canvasLayerRef.getOrDefault()) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      var _a8;
+      (_a8 = this.canvasLayerRef.getOrDefault()) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       this.facilityRepoSubs.forEach((sub2) => {
         sub2.destroy();
       });
@@ -41169,18 +41169,18 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     render() {
-      var _a7;
-      return FSComponent.buildComponent("img", { src: this.imageFilePath, class: (_a7 = this.props.class) !== null && _a7 !== void 0 ? _a7 : "", style: this.style });
+      var _a8;
+      return FSComponent.buildComponent("img", { src: this.imageFilePath, class: (_a8 = this.props.class) !== null && _a8 !== void 0 ? _a8 : "", style: this.style });
     }
     /** @inheritdoc */
     destroy() {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h;
       if (SubscribableUtils.isSubscribable(this.imageFilePath)) {
         this.imageFilePath.destroy();
       }
       this.isGsAboveTrackThreshold.destroy();
-      (_a7 = this.showSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
-      (_b5 = this.positionSub) === null || _b5 === void 0 ? void 0 : _b5.destroy();
+      (_a8 = this.showSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
+      (_b6 = this.positionSub) === null || _b6 === void 0 ? void 0 : _b6.destroy();
       (_c = this.headingSub) === null || _c === void 0 ? void 0 : _c.destroy();
       (_d = this.trackSub) === null || _d === void 0 ? void 0 : _d.destroy();
       (_e = this.trackThresholdSub) === null || _e === void 0 ? void 0 : _e.destroy();
@@ -41652,8 +41652,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     /** @inheritdoc */
     onAfterMapRender(ref) {
       this.freqSub = this.context.updateFreq.sub((freq) => {
-        var _a7;
-        (_a7 = this.clockSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+        var _a8;
+        (_a8 = this.clockSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
         this.clockSub = this.context.bus.getSubscriber().on("realTime").atFrequency(freq).handle((realTime) => {
           ref.update(realTime);
         });
@@ -41665,10 +41665,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     destroy() {
-      var _a7, _b5;
+      var _a8, _b6;
       super.destroy();
-      (_a7 = this.clockSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
-      (_b5 = this.freqSub) === null || _b5 === void 0 ? void 0 : _b5.destroy();
+      (_a8 = this.clockSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
+      (_b6 = this.freqSub) === null || _b6 === void 0 ? void 0 : _b6.destroy();
     }
   };
   var MapFlightPlanController = class extends MapSystemController {
@@ -41719,10 +41719,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     destroy() {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
       super.destroy();
-      (_a7 = this.fplCopiedSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
-      (_b5 = this.fplCreatedSub) === null || _b5 === void 0 ? void 0 : _b5.destroy();
+      (_a8 = this.fplCopiedSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
+      (_b6 = this.fplCreatedSub) === null || _b6 === void 0 ? void 0 : _b6.destroy();
       (_c = this.fplDeletedSub) === null || _c === void 0 ? void 0 : _c.destroy();
       (_d = this.fplDirectToDataChangedSub) === null || _d === void 0 ? void 0 : _d.destroy();
       (_e = this.fplLoadedSub) === null || _e === void 0 ? void 0 : _e.destroy();
@@ -41832,7 +41832,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param eventSubscriber An event bus subscriber.
      */
     constructor(module2, def, eventSubscriber) {
-      var _a7;
+      var _a8;
       this.module = module2;
       this.needUpdate = false;
       this.updatePeriod = null;
@@ -41851,7 +41851,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         ).pause();
       }
       this.sourceSub = this.source.sub(this.onValueChanged.bind(this), false, true);
-      const updateFreq = (_a7 = def.updateFreq) !== null && _a7 !== void 0 ? _a7 : null;
+      const updateFreq = (_a8 = def.updateFreq) !== null && _a8 !== void 0 ? _a8 : null;
       if (SubscribableUtils.isSubscribable(updateFreq)) {
         this.updateFreqSub = updateFreq.sub(this.onUpdateFreqChanged.bind(this), false, true);
       } else {
@@ -41860,13 +41860,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     init() {
-      var _a7, _b5;
-      (_a7 = this.consumerSource) === null || _a7 === void 0 ? void 0 : _a7.resume();
+      var _a8, _b6;
+      (_a8 = this.consumerSource) === null || _a8 === void 0 ? void 0 : _a8.resume();
       const value = this.source.get();
       if (value !== _ValueBinding.UNINITIALIZED_VALUE) {
         this.setPropFromExternal(value);
       }
-      (_b5 = this.updateFreqSub) === null || _b5 === void 0 ? void 0 : _b5.resume(true);
+      (_b6 = this.updateFreqSub) === null || _b6 === void 0 ? void 0 : _b6.resume(true);
       this.sourceSub.resume();
     }
     /** @inheritDoc */
@@ -41922,10 +41922,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     destroy() {
-      var _a7, _b5;
-      (_a7 = this.consumerSource) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      var _a8, _b6;
+      (_a8 = this.consumerSource) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       this.sourceSub.destroy();
-      (_b5 = this.updateFreqSub) === null || _b5 === void 0 ? void 0 : _b5.destroy();
+      (_b6 = this.updateFreqSub) === null || _b6 === void 0 ? void 0 : _b6.destroy();
     }
     /**
      * Sets the value of a `MutableAccessible` property.
@@ -41944,7 +41944,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param def The definition of the binding to create.
      */
     constructor(module2, def) {
-      var _a7;
+      var _a8;
       this.module = module2;
       this.needUpdate = false;
       this.lastSender = void 0;
@@ -41955,7 +41955,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.handler = "handler" in def ? def.handler : _SubEventBinding.defaultBindingHandler;
       this.source = def.subEvent;
       this.sourceSub = this.source.on(this.onEvent.bind(this), true);
-      const updateFreq = (_a7 = def.updateFreq) !== null && _a7 !== void 0 ? _a7 : null;
+      const updateFreq = (_a8 = def.updateFreq) !== null && _a8 !== void 0 ? _a8 : null;
       if (SubscribableUtils.isSubscribable(updateFreq)) {
         this.updateFreqSub = updateFreq.sub(this.onUpdateFreqChanged.bind(this), false, true);
       } else {
@@ -41964,8 +41964,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     init() {
-      var _a7;
-      (_a7 = this.updateFreqSub) === null || _a7 === void 0 ? void 0 : _a7.resume(true);
+      var _a8;
+      (_a8 = this.updateFreqSub) === null || _a8 === void 0 ? void 0 : _a8.resume(true);
       this.sourceSub.resume();
     }
     /** @inheritDoc */
@@ -42032,9 +42032,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     destroy() {
-      var _a7;
+      var _a8;
       this.sourceSub.destroy();
-      (_a7 = this.updateFreqSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      (_a8 = this.updateFreqSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
     }
     /**
      * Triggers an event on a `SubEventInterface` property.
@@ -42075,8 +42075,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     onAfterMapRender() {
-      var _a7;
-      (_a7 = this.orientationState) === null || _a7 === void 0 ? void 0 : _a7.sub(() => {
+      var _a8;
+      (_a8 = this.orientationState) === null || _a8 === void 0 ? void 0 : _a8.sub(() => {
         this.needUpdateIconOrientation = true;
       }, true);
     }
@@ -42243,9 +42243,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     destroy() {
-      var _a7;
+      var _a8;
       super.destroy();
-      (_a7 = this.rotationSub) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      (_a8 = this.rotationSub) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       this.rotationControl.forfeit(this.rotationControlConsumer);
     }
   };
@@ -42256,18 +42256,18 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   })(MapSystemWaypointRoles || (MapSystemWaypointRoles = {}));
   var MapSystemFlightPlanLayer = class _MapSystemFlightPlanLayer extends MapLayer {
     constructor() {
-      var _a7, _b5, _c, _d, _e;
+      var _a8, _b6, _c, _d, _e;
       super(...arguments);
       this.instanceId = _MapSystemFlightPlanLayer.instanceId++;
       this.flightPathLayerRef = FSComponent.createRef();
       this.waypointLayerRef = FSComponent.createRef();
-      this.defaultRoleId = (_a7 = this.props.waypointRenderer.getRoleFromName(MapSystemWaypointRoles.FlightPlan)) !== null && _a7 !== void 0 ? _a7 : 0;
+      this.defaultRoleId = (_a8 = this.props.waypointRenderer.getRoleFromName(MapSystemWaypointRoles.FlightPlan)) !== null && _a8 !== void 0 ? _a8 : 0;
       this.planModule = this.props.model.getModule(MapSystemKeys.FlightPlan);
       this.waypointPrefix = "".concat(_MapSystemFlightPlanLayer.WAYPOINT_PREFIX, "_").concat(this.instanceId);
       this.legWaypoints = /* @__PURE__ */ new Map();
       this.waypointsUpdating = false;
       this.waypointId = 0;
-      this.facLoader = (_b5 = this.props.facilityLoader) !== null && _b5 !== void 0 ? _b5 : new FacilityLoader(FacilityRepository.getRepository(this.props.bus));
+      this.facLoader = (_b6 = this.props.facilityLoader) !== null && _b6 !== void 0 ? _b6 : new FacilityLoader(FacilityRepository.getRepository(this.props.bus));
       this.facWaypointCache = DefaultFacilityWaypointCache.getCache(this.props.bus);
       this.airportFacilityDataFlags = (_c = this.props.airportFacilityDataFlags) !== null && _c !== void 0 ? _c : AirportFacilityDataFlags.All;
       this.geoClipAntiMeridianBuffer = Math.max((_d = this.props.geoClipAntiMeridianGap) !== null && _d !== void 0 ? _d : _MapSystemFlightPlanLayer.DEFAULT_GEO_CLIP_ANTI_MERIDIAN_GAP, 1e-6);
@@ -42447,11 +42447,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param roleId The role ID to assign to the waypoint.
      */
     async buildTerminatorWaypoint(leg, roleId) {
-      var _a7, _b5, _c, _d, _e, _f;
+      var _a8, _b6, _c, _d, _e, _f;
       const currentLeg = this.legWaypoints.get(leg);
       if (currentLeg !== void 0) {
         const waypoint = currentLeg[0], currentRoleId = currentLeg[1];
-        const lastVector = (_a7 = leg.calculated) === null || _a7 === void 0 ? void 0 : _a7.flightPath[((_b5 = leg.calculated) === null || _b5 === void 0 ? void 0 : _b5.flightPath.length) - 1];
+        const lastVector = (_a8 = leg.calculated) === null || _a8 === void 0 ? void 0 : _a8.flightPath[((_b6 = leg.calculated) === null || _b6 === void 0 ? void 0 : _b6.flightPath.length) - 1];
         if (lastVector !== void 0) {
           if (!waypoint.location.get().equals(lastVector.endLat, lastVector.endLon)) {
             this.props.waypointRenderer.deregister(waypoint, currentRoleId, MapSystemWaypointRoles.FlightPlan);
@@ -42483,18 +42483,18 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param roleId The role ID to assign to the waypoint.
      */
     async buildFixWaypoint(leg, roleId) {
-      var _a7;
+      var _a8;
       const legWaypoint = this.legWaypoints.get(leg);
       if (legWaypoint === void 0) {
         const facIcao = leg.leg.fixIcaoStruct;
         let facility = null;
         try {
           facility = await this.facLoader.tryGetFacility(ICAO.getFacilityTypeFromValue(facIcao), facIcao, this.airportFacilityDataFlags);
-        } catch (err) {
+        } catch (err2) {
         }
         if (facility) {
           const waypoint = this.facWaypointCache.get(facility);
-          const ident = (_a7 = leg.name) !== null && _a7 !== void 0 ? _a7 : "";
+          const ident = (_a8 = leg.name) !== null && _a8 !== void 0 ? _a8 : "";
           const newWaypoint = new FlightPathWaypoint(waypoint.location, leg, "".concat(this.waypointPrefix, "_").concat(this.waypointId++, "_").concat(ident), ident);
           this.props.waypointRenderer.register(newWaypoint, roleId, MapSystemWaypointRoles.FlightPlan);
           this.legWaypoints.set(leg, [newWaypoint, roleId]);
@@ -42510,12 +42510,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     render() {
-      var _a7, _b5;
+      var _a8, _b6;
       return FSComponent.buildComponent(
         FSComponent.Fragment,
         null,
-        FSComponent.buildComponent(MapCachedCanvasLayer, { ref: this.flightPathLayerRef, model: this.props.model, mapProjection: this.props.mapProjection, overdrawFactor: Math.SQRT2, class: (_a7 = this.props.class) !== null && _a7 !== void 0 ? _a7 : "" }),
-        FSComponent.buildComponent(MapSyncedCanvasLayer, { ref: this.waypointLayerRef, model: this.props.model, mapProjection: this.props.mapProjection, class: (_b5 = this.props.class) !== null && _b5 !== void 0 ? _b5 : "" })
+        FSComponent.buildComponent(MapCachedCanvasLayer, { ref: this.flightPathLayerRef, model: this.props.model, mapProjection: this.props.mapProjection, overdrawFactor: Math.SQRT2, class: (_a8 = this.props.class) !== null && _a8 !== void 0 ? _a8 : "" }),
+        FSComponent.buildComponent(MapSyncedCanvasLayer, { ref: this.waypointLayerRef, model: this.props.model, mapProjection: this.props.mapProjection, class: (_b6 = this.props.class) !== null && _b6 !== void 0 ? _b6 : "" })
       );
     }
   };
@@ -42526,10 +42526,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   MapSystemFlightPlanLayer.instanceId = 0;
   var MapSystemSharedFlightPlanLayer = class _MapSystemSharedFlightPlanLayer extends MapLayer {
     constructor() {
-      var _a7, _b5, _c;
+      var _a8, _b6, _c;
       super(...arguments);
-      this.airportFacilityDataFlags = (_a7 = this.props.airportFacilityDataFlags) !== null && _a7 !== void 0 ? _a7 : AirportFacilityDataFlags.All;
-      this.geoClipAntiMeridianGap = Math.max((_b5 = this.props.geoClipAntiMeridianGap) !== null && _b5 !== void 0 ? _b5 : _MapSystemSharedFlightPlanLayer.DEFAULT_GEO_CLIP_ANTI_MERIDIAN_GAP, 1e-6);
+      this.airportFacilityDataFlags = (_a8 = this.props.airportFacilityDataFlags) !== null && _a8 !== void 0 ? _a8 : AirportFacilityDataFlags.All;
+      this.geoClipAntiMeridianGap = Math.max((_b6 = this.props.geoClipAntiMeridianGap) !== null && _b6 !== void 0 ? _b6 : _MapSystemSharedFlightPlanLayer.DEFAULT_GEO_CLIP_ANTI_MERIDIAN_GAP, 1e-6);
       this.geoClipLatitude = Math.max((_c = this.props.geoClipLatitude) !== null && _c !== void 0 ? _c : _MapSystemSharedFlightPlanLayer.DEFAULT_GEO_CLIP_LATITUDE, 0);
       this.canvasLayerRef = FSComponent.createRef();
       this.subLayerVisibilities = new Map(this.props.planConfigs.map((config) => [config.planIndex, Value.create(true)]));
@@ -42543,8 +42543,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * by this layer.
      */
     isFlightPlanVisible(planIndex) {
-      var _a7;
-      return !!((_a7 = this.subLayerVisibilities.get(planIndex)) === null || _a7 === void 0 ? void 0 : _a7.get());
+      var _a8;
+      return !!((_a8 = this.subLayerVisibilities.get(planIndex)) === null || _a8 === void 0 ? void 0 : _a8.get());
     }
     /**
      * Sets the visibility of a flight plan rendered by this layer. If this layer as a whole is not visible (as set by
@@ -42555,8 +42555,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param val Whether the flight plan should be visible.
      */
     setFlightPlanVisible(planIndex, val) {
-      var _a7;
-      (_a7 = this.subLayerVisibilities.get(planIndex)) === null || _a7 === void 0 ? void 0 : _a7.set(val);
+      var _a8;
+      (_a8 = this.subLayerVisibilities.get(planIndex)) === null || _a8 === void 0 ? void 0 : _a8.set(val);
     }
     /** @inheritDoc */
     onAttached() {
@@ -42583,8 +42583,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     destroy() {
-      var _a7;
-      (_a7 = this.canvasLayerRef.getOrDefault()) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      var _a8;
+      (_a8 = this.canvasLayerRef.getOrDefault()) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       super.destroy();
     }
   };
@@ -42592,10 +42592,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   MapSystemSharedFlightPlanLayer.DEFAULT_GEO_CLIP_LATITUDE = 89;
   var MapSystemSharedFlightPlanSubLayer = class _MapSystemSharedFlightPlanSubLayer extends MapSharedCachedCanvasSubLayer {
     constructor() {
-      var _a7;
+      var _a8;
       super(...arguments);
       this.planModule = this.props.model.getModule(MapSystemKeys.FlightPlan);
-      this.defaultWaypointRenderRole = (_a7 = this.props.waypointRenderer.getRoleFromName(MapSystemWaypointRoles.FlightPlan)) !== null && _a7 !== void 0 ? _a7 : 0;
+      this.defaultWaypointRenderRole = (_a8 = this.props.waypointRenderer.getRoleFromName(MapSystemWaypointRoles.FlightPlan)) !== null && _a8 !== void 0 ? _a8 : 0;
       this.legsToRenderWaypoints = /* @__PURE__ */ new Map();
       this.legWaypointRecords = /* @__PURE__ */ new Map();
       this.waypointsUpdating = false;
@@ -42774,9 +42774,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param renderRole The render role to use when registering the waypoint with the waypoint renderer.
      */
     async updateFloatingFixWaypoint(leg, renderRole) {
-      var _a7, _b5;
+      var _a8, _b6;
       const record = this.legWaypointRecords.get(leg);
-      const lastVector = (_a7 = leg.calculated) === null || _a7 === void 0 ? void 0 : _a7.flightPath[((_b5 = leg.calculated) === null || _b5 === void 0 ? void 0 : _b5.flightPath.length) - 1];
+      const lastVector = (_a8 = leg.calculated) === null || _a8 === void 0 ? void 0 : _a8.flightPath[((_b6 = leg.calculated) === null || _b6 === void 0 ? void 0 : _b6.flightPath.length) - 1];
       if (record !== void 0) {
         if (lastVector !== void 0) {
           record.location.set(lastVector.endLat, lastVector.endLon);
@@ -42814,7 +42814,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             this.legWaypointRecords.set(leg, { waypoint, renderRole });
             this.props.waypointRenderer.register(waypoint, renderRole, MapSystemWaypointRoles.FlightPlan);
           }
-        } catch (err) {
+        } catch (err2) {
         }
       } else {
         if (renderRole !== record.renderRole) {
@@ -42894,7 +42894,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   var Tcas = class _Tcas {
     // eslint-disable-next-line jsdoc/require-jsdoc
     constructor(bus, tfcInstrument, arg3, arg4, arg5, arg6) {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h;
       this.bus = bus;
       this.tfcInstrument = tfcInstrument;
       this.operatingModeSub = Subject.create(TcasOperatingMode.Standby);
@@ -42943,8 +42943,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.sensitivity = this.createSensitivity();
       this.ownAirplane = new OwnAirplane(this.ownAirplaneDataProvider, this.hasActiveSurveillance);
       const fullRAOptions = {
-        initialResponseTime: ((_a7 = raOptions === null || raOptions === void 0 ? void 0 : raOptions.initialResponseTime) !== null && _a7 !== void 0 ? _a7 : _Tcas.DEFAULT_RA_OPTIONS.initialResponseTime).copy(),
-        initialAcceleration: ((_b5 = raOptions === null || raOptions === void 0 ? void 0 : raOptions.initialAcceleration) !== null && _b5 !== void 0 ? _b5 : _Tcas.DEFAULT_RA_OPTIONS.initialAcceleration).copy(),
+        initialResponseTime: ((_a8 = raOptions === null || raOptions === void 0 ? void 0 : raOptions.initialResponseTime) !== null && _a8 !== void 0 ? _a8 : _Tcas.DEFAULT_RA_OPTIONS.initialResponseTime).copy(),
+        initialAcceleration: ((_b6 = raOptions === null || raOptions === void 0 ? void 0 : raOptions.initialAcceleration) !== null && _b6 !== void 0 ? _b6 : _Tcas.DEFAULT_RA_OPTIONS.initialAcceleration).copy(),
         subsequentResponseTime: ((_c = raOptions === null || raOptions === void 0 ? void 0 : raOptions.subsequentResponseTime) !== null && _c !== void 0 ? _c : _Tcas.DEFAULT_RA_OPTIONS.subsequentResponseTime).copy(),
         subsequentAcceleration: ((_d = raOptions === null || raOptions === void 0 ? void 0 : raOptions.subsequentAcceleration) !== null && _d !== void 0 ? _d : _Tcas.DEFAULT_RA_OPTIONS.subsequentAcceleration).copy(),
         allowClimb: (_e = raOptions === null || raOptions === void 0 ? void 0 : raOptions.allowClimb) !== null && _e !== void 0 ? _e : () => true,
@@ -43361,9 +43361,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param intruder The intruder that was removed.
      */
     cleanUpIntruder(intruder) {
-      var _a7;
+      var _a8;
       intruder.alertLevel.set(TcasAlertLevel.None);
-      (_a7 = this.alertLevelSubs.get(intruder)) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      (_a8 = this.alertLevelSubs.get(intruder)) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       this.eventPublisher.pub("tcas_intruder_removed", intruder, false, false);
     }
     /**
@@ -43462,14 +43462,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Updates this airplane's position, altitude, ground track, ground speed, vertical speed, and whether it is on the ground.
      */
     updateParameters() {
-      var _a7;
+      var _a8;
       this._position.set(this.dataProvider.position.get());
       this.groundTrack = this.dataProvider.groundTrack.get();
       this._groundSpeed.set(this.dataProvider.groundSpeed.get());
       this._altitude.set(this.dataProvider.geometricAltitude.get());
       this._verticalSpeed.set(this.dataProvider.verticalSpeed.get());
       this._radarAltitude.set(this.dataProvider.radarAltitude.get());
-      this.isOnGround = (_a7 = this.dataProvider.isOnGround.get()) !== null && _a7 !== void 0 ? _a7 : false;
+      this.isOnGround = (_a8 = this.dataProvider.isOnGround.get()) !== null && _a8 !== void 0 ? _a8 : false;
       this._actualPosition.set(this.latSimVar.get(), this.lonSimVar.get());
       const velocityX = this.velocityWorldXSimVar.get();
       const velocityY = this.velocityWorldZSimVar.get();
@@ -43665,9 +43665,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * not be applied.
      */
     update(simTime, tau, dmod, zthr, hmd) {
-      var _a7;
+      var _a8;
       this.time = simTime;
-      if (tau.isNaN() || dmod.isNaN() || zthr.isNaN() || ((_a7 = hmd === null || hmd === void 0 ? void 0 : hmd.isNaN()) !== null && _a7 !== void 0 ? _a7 : false)) {
+      if (tau.isNaN() || dmod.isNaN() || zthr.isNaN() || ((_a8 = hmd === null || hmd === void 0 ? void 0 : hmd.isNaN()) !== null && _a8 !== void 0 ? _a8 : false)) {
         this.invalidate();
         return;
       }
@@ -43906,8 +43906,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * responding to the most recently issued resolution advisory.
      */
     updateVsConstraints(ownAirplaneVsMps, alimMeters, responseTimeSeconds, accelMps) {
-      var _a7;
-      var _b5;
+      var _a8;
+      var _b6;
       for (let i = 0; i < this.intruderArray.length; i++) {
         const intruder = this.intruderArray[i];
         let above = -Infinity;
@@ -43940,7 +43940,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             below = tcpaSeconds > 0 ? (belowAltTargetMeters - ownAirplaneAltMeters) / tcpaSeconds : Infinity;
           }
         }
-        const constraint = (_a7 = (_b5 = this.vsConstraints)[i]) !== null && _a7 !== void 0 ? _a7 : _b5[i] = { above: 0, below: 0 };
+        const constraint = (_a8 = (_b6 = this.vsConstraints)[i]) !== null && _a8 !== void 0 ? _a8 : _b6[i] = { above: 0, below: 0 };
         constraint.above = above;
         constraint.below = below;
       }
@@ -44289,7 +44289,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * separation below all current RA intruders.
      */
     getDownSenseRequiredMaxVs() {
-      return this.vsConstraints.reduce((max, constraint) => Math.min(max, constraint.below), Infinity);
+      return this.vsConstraints.reduce((max2, constraint) => Math.min(max2, constraint.below), Infinity);
     }
     /**
      * Gets the required minimum vertical speed, in meters per second, for the own airplane to achieve ALIM separation
@@ -44307,7 +44307,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * separation from all current RA intruders during a composite advisory.
      */
     getCompositeRequiredMaxVs() {
-      return this.vsConstraints.reduce((max, constraint) => constraint.below >= 0 ? Math.min(max, constraint.below) : max, Infinity);
+      return this.vsConstraints.reduce((max2, constraint) => constraint.below >= 0 ? Math.min(max2, constraint.below) : max2, Infinity);
     }
     /**
      * Calculates the vertical speed required to achieve a desired altitude target at time of closest approach.
@@ -44752,7 +44752,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   };
   var MapSystemTrafficLayer = class _MapSystemTrafficLayer extends MapLayer {
     constructor() {
-      var _a7;
+      var _a8;
       super(...arguments);
       this.iconLayerRef = FSComponent.createRef();
       this.trafficModule = this.props.model.getModule(MapSystemKeys.Traffic);
@@ -44763,19 +44763,19 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         [TcasAlertLevel.ResolutionAdvisory]: /* @__PURE__ */ new Map()
       };
       this.needHandleOffscaleOob = this.props.offScaleIntruders !== void 0 || this.props.oobIntruders !== void 0;
-      this.oobOffset = (_a7 = this.props.oobOffset) !== null && _a7 !== void 0 ? _a7 : Subject.create(VecNMath.create(4));
+      this.oobOffset = (_a8 = this.props.oobOffset) !== null && _a8 !== void 0 ? _a8 : Subject.create(VecNMath.create(4));
       this.oobBounds = VecNSubject.createFromVector(VecNMath.create(4));
       this.isInit = false;
     }
     /** @inheritdoc */
     onVisibilityChanged(isVisible) {
-      var _a7, _b5;
+      var _a8, _b6;
       if (!isVisible) {
         if (this.isInit) {
           this.iconLayerRef.instance.display.clear();
         }
-        (_a7 = this.props.offScaleIntruders) === null || _a7 === void 0 ? void 0 : _a7.clear();
-        (_b5 = this.props.oobIntruders) === null || _b5 === void 0 ? void 0 : _b5.clear();
+        (_a8 = this.props.offScaleIntruders) === null || _a8 === void 0 ? void 0 : _a8.clear();
+        (_b6 = this.props.oobIntruders) === null || _b6 === void 0 ? void 0 : _b6.clear();
       }
     }
     /** @inheritdoc */
@@ -44851,12 +44851,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         const group = _MapSystemTrafficLayer.DRAW_GROUPS[i];
         if (BitFlags.isAll(alertLevelVisFlags, group.alertLevelVisFlag)) {
           this.intruderIcons[group.alertLevel].forEach((icon) => {
-            var _a7, _b5, _c, _d, _e, _f;
+            var _a8, _b6, _c, _d, _e, _f;
             icon.draw(this.props.mapProjection, iconDisplay.context, offScaleRange);
             if (this.needHandleOffscaleOob) {
               if (icon.isOffScale) {
-                (_a7 = this.props.oobIntruders) === null || _a7 === void 0 ? void 0 : _a7.delete(icon.intruder);
-                (_b5 = this.props.offScaleIntruders) === null || _b5 === void 0 ? void 0 : _b5.add(icon.intruder);
+                (_a8 = this.props.oobIntruders) === null || _a8 === void 0 ? void 0 : _a8.delete(icon.intruder);
+                (_b6 = this.props.offScaleIntruders) === null || _b6 === void 0 ? void 0 : _b6.add(icon.intruder);
               } else if (!this.props.mapProjection.isInProjectedBounds(icon.projectedPos, oobBounds)) {
                 (_c = this.props.offScaleIntruders) === null || _c === void 0 ? void 0 : _c.delete(icon.intruder);
                 (_d = this.props.oobIntruders) === null || _d === void 0 ? void 0 : _d.add(icon.intruder);
@@ -44868,9 +44868,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           });
         } else if (this.needHandleOffscaleOob) {
           this.intruderIcons[group.alertLevel].forEach((icon) => {
-            var _a7, _b5;
-            (_a7 = this.props.offScaleIntruders) === null || _a7 === void 0 ? void 0 : _a7.delete(icon.intruder);
-            (_b5 = this.props.oobIntruders) === null || _b5 === void 0 ? void 0 : _b5.delete(icon.intruder);
+            var _a8, _b6;
+            (_a8 = this.props.offScaleIntruders) === null || _a8 === void 0 ? void 0 : _a8.delete(icon.intruder);
+            (_b6 = this.props.oobIntruders) === null || _b6 === void 0 ? void 0 : _b6.delete(icon.intruder);
           });
         }
       }
@@ -44895,9 +44895,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param intruder The removed intruder.
      */
     onIntruderRemoved(intruder) {
-      var _a7, _b5;
-      (_a7 = this.props.offScaleIntruders) === null || _a7 === void 0 ? void 0 : _a7.delete(intruder);
-      (_b5 = this.props.oobIntruders) === null || _b5 === void 0 ? void 0 : _b5.delete(intruder);
+      var _a8, _b6;
+      (_a8 = this.props.offScaleIntruders) === null || _a8 === void 0 ? void 0 : _a8.delete(intruder);
+      (_b6 = this.props.oobIntruders) === null || _b6 === void 0 ? void 0 : _b6.delete(intruder);
       this.intruderIcons[intruder.alertLevel.get()].delete(intruder);
     }
     /**
@@ -44917,8 +44917,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     render() {
-      var _a7;
-      return FSComponent.buildComponent(MapSyncedCanvasLayer, { ref: this.iconLayerRef, model: this.props.model, mapProjection: this.props.mapProjection, class: (_a7 = this.props.class) !== null && _a7 !== void 0 ? _a7 : "" });
+      var _a8;
+      return FSComponent.buildComponent(MapSyncedCanvasLayer, { ref: this.iconLayerRef, model: this.props.model, mapProjection: this.props.mapProjection, class: (_a8 = this.props.class) !== null && _a8 !== void 0 ? _a8 : "" });
     }
   };
   MapSystemTrafficLayer.DRAW_GROUPS = [
@@ -44991,12 +44991,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   AbstractMapTrafficIntruderIcon.geoPointCache = [new GeoPoint(0, 0)];
   var MapSystemWaypointsLayer = class extends MapLayer {
     constructor() {
-      var _a7, _b5;
+      var _a8, _b6;
       super(...arguments);
       this.waypointsLayer = FSComponent.createRef();
       this.displayModule = this.props.model.getModule(MapSystemKeys.NearestWaypoints);
-      this.waypointCache = (_a7 = this.props.waypointCache) !== null && _a7 !== void 0 ? _a7 : DefaultFacilityWaypointCache.getCache(this.props.bus);
-      this.airportFacilityDataFlags = (_b5 = this.props.airportFacilityDataFlags) !== null && _b5 !== void 0 ? _b5 : AirportFacilityDataFlags.All;
+      this.waypointCache = (_a8 = this.props.waypointCache) !== null && _a8 !== void 0 ? _a8 : DefaultFacilityWaypointCache.getCache(this.props.bus);
+      this.airportFacilityDataFlags = (_b6 = this.props.airportFacilityDataFlags) !== null && _b6 !== void 0 ? _b6 : AirportFacilityDataFlags.All;
       this.searchItemLimits = {
         [FacilitySearchType.Airport]: 500,
         [FacilitySearchType.Vor]: 250,
@@ -45125,8 +45125,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     render() {
-      var _a7;
-      return FSComponent.buildComponent(MapNearestWaypointsLayer, { ref: this.waypointsLayer, model: this.props.model, mapProjection: this.props.mapProjection, bus: this.props.bus, facilityLoader: this.props.facilityLoader, waypointRenderer: this.props.waypointRenderer, facilityForIcao: this.facilityForIcao.bind(this), waypointForFacility: (facility) => this.waypointCache.get(facility), initRenderer: this.initWaypointRenderer.bind(this), registerWaypoint: this.registerWaypoint.bind(this), deregisterWaypoint: this.deregisterWaypoint.bind(this), searchItemLimit: (type) => this.searchItemLimits[type], searchRadiusLimit: (type) => this.searchRadiusLimits[type], getSearchCenter: this.props.useMapTargetAsSearchCenter === true ? (mapProjection) => mapProjection.getTarget() : void 0, onSessionsStarted: this.onSessionsStarted.bind(this), class: (_a7 = this.props.class) !== null && _a7 !== void 0 ? _a7 : "" });
+      var _a8;
+      return FSComponent.buildComponent(MapNearestWaypointsLayer, { ref: this.waypointsLayer, model: this.props.model, mapProjection: this.props.mapProjection, bus: this.props.bus, facilityLoader: this.props.facilityLoader, waypointRenderer: this.props.waypointRenderer, facilityForIcao: this.facilityForIcao.bind(this), waypointForFacility: (facility) => this.waypointCache.get(facility), initRenderer: this.initWaypointRenderer.bind(this), registerWaypoint: this.registerWaypoint.bind(this), deregisterWaypoint: this.deregisterWaypoint.bind(this), searchItemLimit: (type) => this.searchItemLimits[type], searchRadiusLimit: (type) => this.searchRadiusLimits[type], getSearchCenter: this.props.useMapTargetAsSearchCenter === true ? (mapProjection) => mapProjection.getTarget() : void 0, onSessionsStarted: this.onSessionsStarted.bind(this), class: (_a8 = this.props.class) !== null && _a8 !== void 0 ? _a8 : "" });
     }
     /**
      * Registers a waypoint with this layer's waypoint renderer.
@@ -45554,8 +45554,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param consumer The consumer claiming the resource.
      */
     claim(consumer) {
-      var _a7;
-      const consumerToDisplace = (_a7 = this.pendingConsumer) !== null && _a7 !== void 0 ? _a7 : this.assignedConsumer;
+      var _a8;
+      const consumerToDisplace = (_a8 = this.pendingConsumer) !== null && _a8 !== void 0 ? _a8 : this.assignedConsumer;
       if (consumerToDisplace === consumer) {
         return;
       }
@@ -45595,7 +45595,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param consumer The consumer that is forfeiting its claim.
      */
     forfeit(consumer) {
-      var _a7;
+      var _a8;
       if (this.pendingConsumer === consumer) {
         this.pendingConsumer = null;
         return;
@@ -45604,7 +45604,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.queuedConsumers.remove(consumer);
         return;
       }
-      const next = (_a7 = this.queuedConsumers.pop()) !== null && _a7 !== void 0 ? _a7 : null;
+      const next = (_a8 = this.queuedConsumers.pop()) !== null && _a8 !== void 0 ? _a8 : null;
       this.pendingConsumer = next;
       this.assignedConsumer = null;
       consumer.onCeded(this.resource);
@@ -45737,13 +45737,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   var MapSystemComponent = class extends MapComponent {
     /** @inheritdoc */
     constructor(props) {
-      var _a7;
+      var _a8;
       super(props);
       this.rootStyles = ObjectSubject.create({
         width: "0px",
         height: "0px"
       });
-      this.deadZone = SubscribableUtils.toSubscribable((_a7 = this.props.deadZone) !== null && _a7 !== void 0 ? _a7 : new Float64Array(4), true);
+      this.deadZone = SubscribableUtils.toSubscribable((_a8 = this.props.deadZone) !== null && _a8 !== void 0 ? _a8 : new Float64Array(4), true);
       this.deadZone.sub(this.onDeadZoneChanged.bind(this));
     }
     /** @inheritdoc */
@@ -45794,8 +45794,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     render() {
-      var _a7;
-      return FSComponent.buildComponent("div", { style: this.rootStyles, class: (_a7 = this.props.class) !== null && _a7 !== void 0 ? _a7 : "" }, this.props.children);
+      var _a8;
+      return FSComponent.buildComponent("div", { style: this.rootStyles, class: (_a8 = this.props.class) !== null && _a8 !== void 0 ? _a8 : "" }, this.props.children);
     }
     /** @inheritdoc */
     destroy() {
@@ -46046,10 +46046,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      */
     constructor(textManager) {
       super(textManager, (entry, roleDefinitions) => {
-        var _a7;
+        var _a8;
         for (let i = 0; i < this.rolePriorityOrder.length; i++) {
           const role = this.rolePriorityOrder[i];
-          if (entry.isAllRoles(role) && ((_a7 = roleDefinitions.get(role)) === null || _a7 === void 0 ? void 0 : _a7.visibilityHandler(entry.waypoint))) {
+          if (entry.isAllRoles(role) && ((_a8 = roleDefinitions.get(role)) === null || _a8 === void 0 ? void 0 : _a8.visibilityHandler(entry.waypoint))) {
             return role;
           }
         }
@@ -46397,10 +46397,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This builder, after the context property has been added.
      */
     withContext(key, factory) {
-      var _a7;
+      var _a8;
       if (!_MapSystemBuilder.RESTRICTED_CONTEXT_KEYS.has(key)) {
         const existing = this.contextFactories.get(key);
-        const order = (_a7 = existing === null || existing === void 0 ? void 0 : existing.order) !== null && _a7 !== void 0 ? _a7 : this.contextFactories.size;
+        const order = (_a8 = existing === null || existing === void 0 ? void 0 : existing.order) !== null && _a8 !== void 0 ? _a8 : this.contextFactories.size;
         this.contextFactories.set(key, { key, factory, order });
       }
       return this;
@@ -46865,16 +46865,16 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This builder, after it has been configured.
      */
     withSharedFlightPlans(flightPlanner, options, order, cssClass) {
-      var _a7;
+      var _a8;
       const getWaypointRenderToContextOption = options === null || options === void 0 ? void 0 : options.getWaypointRenderToContext;
       const addWaypointLayer = !getWaypointRenderToContextOption;
       const waypointLayerCssClass = options === null || options === void 0 ? void 0 : options.waypointLayerCssClass;
-      this.withTextLayer((_a7 = options === null || options === void 0 ? void 0 : options.enableTextCulling) !== null && _a7 !== void 0 ? _a7 : false).withModule(MapSystemKeys.FlightPlan, () => new MapFlightPlanModule()).withWaypoints().withContext(MapSystemKeys.FlightPlanner, () => flightPlanner).withContext(MapSystemKeys.IconFactory, () => new MapSystemIconFactory()).withContext(MapSystemKeys.LabelFactory, () => new MapSystemLabelFactory()).withContext(MapSystemKeys.FlightPathRenderer, () => new MapSystemPlanRenderer(1)).withController(MapSystemKeys.FlightPlan, (context) => new MapFlightPlanController(context)).withOnAfterRender(MapSystemKeys.FlightPlan, (context) => {
+      this.withTextLayer((_a8 = options === null || options === void 0 ? void 0 : options.enableTextCulling) !== null && _a8 !== void 0 ? _a8 : false).withModule(MapSystemKeys.FlightPlan, () => new MapFlightPlanModule()).withWaypoints().withContext(MapSystemKeys.FlightPlanner, () => flightPlanner).withContext(MapSystemKeys.IconFactory, () => new MapSystemIconFactory()).withContext(MapSystemKeys.LabelFactory, () => new MapSystemLabelFactory()).withContext(MapSystemKeys.FlightPathRenderer, () => new MapSystemPlanRenderer(1)).withController(MapSystemKeys.FlightPlan, (context) => new MapFlightPlanController(context)).withOnAfterRender(MapSystemKeys.FlightPlan, (context) => {
         const defs = context[MapSystemKeys.FlightPlan];
         if (defs) {
           const getWaypointRenderToContext = getWaypointRenderToContextOption !== null && getWaypointRenderToContextOption !== void 0 ? getWaypointRenderToContextOption : (contextInner) => {
-            var _a8, _b5;
-            return (_b5 = (_a8 = contextInner.getLayer(MapSystemKeys.FlightPlanWaypoints)) === null || _a8 === void 0 ? void 0 : _a8.display.context) !== null && _b5 !== void 0 ? _b5 : null;
+            var _a9, _b6;
+            return (_b6 = (_a9 = contextInner.getLayer(MapSystemKeys.FlightPlanWaypoints)) === null || _a9 === void 0 ? void 0 : _a9.display.context) !== null && _b6 !== void 0 ? _b6 : null;
           };
           let hasDefaultRole = false;
           for (const def of defs.values()) {
@@ -46926,8 +46926,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      */
     withSharedFlightPlanDefinition(planIndex, waypointFactory, configure) {
       return this.withContext("sharedFlightPlanDefinition_".concat(planIndex), (context) => {
-        var _a7;
-        const factories = (_a7 = context[MapSystemKeys.FlightPlan]) !== null && _a7 !== void 0 ? _a7 : context[MapSystemKeys.FlightPlan] = /* @__PURE__ */ new Map();
+        var _a8;
+        const factories = (_a8 = context[MapSystemKeys.FlightPlan]) !== null && _a8 !== void 0 ? _a8 : context[MapSystemKeys.FlightPlan] = /* @__PURE__ */ new Map();
         factories.set(planIndex, {
           planIndex,
           waypointFactory,
@@ -46973,10 +46973,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      */
     withAirspaces(cache, showTypes, selectRenderer, renderOrder = () => 0, options, order) {
       return this.withModule(MapSystemKeys.Airspace, () => new MapAirspaceModule(showTypes)).withContext(MapSystemKeys.AirspaceManager, () => new GenericAirspaceRenderManager(renderOrder, selectRenderer)).withLayer(MapSystemKeys.Airspace, (context) => {
-        var _a7, _b5;
+        var _a8, _b6;
         const optionsToUse = Object.assign({}, options);
-        (_a7 = optionsToUse.maxSearchRadius) !== null && _a7 !== void 0 ? _a7 : optionsToUse.maxSearchRadius = Subject.create(UnitType.NMILE.createNumber(10));
-        (_b5 = optionsToUse.maxSearchItemCount) !== null && _b5 !== void 0 ? _b5 : optionsToUse.maxSearchItemCount = Subject.create(100);
+        (_a8 = optionsToUse.maxSearchRadius) !== null && _a8 !== void 0 ? _a8 : optionsToUse.maxSearchRadius = Subject.create(UnitType.NMILE.createNumber(10));
+        (_b6 = optionsToUse.maxSearchItemCount) !== null && _b6 !== void 0 ? _b6 : optionsToUse.maxSearchItemCount = Subject.create(100);
         return FSComponent.buildComponent(MapAirspaceLayer, Object.assign({ model: context.model, mapProjection: context.projection, bus: context.bus, facilityLoader: context[MapSystemKeys.FacilityLoader], lodBoundaryCache: cache, airspaceRenderManager: context[MapSystemKeys.AirspaceManager] }, optionsToUse));
       }, order);
     }
@@ -47223,8 +47223,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The new map context.
      */
     buildContext() {
-      var _a7;
-      const context = new DefaultMapSystemContext(this.bus, new MapProjection(this.projectedSize.get()[0], this.projectedSize.get()[1]), this.projectedSize, (_a7 = this.deadZone) !== null && _a7 !== void 0 ? _a7 : VecNSubject.createFromVector(new Float64Array(4)));
+      var _a8;
+      const context = new DefaultMapSystemContext(this.bus, new MapProjection(this.projectedSize.get()[0], this.projectedSize.get()[1]), this.projectedSize, (_a8 = this.deadZone) !== null && _a8 !== void 0 ? _a8 : VecNSubject.createFromVector(new Float64Array(4)));
       context.projection.set({
         targetProjectedOffset: this.targetOffset,
         rangeEndpoints: this.nominalRangeEndpoints !== void 0 ? MapSystemUtils.nominalToTrueRelativeXY(this.nominalRangeEndpoints, context.projectedSize.get(), context.deadZone.get(), Vec2Math.create()) : void 0,
@@ -47553,8 +47553,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * could not be found.
      */
     static getConstraintLegIndexFromLegIndex(verticalPlan, globalLegIndex) {
-      var _a7, _b5;
-      return (_b5 = (_a7 = this.getConstraintFromLegIndex(verticalPlan, globalLegIndex)) === null || _a7 === void 0 ? void 0 : _a7.index) !== null && _b5 !== void 0 ? _b5 : -1;
+      var _a8, _b6;
+      return (_b6 = (_a8 = this.getConstraintFromLegIndex(verticalPlan, globalLegIndex)) === null || _a8 === void 0 ? void 0 : _a8.index) !== null && _b6 !== void 0 ? _b6 : -1;
     }
     /**
      * Gets a constraint segment distance from the constraint legs.
@@ -47599,7 +47599,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @throws RangeError if `constraintIndex` is out of bounds.
      */
     static getConstraintDistanceWithOffsetsFromLegs(verticalPlan, constraintIndex, fromConstraintIndex = constraintIndex + 1) {
-      var _a7, _b5;
+      var _a8, _b6;
       const constraints = verticalPlan.constraints;
       if (constraintIndex < 0 || constraintIndex >= constraints.length) {
         throw new RangeError();
@@ -47615,12 +47615,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       const fromConstraint = constraints[fromConstraintIndex];
       let distance2 = 0;
       if (fromConstraint) {
-        distance2 -= (_a7 = fromConstraint.alongTrackOffset) !== null && _a7 !== void 0 ? _a7 : 0;
+        distance2 -= (_a8 = fromConstraint.alongTrackOffset) !== null && _a8 !== void 0 ? _a8 : 0;
       }
       for (const leg of _VNavUtils.planLegs(verticalPlan, false, fromConstraint ? fromConstraint.index + 1 : 0, constraint.index + 1)) {
         distance2 += leg.distance;
       }
-      distance2 += (_b5 = constraints[constraintIndex].alongTrackOffset) !== null && _b5 !== void 0 ? _b5 : 0;
+      distance2 += (_b6 = constraints[constraintIndex].alongTrackOffset) !== null && _b6 !== void 0 ? _b6 : 0;
       return distance2;
     }
     /**
@@ -47640,7 +47640,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * in meters.
      */
     static getDistanceToConstraint(constraint, lateralPlan, activeLegIndex, distanceAlongLeg) {
-      var _a7;
+      var _a8;
       if (activeLegIndex < 0) {
         activeLegIndex = 0;
         distanceAlongLeg = 0;
@@ -47649,7 +47649,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return 0;
       }
       let constraintLegIndex = constraint.index;
-      let constraintDistanceToLegEnd = -((_a7 = constraint.alongTrackOffset) !== null && _a7 !== void 0 ? _a7 : 0);
+      let constraintDistanceToLegEnd = -((_a8 = constraint.alongTrackOffset) !== null && _a8 !== void 0 ? _a8 : 0);
       if (constraintDistanceToLegEnd < 0) {
         let legIndex2 = constraintLegIndex + 1;
         for (const leg of lateralPlan.legs(false, legIndex2)) {
@@ -47726,7 +47726,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @throws RangeError if `constraintIndex` is out of bounds.
      */
     static getVerticalPlanDistanceToConstraint(verticalPlan, constraintIndex, activeLegIndex, activeDistanceToLegEnd) {
-      var _a7, _b5;
+      var _a8, _b6;
       if (constraintIndex < 0 || constraintIndex >= verticalPlan.constraints.length) {
         throw new RangeError();
       }
@@ -47739,8 +47739,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         activeLegIndex = verticalPlan.length - 1;
         activeDistanceToLegEnd = 0;
       }
-      const constraintLegIndex = (_a7 = constraint.containingLegIndex) !== null && _a7 !== void 0 ? _a7 : constraint.index;
-      const constraintDistanceToLegEnd = (_b5 = constraint.containingLegDistanceToEnd) !== null && _b5 !== void 0 ? _b5 : 0;
+      const constraintLegIndex = (_a8 = constraint.containingLegIndex) !== null && _a8 !== void 0 ? _a8 : constraint.index;
+      const constraintDistanceToLegEnd = (_b6 = constraint.containingLegDistanceToEnd) !== null && _b6 !== void 0 ? _b6 : 0;
       let distance2 = 0;
       if (activeLegIndex <= constraintLegIndex) {
         distance2 = -constraintDistanceToLegEnd;
@@ -48177,7 +48177,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The VNAV TOD/BOD details.
      */
     static getTodBodDetails(verticalPlan, activeLegIndex, distanceAlongLeg, currentAltitude, currentVS, out) {
-      var _a7;
+      var _a8;
       out.todLegIndex = -1;
       out.bodLegIndex = -1;
       out.todLegDistance = 0;
@@ -48200,7 +48200,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         if (constraint.type === "climb" || constraint.type === "missed") {
           continue;
         }
-        if (constraint.fpa > 0 && ((_a7 = constraint.legs[0]) === null || _a7 === void 0 ? void 0 : _a7.isBod) && constraint.targetAltitude <= altitude) {
+        if (constraint.fpa > 0 && ((_a8 = constraint.legs[0]) === null || _a8 === void 0 ? void 0 : _a8.isBod) && constraint.targetAltitude <= altitude) {
           bodConstraintIndex = i;
           bodConstraint = constraint;
           break;
@@ -48305,7 +48305,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The VNAV TOC/BOC details.
      */
     static getTocBocDetails(verticalPlan, activeLegIndex, distanceAlongLeg, currentGroundSpeed, currentAltitude, currentVS, out) {
-      var _a7, _b5;
+      var _a8, _b6;
       out.bocLegIndex = -1;
       out.tocLegIndex = -1;
       out.tocLegDistance = 0;
@@ -48347,7 +48347,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       let currentConstraint;
       let currentConstraintLegIndex = activeConstraint.index - activeLegIndex;
       let currentLeg = activeLeg;
-      const activeLegDistanceRemaining = ((_a7 = activeLeg === null || activeLeg === void 0 ? void 0 : activeLeg.distance) !== null && _a7 !== void 0 ? _a7 : 0) - distanceAlongLeg;
+      const activeLegDistanceRemaining = ((_a8 = activeLeg === null || activeLeg === void 0 ? void 0 : activeLeg.distance) !== null && _a8 !== void 0 ? _a8 : 0) - distanceAlongLeg;
       if (distanceRemaining > activeLegDistanceRemaining) {
         distanceRemaining -= activeLegDistanceRemaining;
         if (currentConstraintLegIndex <= 0) {
@@ -48413,7 +48413,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         }
       }
       if (bocDistanceStopConstraintIndex !== void 0) {
-        let distanceToEndOfActiveConstraint = ((_b5 = activeLeg === null || activeLeg === void 0 ? void 0 : activeLeg.distance) !== null && _b5 !== void 0 ? _b5 : 0) - distanceAlongLeg;
+        let distanceToEndOfActiveConstraint = ((_b6 = activeLeg === null || activeLeg === void 0 ? void 0 : activeLeg.distance) !== null && _b6 !== void 0 ? _b6 : 0) - distanceAlongLeg;
         for (let i = Math.min(activeConstraint.index - activeLegIndex, activeConstraint.legs.length) - 1; i >= 0; i--) {
           distanceToEndOfActiveConstraint += activeConstraint.legs[i].distance;
         }
@@ -48438,7 +48438,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The VNAV TOC/BOC to cruise altitude details.
      */
     static getCruiseTocBocDetails(lateralPlan, verticalPlan, activeLegIndex, distanceAlongLeg, currentGroundSpeed, currentAltitude, currentVS, cruiseAltitude, out) {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h, _j;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h, _j;
       out.bocLegIndex = -1;
       out.tocLegIndex = -1;
       out.tocLegDistance = 0;
@@ -48454,7 +48454,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return out;
       }
       const activeLeg = lateralPlan.tryGetLeg(activeLegIndex);
-      const activeLegDistanceRemaining = ((_b5 = (_a7 = activeLeg === null || activeLeg === void 0 ? void 0 : activeLeg.calculated) === null || _a7 === void 0 ? void 0 : _a7.distanceWithTransitions) !== null && _b5 !== void 0 ? _b5 : 0) - distanceAlongLeg;
+      const activeLegDistanceRemaining = ((_b6 = (_a8 = activeLeg === null || activeLeg === void 0 ? void 0 : activeLeg.calculated) === null || _a8 === void 0 ? void 0 : _a8.distanceWithTransitions) !== null && _b6 !== void 0 ? _b6 : 0) - distanceAlongLeg;
       if (lastClimbConstraint && lastClimbConstraint.index < lateralPlan.length - 1 && activeLegIndex <= lastClimbConstraint.index) {
         const lastClimbConstraintLeg = lateralPlan.tryGetLeg(lastClimbConstraint.index);
         out.bocLegIndex = lastClimbConstraint.index + 1;
@@ -48812,8 +48812,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       if (this.targetChangeInhibitTime !== null) {
         this.targetChangeInhibitTimer = new DebounceTimer();
         this.inhibitAltCapture = () => {
-          var _a7;
-          (_a7 = this.targetChangeInhibitTimer) === null || _a7 === void 0 ? void 0 : _a7.schedule(_APAltCapDirector.EMPTY_FUNCTION, this.targetChangeInhibitTime);
+          var _a8;
+          (_a8 = this.targetChangeInhibitTimer) === null || _a8 === void 0 ? void 0 : _a8.schedule(_APAltCapDirector.EMPTY_FUNCTION, this.targetChangeInhibitTime);
         };
         this.apValues.selectedAltitude.sub(this.inhibitAltCapture, false);
       }
@@ -48877,8 +48877,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Attempts to activate altitude capture.
      */
     tryActivate() {
-      var _a7;
-      if ((_a7 = this.targetChangeInhibitTimer) === null || _a7 === void 0 ? void 0 : _a7.isPending()) {
+      var _a8;
+      if ((_a8 = this.targetChangeInhibitTimer) === null || _a8 === void 0 ? void 0 : _a8.isPending()) {
         return;
       }
       const selectedAltitude = this.apValues.selectedAltitude.get();
@@ -48978,7 +48978,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The PID output.
      */
     getOutput(deltaTime, error) {
-      var _a7;
+      var _a8;
       const p = this.kP * error;
       if (this.previousError !== void 0 && Math.sign(error) === Math.sign(this.previousError)) {
         this.integral += (error * deltaTime + deltaTime * (error - this.previousError) / 2) * this.kI;
@@ -48987,7 +48987,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.integral = 0;
       }
       const i = this.integral;
-      const d = deltaTime === 0 ? 0 : this.kD * ((error - ((_a7 = this.previousError) !== null && _a7 !== void 0 ? _a7 : error)) / deltaTime);
+      const d = deltaTime === 0 ? 0 : this.kD * ((error - ((_a8 = this.previousError) !== null && _a8 !== void 0 ? _a8 : error)) / deltaTime);
       const output = _PidController.clamp(p + i + d, this.maxOut, this.minOut);
       this.previousError = error;
       this.previousOutput = output;
@@ -49006,8 +49006,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param min The minumum value.
      * @returns The clamped value.
      */
-    static clamp(value, max, min) {
-      return Math.min(Math.max(value, min), max);
+    static clamp(value, max2, min) {
+      return Math.min(Math.max(value, min), max2);
     }
   };
   var APVerticalModes;
@@ -49772,12 +49772,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param options Options to configure the new director.
      */
     constructor(bus, apValues, options) {
-      var _a7;
+      var _a8;
       this.apValues = apValues;
       this.capturedHeading = null;
       this.bank = this.apValues.dataProvider.getItem("bank");
       this.headingMagnetic = this.apValues.dataProvider.getItem("heading_magnetic");
-      const maxBankAngleOpt = (_a7 = options === null || options === void 0 ? void 0 : options.maxBankAngle) !== null && _a7 !== void 0 ? _a7 : void 0;
+      const maxBankAngleOpt = (_a8 = options === null || options === void 0 ? void 0 : options.maxBankAngle) !== null && _a8 !== void 0 ? _a8 : void 0;
       switch (typeof maxBankAngleOpt) {
         case "number":
           this.maxBankAngleFunc = () => maxBankAngleOpt;
@@ -49895,13 +49895,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * * `isToGaMode`: `false`
      */
     constructor(bus, apValues, options) {
-      var _a7;
+      var _a8;
       this.bus = bus;
       this.apValues = apValues;
       this.capturedTrack = null;
       this.bank = this.apValues.dataProvider.getItem("bank");
       this.trackMagnetic = this.apValues.dataProvider.getItem("ground_track_magnetic");
-      const maxBankAngleOpt = (_a7 = options === null || options === void 0 ? void 0 : options.maxBankAngle) !== null && _a7 !== void 0 ? _a7 : void 0;
+      const maxBankAngleOpt = (_a8 = options === null || options === void 0 ? void 0 : options.maxBankAngle) !== null && _a8 !== void 0 ? _a8 : void 0;
       switch (typeof maxBankAngleOpt) {
         case "number":
           this.maxBankAngleFunc = () => maxBankAngleOpt;
@@ -50019,7 +50019,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param options Options for the calculator.
      */
     constructor(bus, flightPlanner, primaryPlanIndex, options) {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o;
       this.bus = bus;
       this.flightPlanner = flightPlanner;
       this.primaryPlanIndex = primaryPlanIndex;
@@ -50028,8 +50028,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.vnavCalculated = new SubEvent();
       this.legAltitudes = [0, 0];
       this.applyPathValuesResult = [void 0, 0];
-      this.index = (_a7 = options === null || options === void 0 ? void 0 : options.index) !== null && _a7 !== void 0 ? _a7 : 0;
-      this.flightPathAngle = (_b5 = options === null || options === void 0 ? void 0 : options.defaultFpa) !== null && _b5 !== void 0 ? _b5 : _SmoothingPathCalculator.DEFAULT_DEFAULT_FPA;
+      this.index = (_a8 = options === null || options === void 0 ? void 0 : options.index) !== null && _a8 !== void 0 ? _a8 : 0;
+      this.flightPathAngle = (_b6 = options === null || options === void 0 ? void 0 : options.defaultFpa) !== null && _b6 !== void 0 ? _b6 : _SmoothingPathCalculator.DEFAULT_DEFAULT_FPA;
       this.minFlightPathAngle = (_c = options === null || options === void 0 ? void 0 : options.minFpa) !== null && _c !== void 0 ? _c : _SmoothingPathCalculator.DEFAULT_MIN_FPA;
       this.maxFlightPathAngle = (_d = options === null || options === void 0 ? void 0 : options.maxFpa) !== null && _d !== void 0 ? _d : _SmoothingPathCalculator.DEFAULT_MAX_FPA;
       this.forceFirstApproachAtConstraint = (_e = options === null || options === void 0 ? void 0 : options.forceFirstApproachAtConstraint) !== null && _e !== void 0 ? _e : false;
@@ -50061,9 +50061,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     getVerticalFlightPlan(planIndex) {
-      var _a7;
-      var _b5;
-      return (_a7 = (_b5 = this.verticalFlightPlans)[planIndex]) !== null && _a7 !== void 0 ? _a7 : _b5[planIndex] = this.createVerticalPlan(planIndex);
+      var _a8;
+      var _b6;
+      return (_a8 = (_b6 = this.verticalFlightPlans)[planIndex]) !== null && _a8 !== void 0 ? _a8 : _b6[planIndex] = this.createVerticalPlan(planIndex);
     }
     /** @inheritdoc */
     createVerticalPlan(planIndex) {
@@ -50155,11 +50155,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritdoc */
     getTargetAltitude(planIndex, globalLegIndex) {
-      var _a7, _b5;
+      var _a8, _b6;
       if (this.getFlightPhase(planIndex) === VerticalFlightPhase.Descent) {
-        return (_a7 = this.getTargetConstraint(planIndex, globalLegIndex)) === null || _a7 === void 0 ? void 0 : _a7.targetAltitude;
+        return (_a8 = this.getTargetConstraint(planIndex, globalLegIndex)) === null || _a8 === void 0 ? void 0 : _a8.targetAltitude;
       } else {
-        return (_b5 = this.getTargetConstraint(planIndex, globalLegIndex)) === null || _b5 === void 0 ? void 0 : _b5.maxAltitude;
+        return (_b6 = this.getTargetConstraint(planIndex, globalLegIndex)) === null || _b6 === void 0 ? void 0 : _b6.maxAltitude;
       }
     }
     /** @inheritdoc */
@@ -50395,7 +50395,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param verticalPlan The Vertical Flight Plan.
      */
     buildVerticalLegsAndConstraints(lateralPlan, verticalPlan) {
-      var _a7, _b5, _c, _d, _e, _f, _g;
+      var _a8, _b6, _c, _d, _e, _f, _g;
       verticalPlan.constraints.length = 0;
       verticalPlan.segments.length = 0;
       verticalPlan.destLegIndex = void 0;
@@ -50416,7 +50416,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         for (let segmentLegIndex = 0; segmentLegIndex < segment.legs.length; segmentLegIndex++) {
           const globalLegIndex = segment.offset + segmentLegIndex;
           const lateralLeg = segment.legs[segmentLegIndex];
-          const verticalLeg = VNavUtils.createLeg(segment.segmentIndex, segmentLegIndex, (_a7 = lateralLeg.name) !== null && _a7 !== void 0 ? _a7 : "", (_c = (_b5 = lateralLeg.calculated) === null || _b5 === void 0 ? void 0 : _b5.distanceWithTransitions) !== null && _c !== void 0 ? _c : void 0);
+          const verticalLeg = VNavUtils.createLeg(segment.segmentIndex, segmentLegIndex, (_a8 = lateralLeg.name) !== null && _a8 !== void 0 ? _a8 : "", (_c = (_b6 = lateralLeg.calculated) === null || _b6 === void 0 ? void 0 : _b6.distanceWithTransitions) !== null && _c !== void 0 ? _c : void 0);
           if (verticalPlan.missedApproachStartIndex === void 0 && segment.segmentType === FlightPlanSegmentType.Approach && BitFlags.isAll(lateralLeg.flags, LegDefinitionFlags.MissedApproach)) {
             verticalPlan.missedApproachStartIndex = globalLegIndex;
           }
@@ -50453,11 +50453,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns A new VNAV constraint for the specified lateral flight plan leg.
      */
     buildConstraint(verticalPlan, globalLegIndex, lateralLeg, constraintAltitudes, name) {
-      var _a7;
+      var _a8;
       const constraint = VNavUtils.createConstraint(globalLegIndex, constraintAltitudes[0], constraintAltitudes[1], name, BitFlags.isAll(lateralLeg.flags, LegDefinitionFlags.MissedApproach) ? "missed" : lateralLeg.verticalData.phase === VerticalFlightPhase.Descent ? "descent" : "climb");
       constraint.isBeyondFaf = verticalPlan.fafLegIndex === void 0 ? false : globalLegIndex > verticalPlan.fafLegIndex;
       if (verticalPlan.verticalDirectIndex === globalLegIndex) {
-        constraint.fpa = (_a7 = verticalPlan.verticalDirectFpa) !== null && _a7 !== void 0 ? _a7 : this.flightPathAngle;
+        constraint.fpa = (_a8 = verticalPlan.verticalDirectFpa) !== null && _a8 !== void 0 ? _a8 : this.flightPathAngle;
         constraint.type = "direct";
       }
       const userFpa = lateralLeg.verticalData.fpa;
@@ -50491,7 +50491,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param verticalPlan The vertical flight plan for which to compute a path.
      */
     computeDescentPath(lateralPlan, verticalPlan) {
-      var _a7, _b5;
+      var _a8, _b6;
       this.fillLegDistances(lateralPlan, verticalPlan);
       this.reinsertInvalidConstraints(verticalPlan, lateralPlan);
       this.refreshConstraintAlongTrackOffsets(lateralPlan, verticalPlan);
@@ -50537,7 +50537,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             }
           }
         }
-        const lastConstraintLegIndex = (_b5 = (_a7 = verticalPlan.constraints[0]) === null || _a7 === void 0 ? void 0 : _a7.index) !== null && _b5 !== void 0 ? _b5 : -1;
+        const lastConstraintLegIndex = (_b6 = (_a8 = verticalPlan.constraints[0]) === null || _a8 === void 0 ? void 0 : _a8.index) !== null && _b6 !== void 0 ? _b6 : -1;
         outer:
           for (let segmentIndex = verticalPlan.segments.length - 1; segmentIndex >= 0; segmentIndex--) {
             const segment = verticalPlan.segments[segmentIndex];
@@ -50563,7 +50563,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param verticalPlan The vertical flight plan for which to fill leg distances.
      */
     fillLegDistances(lateralPlan, verticalPlan) {
-      var _a7, _b5, _c;
+      var _a8, _b6, _c;
       if (lateralPlan.length > 0) {
         for (const segment of lateralPlan.segments()) {
           if (segment) {
@@ -50575,7 +50575,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               } else if (leg && leg.calculated && leg.calculated.endLat !== void 0 && leg.calculated.endLon !== void 0) {
                 let prevLeg;
                 for (const checkLeg of lateralPlan.legs(true, segment.offset + l - 1)) {
-                  if (((_a7 = checkLeg.calculated) === null || _a7 === void 0 ? void 0 : _a7.endLat) !== void 0 && ((_b5 = checkLeg.calculated) === null || _b5 === void 0 ? void 0 : _b5.endLon) !== void 0) {
+                  if (((_a8 = checkLeg.calculated) === null || _a8 === void 0 ? void 0 : _a8.endLat) !== void 0 && ((_b6 = checkLeg.calculated) === null || _b6 === void 0 ? void 0 : _b6.endLon) !== void 0) {
                     prevLeg = checkLeg;
                     break;
                   }
@@ -50596,9 +50596,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param verticalPlan The Vertical Flight Plan.
      */
     findAndRemoveInvalidConstraints(verticalPlan) {
-      var _a7, _b5, _c;
+      var _a8, _b6, _c;
       let firstDescentConstraintIndex = verticalPlan.firstDescentConstraintLegIndex === void 0 ? -1 : VNavUtils.getConstraintIndexFromLegIndex(verticalPlan, verticalPlan.firstDescentConstraintLegIndex);
-      const startIndex = ((_a7 = verticalPlan.constraints[firstDescentConstraintIndex]) === null || _a7 === void 0 ? void 0 : _a7.type) === "direct" ? firstDescentConstraintIndex : verticalPlan.constraints.length - 1;
+      const startIndex = ((_a8 = verticalPlan.constraints[firstDescentConstraintIndex]) === null || _a8 === void 0 ? void 0 : _a8.type) === "direct" ? firstDescentConstraintIndex : verticalPlan.constraints.length - 1;
       let phase = "climb";
       let priorMinAltitude = -Infinity;
       let priorMaxAltitude = Infinity;
@@ -50648,7 +50648,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           distanceFromPriorMinAltitude -= currentConstraintDistance;
           if (isDescentConstraint && constraintIndex === firstDescentConstraintIndex) {
             firstDescentConstraintIndex = VNavUtils.getFirstDescentConstraintIndex(verticalPlan);
-            verticalPlan.firstDescentConstraintLegIndex = (_b5 = verticalPlan.constraints[firstDescentConstraintIndex]) === null || _b5 === void 0 ? void 0 : _b5.index;
+            verticalPlan.firstDescentConstraintLegIndex = (_b6 = verticalPlan.constraints[firstDescentConstraintIndex]) === null || _b6 === void 0 ? void 0 : _b6.index;
           }
         } else {
           constraintLeg.invalidConstraintAltitude = void 0;
@@ -50669,9 +50669,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param lateralPlan The Lateral Flight Plan.
      */
     reinsertInvalidConstraints(verticalPlan, lateralPlan) {
-      var _a7;
+      var _a8;
       const firstDescentConstraintIndex = verticalPlan.firstDescentConstraintLegIndex === void 0 ? -1 : VNavUtils.getConstraintIndexFromLegIndex(verticalPlan, verticalPlan.firstDescentConstraintLegIndex);
-      const startIndex = ((_a7 = verticalPlan.constraints[firstDescentConstraintIndex]) === null || _a7 === void 0 ? void 0 : _a7.type) === "direct" ? verticalPlan.firstDescentConstraintLegIndex + 1 : 0;
+      const startIndex = ((_a8 = verticalPlan.constraints[firstDescentConstraintIndex]) === null || _a8 === void 0 ? void 0 : _a8.type) === "direct" ? verticalPlan.firstDescentConstraintLegIndex + 1 : 0;
       lateralPlan.forEachLeg((lateralLeg, lateralSegment, segmentIndex, segmentLegIndex) => {
         const verticalLeg = verticalPlan.segments[segmentIndex].legs[segmentLegIndex];
         if (verticalLeg.invalidConstraintAltitude !== void 0) {
@@ -50748,10 +50748,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param constraintIndex The index of the constraint to refresh.
      */
     refreshConstraintLocation(verticalPlan, constraintIndex) {
-      var _a7;
+      var _a8;
       const constraint = verticalPlan.constraints[constraintIndex];
       let constraintLegIndex = constraint.index;
-      let constraintDistanceToLegEnd = -((_a7 = constraint.alongTrackOffset) !== null && _a7 !== void 0 ? _a7 : 0);
+      let constraintDistanceToLegEnd = -((_a8 = constraint.alongTrackOffset) !== null && _a8 !== void 0 ? _a8 : 0);
       if (constraintDistanceToLegEnd === 0) {
         constraint.containingLegIndex = void 0;
         constraint.containingLegDistanceToEnd = void 0;
@@ -50790,17 +50790,17 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param constraintIndex The index of the constraint to refresh.
      */
     refreshConstraintDistance(verticalPlan, constraintIndex) {
-      var _a7, _b5;
+      var _a8, _b6;
       const constraint = verticalPlan.constraints[constraintIndex];
       const priorConstraint = verticalPlan.constraints[constraintIndex + 1];
       let distance2 = 0;
       if (priorConstraint) {
-        distance2 -= (_a7 = priorConstraint.alongTrackOffset) !== null && _a7 !== void 0 ? _a7 : 0;
+        distance2 -= (_a8 = priorConstraint.alongTrackOffset) !== null && _a8 !== void 0 ? _a8 : 0;
       }
       for (let i = constraint.legs.length - 1; i >= 0; i--) {
         distance2 += constraint.legs[i].distance;
       }
-      distance2 += (_b5 = constraint.alongTrackOffset) !== null && _b5 !== void 0 ? _b5 : 0;
+      distance2 += (_b6 = constraint.alongTrackOffset) !== null && _b6 !== void 0 ? _b6 : 0;
       constraint.distance = distance2;
     }
     /**
@@ -51034,15 +51034,15 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param verticalPlan The vertical flight plan for which to calculate leg altitudes.
      */
     computeLegAltitudes(lateralPlan, verticalPlan) {
-      var _a7, _b5, _c, _d;
+      var _a8, _b6, _c, _d;
       let currentConstraint = void 0;
       let currentConstraintLegIndex = -1;
       let currentConstraintDistanceToLegEnd = 0;
       let currentConstraintGradient = 0;
       let priorConstraintIndex = 0;
       let priorConstraint = verticalPlan.constraints[priorConstraintIndex];
-      let priorConstraintLegIndex = priorConstraint ? (_a7 = priorConstraint.containingLegIndex) !== null && _a7 !== void 0 ? _a7 : priorConstraint.index : -1;
-      let priorConstraintDistanceToLegEnd = (_b5 = priorConstraint === null || priorConstraint === void 0 ? void 0 : priorConstraint.containingLegDistanceToEnd) !== null && _b5 !== void 0 ? _b5 : 0;
+      let priorConstraintLegIndex = priorConstraint ? (_a8 = priorConstraint.containingLegIndex) !== null && _a8 !== void 0 ? _a8 : priorConstraint.index : -1;
+      let priorConstraintDistanceToLegEnd = (_b6 = priorConstraint === null || priorConstraint === void 0 ? void 0 : priorConstraint.containingLegDistanceToEnd) !== null && _b6 !== void 0 ? _b6 : 0;
       let distanceToCurrentConstraint = 0;
       let followingLeg;
       for (let segmentIndex = verticalPlan.segments.length - 1; segmentIndex >= 0; segmentIndex--) {
@@ -51278,8 +51278,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * flight plan, and negative offsets move the constraint backward along the flight plan.
      */
     static getConstraintAlongTrackOffset(constraint, constraintIndex, verticalLeg, lateralLeg) {
-      var _a7;
-      return (_a7 = lateralLeg.verticalData.alongTrackOffset) !== null && _a7 !== void 0 ? _a7 : 0;
+      var _a8;
+      return (_a8 = lateralLeg.verticalData.alongTrackOffset) !== null && _a8 !== void 0 ? _a8 : 0;
     }
     /**
      * The default function that checks whether a climb constraint should be invalidated. This function always returns
@@ -51402,7 +51402,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param options Options with which to configure the data provider.
      */
     constructor(options) {
-      var _a7, _b5, _c, _d;
+      var _a8, _b6, _c, _d;
       this.latSimVarId = SimVar.GetRegisteredId("PLANE LATITUDE", SimVarValueType.Degree, "");
       this.lonSimVarId = SimVar.GetRegisteredId("PLANE LONGITUDE", SimVarValueType.Degree, "");
       this.velocityXSimVarId = SimVar.GetRegisteredId("VELOCITY WORLD X", SimVarValueType.Knots, "");
@@ -51422,8 +51422,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.magVar = this._magVar;
       this._tas = Value.create(null);
       this.tas = this._tas;
-      this.isPositionDataValid = AccessibleUtils.toAccessible((_a7 = options === null || options === void 0 ? void 0 : options.isPositionDataValid) !== null && _a7 !== void 0 ? _a7 : true, true);
-      this.isHeadingDataValid = AccessibleUtils.toAccessible((_b5 = options === null || options === void 0 ? void 0 : options.isHeadingDataValid) !== null && _b5 !== void 0 ? _b5 : true, true);
+      this.isPositionDataValid = AccessibleUtils.toAccessible((_a8 = options === null || options === void 0 ? void 0 : options.isPositionDataValid) !== null && _a8 !== void 0 ? _a8 : true, true);
+      this.isHeadingDataValid = AccessibleUtils.toAccessible((_b6 = options === null || options === void 0 ? void 0 : options.isHeadingDataValid) !== null && _b6 !== void 0 ? _b6 : true, true);
       this.isMagVarDataValid = AccessibleUtils.toAccessible((_c = options === null || options === void 0 ? void 0 : options.isMagVarDataValid) !== null && _c !== void 0 ? _c : true, true);
       this.isTrueAirspeedDataValid = AccessibleUtils.toAccessible((_d = options === null || options === void 0 ? void 0 : options.isTrueAirspeedDataValid) !== null && _d !== void 0 ? _d : true, true);
     }
@@ -51551,7 +51551,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @throws Error if `index` is not a non-negative integer.
      */
     constructor(index, bus, flightPlanner, overrideModule, options) {
-      var _a7, _b5, _c, _d, _e;
+      var _a8, _b6, _c, _d, _e;
       this.index = index;
       this.bus = bus;
       this.flightPlanner = flightPlanner;
@@ -51617,7 +51617,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       if (!LNavUtils.isValidLNavIndex(index)) {
         throw new Error("LNavComputer: invalid index (".concat(index, ") specified (must be a non-negative integer)"));
       }
-      this.dataProvider = (_a7 = options === null || options === void 0 ? void 0 : options.dataProvider) !== null && _a7 !== void 0 ? _a7 : this.defaultDataProvider = new DefaultLNavComputerDataProvider();
+      this.dataProvider = (_a8 = options === null || options === void 0 ? void 0 : options.dataProvider) !== null && _a8 !== void 0 ? _a8 : this.defaultDataProvider = new DefaultLNavComputerDataProvider();
       const eventBusTopicSuffix = LNavUtils.getEventBusTopicSuffix(this.index);
       this.eventBusTopicPublishers = {
         "lnav_dtk": new LNavTopicPublisher(this.publisher, "lnav_dtk".concat(eventBusTopicSuffix), 0),
@@ -51645,7 +51645,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         "lnav_is_awaiting_calc": new LNavTopicPublisher(this.publisher, "lnav_is_awaiting_calc".concat(eventBusTopicSuffix), false)
       };
       const sub2 = bus.getSubscriber();
-      this.hasVectorAnticipation = (_b5 = options === null || options === void 0 ? void 0 : options.hasVectorAnticipation) !== null && _b5 !== void 0 ? _b5 : false;
+      this.hasVectorAnticipation = (_b6 = options === null || options === void 0 ? void 0 : options.hasVectorAnticipation) !== null && _b6 !== void 0 ? _b6 : false;
       this.disableAutoSuspendAtMissedApproachPoint = (_c = options === null || options === void 0 ? void 0 : options.disableAutoSuspendAtMissedApproachPoint) !== null && _c !== void 0 ? _c : false;
       this.vectorAnticipationBankRate = (_d = options === null || options === void 0 ? void 0 : options.vectorAnticipationBankRate) !== null && _d !== void 0 ? _d : 5;
       const maxBankAngleOpt = (_e = options === null || options === void 0 ? void 0 : options.maxBankAngle) !== null && _e !== void 0 ? _e : void 0;
@@ -51847,8 +51847,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Updates this computer's data.
      */
     updateData() {
-      var _a7;
-      (_a7 = this.defaultDataProvider) === null || _a7 === void 0 ? void 0 : _a7.update();
+      var _a8;
+      (_a8 = this.defaultDataProvider) === null || _a8 === void 0 ? void 0 : _a8.update();
       this.data.planePos.set(this.dataProvider.planePos.get());
       this.data.gs = this.dataProvider.gs.get();
       this.data.track = this.dataProvider.track.get();
@@ -51920,10 +51920,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The true course to steer to follow the specified track, in degrees.
      */
     getCourseToSteerTrack(data, dtk, xtk) {
-      var _a7;
+      var _a8;
       let absInterceptAngle;
       if (this.interceptFunc !== void 0) {
-        absInterceptAngle = this.interceptFunc(dtk, xtk, (_a7 = data.tas) !== null && _a7 !== void 0 ? _a7 : data.gs);
+        absInterceptAngle = this.interceptFunc(dtk, xtk, (_a8 = data.tas) !== null && _a8 !== void 0 ? _a8 : data.gs);
       } else {
         absInterceptAngle = Math.min(Math.pow(Math.abs(xtk) * 20, 1.35) + Math.abs(xtk) * 50, 45);
         if (absInterceptAngle <= 2.5) {
@@ -51973,7 +51973,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param plan The active flight plan.
      */
     calculateTracking(data, plan) {
-      var _a7, _b5;
+      var _a8, _b6;
       let didAdvance;
       do {
         didAdvance = false;
@@ -52042,7 +52042,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           }
           didAdvance = transitionMode !== this.currentState.transitionMode || legIndex !== this.currentState.globalLegIndex || vectorIndex !== this.currentState.vectorIndex || isSuspended !== this.currentState.isSuspended;
           if (legIndex !== this.currentState.globalLegIndex) {
-            this.currentLeg = (_a7 = plan.tryGetLeg(this.currentState.globalLegIndex)) !== null && _a7 !== void 0 ? _a7 : void 0;
+            this.currentLeg = (_a8 = plan.tryGetLeg(this.currentState.globalLegIndex)) !== null && _a8 !== void 0 ? _a8 : void 0;
             plan.setCalculatingLeg(this.currentState.globalLegIndex);
             plan.setLateralLeg(this.currentState.globalLegIndex);
           }
@@ -52051,7 +52051,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       if (this.currentState.transitionMode === LNavTransitionMode.Egress && this.currentState.globalLegIndex + 1 < plan.length && plan.activeCalculatingLeg !== this.currentState.globalLegIndex + 1) {
         plan.setCalculatingLeg(this.currentState.globalLegIndex + 1);
       }
-      this.currentVector = ((_b5 = this.currentLeg) === null || _b5 === void 0 ? void 0 : _b5.calculated) ? LNavUtils.getVectorsForTransitionMode(this.currentLeg.calculated, this.currentState.transitionMode, this.currentState.isSuspended)[this.currentState.vectorIndex] : void 0;
+      this.currentVector = ((_b6 = this.currentLeg) === null || _b6 === void 0 ? void 0 : _b6.calculated) ? LNavUtils.getVectorsForTransitionMode(this.currentLeg.calculated, this.currentState.transitionMode, this.currentState.isSuspended)[this.currentState.vectorIndex] : void 0;
       this.trackedHeadingVector = this.currentVector !== void 0 && this.currentVector.heading !== null ? this.currentVector : void 0;
     }
     /**
@@ -52061,7 +52061,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param plan The active flight plan.
      */
     updateVectorAnticipation(data, plan) {
-      var _a7;
+      var _a8;
       this.anticipationVector = void 0;
       this.vectorAnticipationDistance = 0;
       this.anticipationDtk = 0;
@@ -52070,7 +52070,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return;
       }
       this.advanceToNextVector(plan, this.currentState, false, this.anticipationState);
-      const anticipationCalcs = (_a7 = plan.tryGetLeg(this.anticipationState.globalLegIndex)) === null || _a7 === void 0 ? void 0 : _a7.calculated;
+      const anticipationCalcs = (_a8 = plan.tryGetLeg(this.anticipationState.globalLegIndex)) === null || _a8 === void 0 ? void 0 : _a8.calculated;
       if (!anticipationCalcs) {
         return;
       }
@@ -52153,7 +52153,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The LNAV state after advancing to the next trackable vector.
      */
     advanceToNextVector(plan, state, awaitCalculateOnNextLeg, out) {
-      var _a7, _b5, _c, _d, _e, _f;
+      var _a8, _b6, _c, _d, _e, _f;
       if (state !== out) {
         _LNavComputer.copyStateInfo(state, out);
       }
@@ -52166,7 +52166,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       let isSuspended = state.isSuspended;
       let vectors = leg.calculated ? LNavUtils.getVectorsForTransitionMode(leg.calculated, transitionMode, isSuspended) : void 0;
       let vectorIndex = state.vectorIndex + 1;
-      let vectorEndIndex = (_a7 = vectors === null || vectors === void 0 ? void 0 : vectors.length) !== null && _a7 !== void 0 ? _a7 : 0;
+      let vectorEndIndex = (_a8 = vectors === null || vectors === void 0 ? void 0 : vectors.length) !== null && _a8 !== void 0 ? _a8 : 0;
       let didAdvance = false;
       let isDone = false;
       if (transitionMode === LNavTransitionMode.Unsuspend && leg.calculated) {
@@ -52189,7 +52189,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           case LNavTransitionMode.Ingress:
             transitionMode = LNavTransitionMode.None;
             vectors = leg.calculated ? LNavUtils.getVectorsForTransitionMode(leg.calculated, transitionMode, isSuspended) : void 0;
-            vectorIndex = Math.max(0, isSuspended ? (_c = (_b5 = leg.calculated) === null || _b5 === void 0 ? void 0 : _b5.ingressJoinIndex) !== null && _c !== void 0 ? _c : 0 : 0);
+            vectorIndex = Math.max(0, isSuspended ? (_c = (_b6 = leg.calculated) === null || _b6 === void 0 ? void 0 : _b6.ingressJoinIndex) !== null && _c !== void 0 ? _c : 0 : 0);
             didAdvance = true;
             break;
           case LNavTransitionMode.Unsuspend:
@@ -52255,12 +52255,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The LNAV state after advancing to the next leg.
      */
     advanceToNextLeg(plan, state, out) {
-      var _a7, _b5, _c;
+      var _a8, _b6, _c;
       this.applyEndOfLegSuspends(plan, state, out);
       if (!out.isSuspended) {
         if (out.globalLegIndex + 1 >= plan.length) {
           out.transitionMode = LNavTransitionMode.None;
-          out.vectorIndex = Math.max(0, ((_c = (_b5 = (_a7 = plan.tryGetLeg(out.globalLegIndex)) === null || _a7 === void 0 ? void 0 : _a7.calculated) === null || _b5 === void 0 ? void 0 : _b5.flightPath.length) !== null && _c !== void 0 ? _c : 0) - 1);
+          out.vectorIndex = Math.max(0, ((_c = (_b6 = (_a8 = plan.tryGetLeg(out.globalLegIndex)) === null || _a8 === void 0 ? void 0 : _a8.calculated) === null || _b6 === void 0 ? void 0 : _b6.flightPath.length) !== null && _c !== void 0 ? _c : 0) - 1);
           return out;
         }
         out.globalLegIndex++;
@@ -52284,7 +52284,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The LNAV state after the suspend state has been set.
      */
     trySetSuspended(plan, state, suspend, out, inhibitResuspend = false, resetVectorsOnSuspendEnd = false) {
-      var _a7;
+      var _a8;
       if (state !== out) {
         _LNavComputer.copyStateInfo(state, out);
       }
@@ -52345,7 +52345,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           }
           if (suspend && state.transitionMode === LNavTransitionMode.Egress) {
             out.transitionMode = LNavTransitionMode.None;
-            out.vectorIndex = Math.max(0, ((_a7 = legCalc === null || legCalc === void 0 ? void 0 : legCalc.flightPath.length) !== null && _a7 !== void 0 ? _a7 : 1) - 1);
+            out.vectorIndex = Math.max(0, ((_a8 = legCalc === null || legCalc === void 0 ? void 0 : legCalc.flightPath.length) !== null && _a8 !== void 0 ? _a8 : 1) - 1);
           }
         }
       }
@@ -52365,7 +52365,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       const plan = this.flightPlanner.getActiveFlightPlan();
       try {
         await plan.calculate();
-      } catch (_a7) {
+      } catch (_a8) {
       }
       if (id !== this.awaitCalculateId) {
         return;
@@ -52381,8 +52381,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * specified state and along-vector distance.
      */
     getAlongLegDistance(plan, state, alongVectorDistance) {
-      var _a7;
-      const calcs = (_a7 = plan.tryGetLeg(state.globalLegIndex)) === null || _a7 === void 0 ? void 0 : _a7.calculated;
+      var _a8;
+      const calcs = (_a8 = plan.tryGetLeg(state.globalLegIndex)) === null || _a8 === void 0 ? void 0 : _a8.calculated;
       if (!calcs) {
         return 0;
       }
@@ -52435,8 +52435,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * specified state and along-vector distance.
      */
     getLegDistanceRemaining(plan, state, vectorDistanceRemaining) {
-      var _a7;
-      const calcs = (_a7 = plan.tryGetLeg(state.globalLegIndex)) === null || _a7 === void 0 ? void 0 : _a7.calculated;
+      var _a8;
+      const calcs = (_a8 = plan.tryGetLeg(state.globalLegIndex)) === null || _a8 === void 0 ? void 0 : _a8.calculated;
       if (!calcs) {
         return 0;
       }
@@ -52603,14 +52603,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param options Options for this driver.
      */
     constructor(bus, apValues, apMasterOn, options) {
-      var _a7, _b5, _c, _d;
+      var _a8, _b6, _c, _d;
       this.apValues = apValues;
       this.verticalWind = RegisteredSimVarUtils.create("AMBIENT WIND Y", SimVarValueType.FPM);
       this.tas = this.apValues.dataProvider.getItem("tas");
       this.aoa = this.apValues.dataProvider.getItem("aoa");
       this.verticalWindSmoother = new ExpSmoother(_AutopilotDriver.VERTICAL_WIND_SMOOTHING_TAU);
       this.verticalWindAverageValue = 0;
-      this.output = (_b5 = (_a7 = options === null || options === void 0 ? void 0 : options.createOutput) === null || _a7 === void 0 ? void 0 : _a7.call(options, apValues)) !== null && _b5 !== void 0 ? _b5 : new DefaultOutput(bus, apValues, options);
+      this.output = (_b6 = (_a8 = options === null || options === void 0 ? void 0 : options.createOutput) === null || _a8 === void 0 ? void 0 : _a8.call(options, apValues)) !== null && _b6 !== void 0 ? _b6 : new DefaultOutput(bus, apValues, options);
       this.pitchServoRate = (_c = options === null || options === void 0 ? void 0 : options.pitchServoRate) !== null && _c !== void 0 ? _c : _AutopilotDriver.DEFAULT_PITCH_SERVO_RATE;
       this.bankServoRate = (_d = options === null || options === void 0 ? void 0 : options.bankServoRate) !== null && _d !== void 0 ? _d : _AutopilotDriver.DEFAULT_BANK_SERVO_RATE;
     }
@@ -52742,7 +52742,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param options Options with which to configure the output.
      */
     constructor(bus, apValues, options) {
-      var _a7;
+      var _a8;
       this.bankRefSimVar = RegisteredSimVarUtils.create("AUTOPILOT BANK HOLD REF", SimVarValueType.Degree);
       this.currentBankRef = this.bankRefSimVar.get();
       this.pitchRefSimVar = RegisteredSimVarUtils.create("AUTOPILOT PITCH HOLD REF", SimVarValueType.Degree);
@@ -52770,7 +52770,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         if (options.maxRudderDeflection !== void 0) {
           this.maxRudderDeflection = options.maxRudderDeflection;
         }
-        this.rudderServoRate = ((_a7 = options === null || options === void 0 ? void 0 : options.rudderServoRate) !== null && _a7 !== void 0 ? _a7 : _DefaultOutput.DEFAULT_RUDDER_SERVO_RATE) / this.maxRudderDeflection * 16384;
+        this.rudderServoRate = ((_a8 = options === null || options === void 0 ? void 0 : options.rudderServoRate) !== null && _a8 !== void 0 ? _a8 : _DefaultOutput.DEFAULT_RUDDER_SERVO_RATE) / this.maxRudderDeflection * 16384;
         this.apMasterOn.sub(this.onApMasterOnChanged.bind(this));
       } else {
         this.isAutoCoordinationEnabled = false;
@@ -52787,7 +52787,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     setBank(bank) {
-      var _a7;
+      var _a8;
       if (this.zeroRollHeight !== void 0) {
         if (this.radioAltitude.isValueValid() && this.radioAltitude.getValue() < this.zeroRollHeight) {
           bank = 0;
@@ -52795,7 +52795,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
       this.currentBankRef = bank;
       this.bankRefSimVar.set(bank);
-      (_a7 = this.fdPublisher) === null || _a7 === void 0 ? void 0 : _a7.pub("fd_target_bank", this.currentBankRef, true, true);
+      (_a8 = this.fdPublisher) === null || _a8 === void 0 ? void 0 : _a8.pub("fd_target_bank", this.currentBankRef, true, true);
       this.lastBankSetTime = this.activeSimDuration.get();
     }
     /** @inheritDoc */
@@ -52810,10 +52810,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** @inheritDoc */
     setPitch(pitch) {
-      var _a7;
+      var _a8;
       this.currentPitchRef = pitch;
       this.pitchRefSimVar.set(pitch);
-      (_a7 = this.fdPublisher) === null || _a7 === void 0 ? void 0 : _a7.pub("fd_target_pitch", this.currentPitchRef, true, true);
+      (_a8 = this.fdPublisher) === null || _a8 === void 0 ? void 0 : _a8.pub("fd_target_pitch", this.currentPitchRef, true, true);
       this.lastPitchSetTime = this.activeSimDuration.get();
     }
     /** @inheritDoc */
@@ -52937,7 +52937,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * (specifically the `THROTTLE[N]_SET` event).
      */
     constructor(bus, airspeedIndex, throttleInfos, options, throttleLeverManager) {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w;
       this.bus = bus;
       this.publisher = this.bus.getPublisher();
       this.isOverspeedProtActive = Subject.create(false);
@@ -52986,7 +52986,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         isUnderspeedProtEngaged: false
       };
       this.isAlive = true;
-      this.useIndicatedMach = (_a7 = options.useIndicatedMach) !== null && _a7 !== void 0 ? _a7 : false;
+      this.useIndicatedMach = (_a8 = options.useIndicatedMach) !== null && _a8 !== void 0 ? _a8 : false;
       this.airspeedIndex = SubscribableUtils.toSubscribable(airspeedIndex, true);
       this.airspeedIndex.sub((index) => {
         this.airspeedSimVar = "AIRSPEED INDICATED:".concat(index);
@@ -52998,7 +52998,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.machToKiasSmoother = new ExpSmoother(options.speedSmoothingConstant);
       this.iasLookahead = SubscribableUtils.toSubscribable(options.speedLookahead, true);
       this.iasSmoother = new MultiExpSmoother(options.speedSmoothingConstant, options.speedSmoothingVelocityConstant);
-      this.lookaheadIasSmoother = new MultiExpSmoother((_b5 = options.speedLookaheadSmoothingConstant) !== null && _b5 !== void 0 ? _b5 : options.speedSmoothingConstant, (_c = options.speedLookaheadSmoothingVelocityConstant) !== null && _c !== void 0 ? _c : options.speedSmoothingVelocityConstant);
+      this.lookaheadIasSmoother = new MultiExpSmoother((_b6 = options.speedLookaheadSmoothingConstant) !== null && _b6 !== void 0 ? _b6 : options.speedSmoothingConstant, (_c = options.speedLookaheadSmoothingVelocityConstant) !== null && _c !== void 0 ? _c : options.speedSmoothingVelocityConstant);
       this.lastIasLookahead = this.iasLookahead.get();
       this.shouldTargetAccel = options.selectedSpeedAccelTarget !== void 0;
       this.selectedSpeedAccelTargetFunc = options.selectedSpeedAccelTarget;
@@ -53210,7 +53210,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @throws Error if this autothrottle has been destroyed.
      */
     stop() {
-      var _a7, _b5, _c, _d, _e, _f, _g;
+      var _a8, _b6, _c, _d, _e, _f, _g;
       if (!this.isAlive) {
         throw new Error("AbstractAutothrottle: cannot stop a dead autothrottle");
       }
@@ -53223,8 +53223,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.iasSmoother.reset();
       this.lookaheadIasSmoother.reset();
       this.lastSmoothedIas = void 0;
-      (_a7 = this.accelSmoother) === null || _a7 === void 0 ? void 0 : _a7.reset();
-      (_b5 = this.selectedSpeedAccelCorrectionSmoother) === null || _b5 === void 0 ? void 0 : _b5.reset();
+      (_a8 = this.accelSmoother) === null || _a8 === void 0 ? void 0 : _a8.reset();
+      (_b6 = this.selectedSpeedAccelCorrectionSmoother) === null || _b6 === void 0 ? void 0 : _b6.reset();
       (_c = this.overspeedAccelCorrectionSmoother) === null || _c === void 0 ? void 0 : _c.reset();
       (_d = this.underspeedAccelCorrectionSmoother) === null || _d === void 0 ? void 0 : _d.reset();
       (_e = this.selectedSpeedAccelTargetSmoother) === null || _e === void 0 ? void 0 : _e.reset();
@@ -53364,7 +53364,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The engine power for all throttles commanded by this autothrottle's speed controller.
      */
     calculateSpeedTargetPower(dt, out) {
-      var _a7, _b5, _c, _d, _e, _f;
+      var _a8, _b6, _c, _d, _e, _f;
       out.selectedSpeedPowerTarget = void 0;
       out.overspeedProtPowerTarget = void 0;
       out.underspeedProtPowerTarget = void 0;
@@ -53425,8 +53425,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.prevOverspeedSpeedTarget.copyFrom(this.overspeedSpeedTarget);
       } else {
         this.overspeedPid.reset();
-        (_a7 = this.overspeedAccelCorrectionSmoother) === null || _a7 === void 0 ? void 0 : _a7.reset();
-        (_b5 = this.overspeedProtAccelTargetSmoother) === null || _b5 === void 0 ? void 0 : _b5.reset();
+        (_a8 = this.overspeedAccelCorrectionSmoother) === null || _a8 === void 0 ? void 0 : _a8.reset();
+        (_b6 = this.overspeedProtAccelTargetSmoother) === null || _b6 === void 0 ? void 0 : _b6.reset();
         this.prevOverspeedSpeedTarget.reset();
       }
       if (isUnderspeedProtActive) {
@@ -53517,9 +53517,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The output of the speed PID controller.
      */
     updateSpeedTargetPid(pid, correctionTransformer, effectiveIas, currentSpeedTarget, prevSpeedTarget, useMaxSpeed, dt, targetChangeThreshold) {
-      var _a7, _b5, _c, _d;
+      var _a8, _b6, _c, _d;
       const targetSpeedFunc = useMaxSpeed ? Math.max : Math.min;
-      const currentTargetIas = targetSpeedFunc((_a7 = currentSpeedTarget.ias) !== null && _a7 !== void 0 ? _a7 : Infinity, ((_b5 = currentSpeedTarget.mach) !== null && _b5 !== void 0 ? _b5 : Infinity) * currentSpeedTarget.machToKias);
+      const currentTargetIas = targetSpeedFunc((_a8 = currentSpeedTarget.ias) !== null && _a8 !== void 0 ? _a8 : Infinity, ((_b6 = currentSpeedTarget.mach) !== null && _b6 !== void 0 ? _b6 : Infinity) * currentSpeedTarget.machToKias);
       const error = currentTargetIas - effectiveIas;
       const prevTargetIasAtCurrentUpdate = targetSpeedFunc((_c = prevSpeedTarget.ias) !== null && _c !== void 0 ? _c : Infinity, ((_d = prevSpeedTarget.mach) !== null && _d !== void 0 ? _d : Infinity) * currentSpeedTarget.machToKias);
       if (isFinite(prevTargetIasAtCurrentUpdate)) {
@@ -53556,9 +53556,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The output of the speed PID controller.
      */
     updateAccelTargetPid(pid, accelTargetFunc, accelCorrectionSmoother, accelTargetSmoother, correctionTransformer, effectiveAccel, prevEffectiveAccel, effectiveIas, currentSpeedTarget, prevSpeedTarget, useMaxSpeed, dt, targetChangeThreshold) {
-      var _a7, _b5, _c, _d, _e, _f;
+      var _a8, _b6, _c, _d, _e, _f;
       const targetSpeedFunc = useMaxSpeed ? Math.max : Math.min;
-      const currentTargetIas = targetSpeedFunc((_a7 = currentSpeedTarget.ias) !== null && _a7 !== void 0 ? _a7 : Infinity, ((_b5 = currentSpeedTarget.mach) !== null && _b5 !== void 0 ? _b5 : Infinity) * currentSpeedTarget.machToKias);
+      const currentTargetIas = targetSpeedFunc((_a8 = currentSpeedTarget.ias) !== null && _a8 !== void 0 ? _a8 : Infinity, ((_b6 = currentSpeedTarget.mach) !== null && _b6 !== void 0 ? _b6 : Infinity) * currentSpeedTarget.machToKias);
       let accelCorrection = 0;
       if (prevSpeedTarget.machToKias !== null) {
         const currentTargetIasAtPrevUpdate = targetSpeedFunc((_c = currentSpeedTarget.ias) !== null && _c !== void 0 ? _c : Infinity, ((_d = currentSpeedTarget.mach) !== null && _d !== void 0 ? _d : Infinity) * prevSpeedTarget.machToKias);
@@ -53846,7 +53846,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param dt The amount of time over which to drive the throttle, in seconds.
      */
     drive(targetNormPos, dt) {
-      var _a7;
+      var _a8;
       const current = this.normPosition;
       const delta = targetNormPos - current;
       if (delta === 0) {
@@ -53861,7 +53861,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       if (this.throttleLeverManager !== void 0) {
         this.throttleLeverManager.setThrottleLeverPosRaw(this.index, finalPos * _AutothrottleThrottle.RAW_AXIS_MAX);
       } else {
-        (_a7 = this.keyEventManager) === null || _a7 === void 0 ? void 0 : _a7.triggerKey(this.throttleSetKVar, false, Math.round(finalPos * _AutothrottleThrottle.RAW_AXIS_MAX));
+        (_a8 = this.keyEventManager) === null || _a8 === void 0 ? void 0 : _a8.triggerKey(this.throttleSetKVar, false, Math.round(finalPos * _AutothrottleThrottle.RAW_AXIS_MAX));
       }
     }
     /**
@@ -53876,8 +53876,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Destroys this throttle.
      */
     destroy() {
-      var _a7;
-      (_a7 = this.virtualPos) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      var _a8;
+      (_a8 = this.virtualPos) === null || _a8 === void 0 ? void 0 : _a8.destroy();
     }
   };
   AutothrottleThrottle.RAW_AXIS_MAX = 16384;
@@ -53888,7 +53888,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param options Configuration options for the transporter.
      */
     constructor(bus, options) {
-      var _a7;
+      var _a8;
       this.bus = bus;
       this.currentValue = false;
       this.subs = [];
@@ -53900,7 +53900,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         priority: this.priority,
         suffix: this.suffix
       } = options);
-      this.initialAcknowledge = (_a7 = options.initialAcknowledge) !== null && _a7 !== void 0 ? _a7 : false;
+      this.initialAcknowledge = (_a8 = options.initialAcknowledge) !== null && _a8 !== void 0 ? _a8 : false;
     }
     // eslint-disable-next-line jsdoc/require-jsdoc
     static create(bus, arg2, arg3, arg4) {
@@ -53949,7 +53949,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @throws Error if this transporter has been destroyed.
      */
     bindUpdate(predicate) {
-      var _a7;
+      var _a8;
       if (!this.isAlive) {
         throw new Error("CasAlertTransporter: cannot bind an alert state using a dead transporter");
       }
@@ -53960,7 +53960,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       };
       this.updateEntries.push(entry);
       this.initUpdateFuncs();
-      (_a7 = _CasAlertTransporter.updateEntries) === null || _a7 === void 0 ? void 0 : _a7.push(entry);
+      (_a8 = _CasAlertTransporter.updateEntries) === null || _a8 === void 0 ? void 0 : _a8.push(entry);
       return this;
     }
     /**
@@ -53971,7 +53971,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @throws Error if this transporter has been destroyed.
      */
     bindStateUpdate(predicate, state) {
-      var _a7;
+      var _a8;
       if (!this.isAlive) {
         throw new Error("CasAlertTransporter: cannot bind an alert state using a dead transporter");
       }
@@ -53983,7 +53983,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       };
       this.updateEntries.push(entry);
       this.initUpdateFuncs();
-      (_a7 = _CasAlertTransporter.updateEntries) === null || _a7 === void 0 ? void 0 : _a7.push(entry);
+      (_a8 = _CasAlertTransporter.updateEntries) === null || _a8 === void 0 ? void 0 : _a8.push(entry);
       return this;
     }
     /**
@@ -54088,7 +54088,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param options Options for the CAS system. See {@link CasSystemOptions}.
      */
     constructor(bus, primary = false, options) {
-      var _a7;
+      var _a8;
       this.registeredAlerts = /* @__PURE__ */ new Map();
       this.activeInhibitStates = /* @__PURE__ */ new Set();
       this.scheduledSuffixedAlerts = /* @__PURE__ */ new Map();
@@ -54110,7 +54110,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.casPublisher = this.bus.getPublisher();
       this.casStatePublisher = this.bus.getPublisher();
       this.isPrimary = primary;
-      this.activeMessageSort = (_a7 = options === null || options === void 0 ? void 0 : options.sortActiveMessages) !== null && _a7 !== void 0 ? _a7 : _CasSystem.DEFAULT_ACTIVE_MESSAGE_SORT;
+      this.activeMessageSort = (_a8 = options === null || options === void 0 ? void 0 : options.sortActiveMessages) !== null && _a8 !== void 0 ? _a8 : _CasSystem.DEFAULT_ACTIVE_MESSAGE_SORT;
       this._casActiveMessageSubject = SortedMappedSubscribableArray.create(this.displayedCasMessages, this.activeMessageSort, (a, b) => a.uuid === b.uuid);
       this.casActiveMessageSubject = this._casActiveMessageSubject;
       this.setMasterStatus(AnnunciationType.Caution, false);
@@ -54200,7 +54200,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns A new CasActiveMessage or undefined if the key was invalid.
      */
     createNewMessage(alertKey, priority, initialAcknowledge) {
-      var _a7;
+      var _a8;
       const def = this.registeredAlerts.get(alertKey.uuid);
       if (def === void 0) {
         return void 0;
@@ -54216,7 +54216,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
       return {
         uuid: alertKey.uuid,
-        message: (_a7 = def.message) !== null && _a7 !== void 0 ? _a7 : "MISSING MESSAGE",
+        message: (_a8 = def.message) !== null && _a8 !== void 0 ? _a8 : "MISSING MESSAGE",
         priority,
         acknowledged: initialAcknowledge,
         inhibited,
@@ -54233,11 +54233,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param initialAcknowledge Whether the alert is initially acknowledged.
      */
     scheduleAlert(alertKey, priority, initialAcknowledge) {
-      var _a7;
+      var _a8;
       if (!this.checkValidAlertKey(alertKey)) {
         return;
       }
-      const debounceTime = (_a7 = this.registeredAlerts.get(alertKey.uuid)) === null || _a7 === void 0 ? void 0 : _a7.debounceTime;
+      const debounceTime = (_a8 = this.registeredAlerts.get(alertKey.uuid)) === null || _a8 === void 0 ? void 0 : _a8.debounceTime;
       if (debounceTime === void 0) {
         this.activateAlert(alertKey, priority, initialAcknowledge);
         return;
@@ -54313,7 +54313,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param initialAcknowledge Whether the alert is initially acknowledged.
      */
     activateAlert(alertKey, priority, initialAcknowledge) {
-      var _a7;
+      var _a8;
       if (!this.checkValidAlertKey(alertKey)) {
         return;
       }
@@ -54336,7 +54336,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             if (initialAcknowledge) {
               acknowledgedSuffixes.push(alertKey.suffix);
             }
-            const suffixOrder = (_a7 = this.registeredAlerts.get(alertKey.uuid)) === null || _a7 === void 0 ? void 0 : _a7.suffixes;
+            const suffixOrder = (_a8 = this.registeredAlerts.get(alertKey.uuid)) === null || _a8 === void 0 ? void 0 : _a8.suffixes;
             if (suffixOrder !== void 0) {
               const comparator = (a, b) => suffixOrder.indexOf(a) - suffixOrder.indexOf(b);
               suffixes.sort(comparator);
@@ -54355,13 +54355,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param priority The priority of the alert to clear.
      */
     deactivateAlert(alertKey, priority) {
-      var _a7, _b5, _c, _d;
+      var _a8, _b6, _c, _d;
       if (!this.checkValidAlertKey(alertKey)) {
         return;
       }
       if (alertKey.suffix === void 0) {
-        (_a7 = this.allMessages.get(priority)) === null || _a7 === void 0 ? void 0 : _a7.delete(alertKey.uuid);
-        (_b5 = this.scheduledUnsuffixedAlerts.get(alertKey.uuid)) === null || _b5 === void 0 ? void 0 : _b5.delete(priority);
+        (_a8 = this.allMessages.get(priority)) === null || _a8 === void 0 ? void 0 : _a8.delete(alertKey.uuid);
+        (_b6 = this.scheduledUnsuffixedAlerts.get(alertKey.uuid)) === null || _b6 === void 0 ? void 0 : _b6.delete(priority);
       } else {
         (_d = (_c = this.scheduledSuffixedAlerts.get(alertKey.uuid)) === null || _c === void 0 ? void 0 : _c.get(alertKey.suffix)) === null || _d === void 0 ? void 0 : _d.delete(priority);
         const messagesAtPriority = this.allMessages.get(priority);
@@ -54451,7 +54451,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param active Whether the state is active or not.
      */
     handleInhibitState(state, active) {
-      var _a7, _b5, _c, _d;
+      var _a8, _b6, _c, _d;
       if (active && !this.activeInhibitStates.has(state) || !active && this.activeInhibitStates.has(state)) {
         if (active) {
           this.activeInhibitStates.add(state);
@@ -54459,7 +54459,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           this.activeInhibitStates.delete(state);
         }
         for (const priority of this.allMessages.keys()) {
-          for (const message of (_b5 = (_a7 = this.allMessages.get(priority)) === null || _a7 === void 0 ? void 0 : _a7.values()) !== null && _b5 !== void 0 ? _b5 : []) {
+          for (const message of (_b6 = (_a8 = this.allMessages.get(priority)) === null || _a8 === void 0 ? void 0 : _a8.values()) !== null && _b6 !== void 0 ? _b6 : []) {
             if (message !== void 0) {
               let isInhibited = false;
               const _arr_7 = (_d = (_c = this.registeredAlerts.get(message.uuid)) === null || _c === void 0 ? void 0 : _c.inhibitedBy) !== null && _d !== void 0 ? _d : [];
@@ -54749,8 +54749,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns A Promise which is fulfilled with an instance of AtomicSequence as soon as the instance is available.
      */
     static async getInstance() {
-      var _a7;
-      return (_a7 = _AtomicSequenceUtils.instancePromise) !== null && _a7 !== void 0 ? _a7 : _AtomicSequenceUtils.instancePromise = new Promise((resolve) => {
+      var _a8;
+      return (_a8 = _AtomicSequenceUtils.instancePromise) !== null && _a8 !== void 0 ? _a8 : _AtomicSequenceUtils.instancePromise = new Promise((resolve) => {
         RegisterViewListener("JS_LISTENER_ATOMIC", () => {
           resolve(Object.freeze({
             /** @inheritDoc */
@@ -55211,12 +55211,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param mode The mode to set.
      */
     setMode(index, mode) {
-      var _a7;
+      var _a8;
       if (mode === this.lastModes[index]) {
         return;
       }
       this.lastModes[index] = mode;
-      this.publisher.pub(this.throttleInfos[index].fadecModeTopic, (_a7 = mode === null || mode === void 0 ? void 0 : mode.name) !== null && _a7 !== void 0 ? _a7 : "", true, true);
+      this.publisher.pub(this.throttleInfos[index].fadecModeTopic, (_a8 = mode === null || mode === void 0 ? void 0 : mode.name) !== null && _a8 !== void 0 ? _a8 : "", true, true);
     }
   };
   JetFadec.MSFS_STANDARD_SEA_LEVEL_TEMP_RANKINE = 518.69;
@@ -55228,7 +55228,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param options Options with which to configure the manager.
      */
     constructor(bus, onInitCallback, options) {
-      var _a7, _b5;
+      var _a8, _b6;
       this.bus = bus;
       this.publisher = this.bus.getPublisher();
       this.vrGroupInteractionSimVar = RegisteredSimVarUtils.createBoolean("VR GROUP INTERACTION ON");
@@ -55239,8 +55239,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         changeRawThrottleLeverPosition: this.changeRawThrottleLeverPosition.bind(this)
       };
       this.defaultKeyEventHandlers = /* @__PURE__ */ new Map();
-      this.rawStep = (_a7 = (options === null || options === void 0 ? void 0 : options.step) !== void 0 ? options.step * _ThrottleLeverManager.RAW_MAX : options === null || options === void 0 ? void 0 : options.rawStep) !== null && _a7 !== void 0 ? _a7 : _ThrottleLeverManager.DEFAULT_RAW_STEP;
-      this.rawStepSmall = (_b5 = (options === null || options === void 0 ? void 0 : options.stepSmall) !== void 0 ? options.stepSmall * _ThrottleLeverManager.RAW_MAX : options === null || options === void 0 ? void 0 : options.rawStepSmall) !== null && _b5 !== void 0 ? _b5 : _ThrottleLeverManager.DEFAULT_RAW_STEP_SMALL;
+      this.rawStep = (_a8 = (options === null || options === void 0 ? void 0 : options.step) !== void 0 ? options.step * _ThrottleLeverManager.RAW_MAX : options === null || options === void 0 ? void 0 : options.rawStep) !== null && _a8 !== void 0 ? _a8 : _ThrottleLeverManager.DEFAULT_RAW_STEP;
+      this.rawStepSmall = (_b6 = (options === null || options === void 0 ? void 0 : options.stepSmall) !== void 0 ? options.stepSmall * _ThrottleLeverManager.RAW_MAX : options === null || options === void 0 ? void 0 : options.rawStepSmall) !== null && _b6 !== void 0 ? _b6 : _ThrottleLeverManager.DEFAULT_RAW_STEP_SMALL;
       this.throttleLevers = ArrayUtils.create(_ThrottleLeverManager.THROTTLE_COUNT, (index) => {
         return {
           index: index + 1,
@@ -55774,12 +55774,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param mode The mode to set.
      */
     setMode(index, mode) {
-      var _a7;
+      var _a8;
       if (mode === this.lastModes[index]) {
         return;
       }
       this.lastModes[index] = mode;
-      this.publisher.pub(this.throttleInfos[index].fadecModeTopic, (_a7 = mode === null || mode === void 0 ? void 0 : mode.name) !== null && _a7 !== void 0 ? _a7 : "", true, true);
+      this.publisher.pub(this.throttleInfos[index].fadecModeTopic, (_a8 = mode === null || mode === void 0 ? void 0 : mode.name) !== null && _a8 !== void 0 ? _a8 : "", true, true);
     }
   };
   TurbopropFadec.MSFS_STANDARD_SEA_LEVEL_TEMP_RANKINE = 518.69;
@@ -55799,7 +55799,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     /** @inheritDoc */
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     async handleSelectKey(event) {
-      var _a7, _b5;
+      var _a8, _b6;
       if (this.isDisabled()) {
         return false;
       }
@@ -55807,7 +55807,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         if (this.options.onDelete) {
           const result = await this.options.onDelete();
           if (result === true || typeof result === "string") {
-            if ((_a7 = this.options.clearScratchpadOnSelectedHandled) !== null && _a7 !== void 0 ? _a7 : true) {
+            if ((_a8 = this.options.clearScratchpadOnSelectedHandled) !== null && _a8 !== void 0 ? _a8 : true) {
               this.page.screen.clearScratchpad();
             }
             return result;
@@ -55818,7 +55818,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         try {
           const result = await this.options.onSelected(event.scratchpadContents);
           if (result === true || typeof result === "string") {
-            if ((_b5 = this.options.clearScratchpadOnSelectedHandled) !== null && _b5 !== void 0 ? _b5 : true) {
+            if ((_b6 = this.options.clearScratchpadOnSelectedHandled) !== null && _b6 !== void 0 ? _b6 : true) {
               this.page.screen.clearScratchpad();
             }
             return result;
@@ -55889,12 +55889,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Use this for setting up subscriptions and such.
      */
     init() {
-      var _a7;
+      var _a8;
       this.addBinding(this.screen.currentSubpageIndex.sub(() => this.invalidate()));
       const _arr_1 = this.pageExtensions;
       for (let _i_1 = 0; _i_1 < _arr_1.length; ++_i_1) {
         const extension = _arr_1[_i_1];
-        (_a7 = extension.onPageInit) === null || _a7 === void 0 ? void 0 : _a7.call(extension);
+        (_a8 = extension.onPageInit) === null || _a8 === void 0 ? void 0 : _a8.call(extension);
       }
       this.onInit();
     }
@@ -55907,7 +55907,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Pauses the page and calls appropriate event handlers
      */
     pause() {
-      var _a7;
+      var _a8;
       const _arr_2 = this.bindings;
       for (let _i_2 = 0; _i_2 < _arr_2.length; ++_i_2) {
         const binding = _arr_2[_i_2];
@@ -55922,7 +55922,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       const _arr_3 = this.pageExtensions;
       for (let _i_3 = 0; _i_3 < _arr_3.length; ++_i_3) {
         const extension = _arr_3[_i_3];
-        (_a7 = extension.onPagePause) === null || _a7 === void 0 ? void 0 : _a7.call(extension);
+        (_a8 = extension.onPagePause) === null || _a8 === void 0 ? void 0 : _a8.call(extension);
       }
     }
     /**
@@ -55936,7 +55936,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param props the props to pass in to the page, if applicable
      */
     resume(props) {
-      var _a7;
+      var _a8;
       if (props !== void 0) {
         this._props = props;
       }
@@ -55952,7 +55952,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       const _arr_5 = this.pageExtensions;
       for (let _i_5 = 0; _i_5 < _arr_5.length; ++_i_5) {
         const extension = _arr_5[_i_5];
-        (_a7 = extension.onPageResume) === null || _a7 === void 0 ? void 0 : _a7.call(extension);
+        (_a8 = extension.onPageResume) === null || _a8 === void 0 ? void 0 : _a8.call(extension);
       }
       this.isDirty = true;
       this.clockSub.resume(true);
@@ -55969,7 +55969,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * Destroys the page and calls appropriate event handlers
      */
     destroy() {
-      var _a7;
+      var _a8;
       this.isDirty = false;
       this.clockSub.destroy();
       const _arr_6 = this.bindings;
@@ -55984,7 +55984,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       const _arr_7 = this.pageExtensions;
       for (let _i_7 = 0; _i_7 < _arr_7.length; ++_i_7) {
         const extension = _arr_7[_i_7];
-        (_a7 = extension.onPageDestroyed) === null || _a7 === void 0 ? void 0 : _a7.call(extension);
+        (_a8 = extension.onPageDestroyed) === null || _a8 === void 0 ? void 0 : _a8.call(extension);
       }
     }
     /**
@@ -56003,7 +56003,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @throws If a `PositionedFmcColumn` attempts to return an `FmcRenderTemplate` from its render function (only `string`s are allowed).
      */
     initialRender() {
-      var _a7, _b5;
+      var _a8, _b6;
       if (!this.isInitialized) {
         return;
       }
@@ -56011,7 +56011,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       const _arr_8 = this.pageExtensions;
       for (let _i_8 = 0; _i_8 < _arr_8.length; ++_i_8) {
         const extension = _arr_8[_i_8];
-        (_a7 = extension.onPageRendered) === null || _a7 === void 0 ? void 0 : _a7.call(extension, templates);
+        (_a8 = extension.onPageRendered) === null || _a8 === void 0 ? void 0 : _a8.call(extension, templates);
       }
       this.screen.currentSubpageCount.set(templates.length);
       const template = templates[this.screen.currentSubpageIndex.get() - 1];
@@ -56059,7 +56059,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             renderRow[j] = {
               text,
               columnIndex: col[1],
-              alignment: (_b5 = col[2]) !== null && _b5 !== void 0 ? _b5 : "left"
+              alignment: (_b6 = col[2]) !== null && _b6 !== void 0 ? _b6 : "left"
             };
           }
         }
@@ -56118,16 +56118,16 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      */
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     async handleLineSelectKey(event) {
-      var _a7, _b5;
+      var _a8, _b6;
       const _arr_9 = this.pageExtensions;
       for (let _i_9 = 0; _i_9 < _arr_9.length; ++_i_9) {
         const extension = _arr_9[_i_9];
-        const processedByExtension = (_a7 = extension.onPageHandleSelectKey) === null || _a7 === void 0 ? void 0 : _a7.call(extension, event);
+        const processedByExtension = (_a8 = extension.onPageHandleSelectKey) === null || _a8 === void 0 ? void 0 : _a8.call(extension, event);
         if (processedByExtension) {
           return true;
         }
       }
-      const componentAtSk = (_b5 = this.memorizedComponents[event.row]) === null || _b5 === void 0 ? void 0 : _b5[event.col];
+      const componentAtSk = (_b6 = this.memorizedComponents[event.row]) === null || _b6 === void 0 ? void 0 : _b6[event.col];
       if (componentAtSk) {
         const selectKeyHandled = await componentAtSk.handleSelectKey(event);
         if (selectKeyHandled !== false) {
@@ -56153,11 +56153,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns a Promise that resolves to a boolean or string
      */
     async handleScrolling(event) {
-      var _a7;
+      var _a8;
       const _arr_10 = this.pageExtensions;
       for (let _i_10 = 0; _i_10 < _arr_10.length; ++_i_10) {
         const extension = _arr_10[_i_10];
-        const processedByExtension = (_a7 = extension.onPageHandleScrolling) === null || _a7 === void 0 ? void 0 : _a7.call(extension, event);
+        const processedByExtension = (_a8 = extension.onPageHandleScrolling) === null || _a8 === void 0 ? void 0 : _a8.call(extension, event);
         if (processedByExtension) {
           return true;
         }
@@ -56291,12 +56291,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       r = MathUtils.clamp(r / 255, 0, 1);
       g = MathUtils.clamp(g / 255, 0, 1);
       b = MathUtils.clamp(b / 255, 0, 1);
-      const max = Math.max(r, g, b);
+      const max2 = Math.max(r, g, b);
       const min = Math.min(r, g, b);
-      const chroma = max - min;
-      const l = (max + min) / 2;
-      const s = l === 0 || l === 1 ? 0 : chroma / (1 - Math.abs(max + min - 1));
-      const h = 60 * (chroma === 0 ? 0 : max === r ? (g - b) / chroma % 6 : max === g ? (b - r) / chroma + 2 : (r - g) / chroma + 4);
+      const chroma = max2 - min;
+      const l = (max2 + min) / 2;
+      const s = l === 0 || l === 1 ? 0 : chroma / (1 - Math.abs(max2 + min - 1));
+      const h = 60 * (chroma === 0 ? 0 : max2 === r ? (g - b) / chroma % 6 : max2 === g ? (b - r) / chroma + 2 : (r - g) / chroma + 4);
       out[0] = h;
       out[1] = s;
       out[2] = l;
@@ -56555,10 +56555,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * object.
      */
     static resolveOptions(options) {
-      var _a7;
+      var _a8;
       const resolved = Object.assign({}, options);
       for (const key in _DateTimeFormatter.DEFAULT_OPTIONS) {
-        (_a7 = resolved[key]) !== null && _a7 !== void 0 ? _a7 : resolved[key] = _DateTimeFormatter.DEFAULT_OPTIONS[key];
+        (_a8 = resolved[key]) !== null && _a8 !== void 0 ? _a8 : resolved[key] = _DateTimeFormatter.DEFAULT_OPTIONS[key];
       }
       return resolved;
     }
@@ -56630,7 +56630,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * according to the rules defined by the numeric template fragment.
      */
     static parseNumFragment(match) {
-      var _a7, _b5;
+      var _a8, _b6;
       const leftMatch = match[4], unitMatch = match[5], leftOptionalMatch = match[6], rightMatch = match[7], rightForcedMatch = match[8], rightOptionalMatch = match[9];
       const numGetter = _DateTimeFormatter.NUM_GETTERS[unitMatch];
       const numFractionGetter = _DateTimeFormatter.NUM_FRACTION_GETTERS[unitMatch];
@@ -56646,8 +56646,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             return "".concat(formatLeftFunc(date)).concat(numFractionGetter(date).toString().substring(1));
           };
         }
-        const forcedDecimalPlaces = (_a7 = rightForcedMatch === null || rightForcedMatch === void 0 ? void 0 : rightForcedMatch.length) !== null && _a7 !== void 0 ? _a7 : 0;
-        const unforcedDecimalPlaces = (_b5 = rightOptionalMatch === null || rightOptionalMatch === void 0 ? void 0 : rightOptionalMatch.length) !== null && _b5 !== void 0 ? _b5 : 0;
+        const forcedDecimalPlaces = (_a8 = rightForcedMatch === null || rightForcedMatch === void 0 ? void 0 : rightForcedMatch.length) !== null && _a8 !== void 0 ? _a8 : 0;
+        const unforcedDecimalPlaces = (_b6 = rightOptionalMatch === null || rightOptionalMatch === void 0 ? void 0 : rightOptionalMatch.length) !== null && _b6 !== void 0 ? _b6 : 0;
         const totalDecimalPlaces = forcedDecimalPlaces + unforcedDecimalPlaces;
         const factor = Math.pow(10, totalDecimalPlaces);
         return (date) => {
@@ -56809,12 +56809,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @throws When the fragment is invalid.
      */
     static parseFragment(string) {
-      var _a7;
+      var _a8;
       const match = string.match(this.FRAGMENT_DATE_REGEXP);
       if (match !== null) {
         const dateType = match[1];
         const dateFormat = match[2];
-        const dateFormatter = (_a7 = _AiracCycleFormatter.dateFormatterCache.get(dateFormat)) !== null && _a7 !== void 0 ? _a7 : _AiracCycleFormatter.dateFormatterCache.set(dateFormat, DateTimeFormatter.create(dateFormat)).get(dateFormat);
+        const dateFormatter = (_a8 = _AiracCycleFormatter.dateFormatterCache.get(dateFormat)) !== null && _a8 !== void 0 ? _a8 : _AiracCycleFormatter.dateFormatterCache.set(dateFormat, DateTimeFormatter.create(dateFormat)).get(dateFormat);
         switch (dateType) {
           case "eff":
             return (cycle) => dateFormatter(cycle.effectiveTimestamp);
@@ -56914,10 +56914,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * object.
      */
     static resolveOptions(options) {
-      var _a7;
+      var _a8;
       const resolved = Object.assign({}, options);
       for (const key in _DmsFormatter2.DEFAULT_OPTIONS) {
-        (_a7 = resolved[key]) !== null && _a7 !== void 0 ? _a7 : resolved[key] = _DmsFormatter2.DEFAULT_OPTIONS[key];
+        (_a8 = resolved[key]) !== null && _a8 !== void 0 ? _a8 : resolved[key] = _DmsFormatter2.DEFAULT_OPTIONS[key];
       }
       return resolved;
     }
@@ -56949,7 +56949,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * by the template fragment.
      */
     static parseFragment(fragment, precision2, precisionUnit) {
-      var _a7, _b5;
+      var _a8, _b6;
       const signMatch = fragment.match(_DmsFormatter2.SIGN_FRAGMENT_REGEX);
       if (signMatch) {
         const posCharMatch = signMatch[1], posStringMatch = signMatch[2], negStringMatch = signMatch[3];
@@ -56986,8 +56986,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             return "".concat(formatLeftFunc(converted)).concat(decimal.toString().substring(1));
           };
         }
-        const forcedDecimalPlaces = (_a7 = rightForcedMatch === null || rightForcedMatch === void 0 ? void 0 : rightForcedMatch.length) !== null && _a7 !== void 0 ? _a7 : 0;
-        const unforcedDecimalPlaces = (_b5 = rightOptionalMatch === null || rightOptionalMatch === void 0 ? void 0 : rightOptionalMatch.length) !== null && _b5 !== void 0 ? _b5 : 0;
+        const forcedDecimalPlaces = (_a8 = rightForcedMatch === null || rightForcedMatch === void 0 ? void 0 : rightForcedMatch.length) !== null && _a8 !== void 0 ? _a8 : 0;
+        const unforcedDecimalPlaces = (_b6 = rightOptionalMatch === null || rightOptionalMatch === void 0 ? void 0 : rightOptionalMatch.length) !== null && _b6 !== void 0 ? _b6 : 0;
         const totalDecimalPlaces = forcedDecimalPlaces + unforcedDecimalPlaces;
         const factor = Math.pow(10, totalDecimalPlaces);
         const epsilon3 = Math.min(step / 2, 1 / (2 * factor));
@@ -57097,10 +57097,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * object.
      */
     static resolveOptions(options) {
-      var _a7;
+      var _a8;
       const resolved = Object.assign({}, options);
       for (const key in _DurationFormatter.DEFAULT_OPTIONS) {
-        (_a7 = resolved[key]) !== null && _a7 !== void 0 ? _a7 : resolved[key] = _DurationFormatter.DEFAULT_OPTIONS[key];
+        (_a8 = resolved[key]) !== null && _a8 !== void 0 ? _a8 : resolved[key] = _DurationFormatter.DEFAULT_OPTIONS[key];
       }
       return resolved;
     }
@@ -57132,7 +57132,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * by the template fragment.
      */
     static parseFragment(fragment, precision2, precisionUnit) {
-      var _a7, _b5;
+      var _a8, _b6;
       const signMatch = fragment.match(_DurationFormatter.SIGN_FRAGMENT_REGEX);
       if (signMatch) {
         const posCharMatch = signMatch[1], posStringMatch = signMatch[2], negStringMatch = signMatch[3];
@@ -57169,8 +57169,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             return "".concat(formatLeftFunc(converted)).concat(decimal.toString().substring(1));
           };
         }
-        const forcedDecimalPlaces = (_a7 = rightForcedMatch === null || rightForcedMatch === void 0 ? void 0 : rightForcedMatch.length) !== null && _a7 !== void 0 ? _a7 : 0;
-        const unforcedDecimalPlaces = (_b5 = rightOptionalMatch === null || rightOptionalMatch === void 0 ? void 0 : rightOptionalMatch.length) !== null && _b5 !== void 0 ? _b5 : 0;
+        const forcedDecimalPlaces = (_a8 = rightForcedMatch === null || rightForcedMatch === void 0 ? void 0 : rightForcedMatch.length) !== null && _a8 !== void 0 ? _a8 : 0;
+        const unforcedDecimalPlaces = (_b6 = rightOptionalMatch === null || rightOptionalMatch === void 0 ? void 0 : rightOptionalMatch.length) !== null && _b6 !== void 0 ? _b6 : 0;
         const totalDecimalPlaces = forcedDecimalPlaces + unforcedDecimalPlaces;
         const factor = Math.pow(10, totalDecimalPlaces);
         const epsilon3 = Math.min(step / 2, 1 / (2 * factor));
@@ -57259,9 +57259,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param plan the new target plan
      */
     switchToPlan(plan) {
-      var _a7;
+      var _a8;
       this.targetPlan = plan;
-      (_a7 = this.backSubjectSubscription) === null || _a7 === void 0 ? void 0 : _a7.destroy();
+      (_a8 = this.backSubjectSubscription) === null || _a8 === void 0 ? void 0 : _a8.destroy();
       this.backSubjectSubscription = this.backingSubject().sub((it) => {
         this.subject.set(it);
       }, true);
@@ -57486,7 +57486,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns a performance plan proxy
      */
     createPerformancePlanProxy(callbacks) {
-      var _a7;
+      var _a8;
       const defaultValuesPlan = this.defaultValuesPlan();
       const definitionEntries = this.definitionEntries;
       const proxy = {
@@ -57511,7 +57511,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       };
       for (let _i_2 = 0; _i_2 < definitionEntries.length; ++_i_2) {
         const { key, definition } = definitionEntries[_i_2];
-        const property = new ProxiedPerformancePlanProperty(proxy, key, (_a7 = definition.differentiateBetweenFlightPlans) !== null && _a7 !== void 0 ? _a7 : false);
+        const property = new ProxiedPerformancePlanProperty(proxy, key, (_a8 = definition.differentiateBetweenFlightPlans) !== null && _a8 !== void 0 ? _a8 : false);
         proxy[key] = property;
       }
       proxy.switchToPlan(this.getActivePlan(), true);
@@ -57755,7 +57755,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       let parsedValue = void 0;
       try {
         parsedValue = JSON.parse(value);
-      } catch (_a7) {
+      } catch (_a8) {
       }
       if (parsedValue instanceof Array) {
         for (let _i_1 = 0; _i_1 < parsedValue.length; ++_i_1) {
@@ -58092,7 +58092,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param activation The ID of the alert to trigger, or data describing the alert to trigger.
      */
     triggerAlert(activation) {
-      var _a7;
+      var _a8;
       if (!this.isActive) {
         return;
       }
@@ -58129,7 +58129,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
       this.triggerSuffix(queuedId, suffixedId);
       const existing = this.triggeredAlerts.get(queuedId);
-      if (existing && ((_a7 = this.playing.get(existing.definition.queue)) === null || _a7 === void 0 ? void 0 : _a7.includes(existing))) {
+      if (existing && ((_a8 = this.playing.get(existing.definition.queue)) === null || _a8 === void 0 ? void 0 : _a8.includes(existing))) {
         return;
       }
       const queuedAlert = this.createQueuedAlert(alertDef, activationObject);
@@ -58157,9 +58157,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The queued alert.
      */
     createQueuedAlert(definition, activation) {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h, _j;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h, _j;
       const queueEntry = this.queues.get(definition.queue);
-      const trackName = (_b5 = (_a7 = activation === null || activation === void 0 ? void 0 : activation.track) !== null && _a7 !== void 0 ? _a7 : definition.track) !== null && _b5 !== void 0 ? _b5 : "";
+      const trackName = (_b6 = (_a8 = activation === null || activation === void 0 ? void 0 : activation.track) !== null && _a8 !== void 0 ? _a8 : definition.track) !== null && _b6 !== void 0 ? _b6 : "";
       let track = queueEntry.tracks.get(trackName);
       if (!track) {
         track = this.createQueueTrack(definition.queue, trackName);
@@ -58185,9 +58185,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param alert The alert to queue.
      */
     queueAlert(alert) {
-      var _a7;
+      var _a8;
       const queueName = alert.definition.queue;
-      const queueEntry = (_a7 = this.queues.get(queueName)) !== null && _a7 !== void 0 ? _a7 : this.createQueue(queueName);
+      const queueEntry = (_a8 = this.queues.get(queueName)) !== null && _a8 !== void 0 ? _a8 : this.createQueue(queueName);
       queueEntry.tracks.get(alert.track).queue.insert(alert);
       if (this.isSoundServerInit) {
         const playingAlerts = this.playing.get(queueName);
@@ -58279,12 +58279,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param id The (optionally suffixed) ID of the alert to deactivate.
      */
     deactivateAlert(id) {
-      var _a7;
+      var _a8;
       const deactivatedId = this.deactivateSuffix(id);
       if (deactivatedId === void 0) {
         return;
       }
-      const deactivatedUuid = (_a7 = this.activeAliasToUuid.get(deactivatedId)) !== null && _a7 !== void 0 ? _a7 : deactivatedId;
+      const deactivatedUuid = (_a8 = this.activeAliasToUuid.get(deactivatedId)) !== null && _a8 !== void 0 ? _a8 : deactivatedId;
       if (deactivatedUuid !== deactivatedId) {
         this.activeAliasToUuid.delete(deactivatedId);
       }
@@ -58332,12 +58332,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param uuid The (optionally suffixed) ID of the alert to untrigger.
      */
     untriggerAlert(uuid) {
-      var _a7;
+      var _a8;
       const untriggeredId = this.untriggerSuffix(uuid);
       if (untriggeredId === void 0) {
         return;
       }
-      const untriggeredUuid = (_a7 = this.triggeredAliasToUuid.get(untriggeredId)) !== null && _a7 !== void 0 ? _a7 : untriggeredId;
+      const untriggeredUuid = (_a8 = this.triggeredAliasToUuid.get(untriggeredId)) !== null && _a8 !== void 0 ? _a8 : untriggeredId;
       if (untriggeredUuid !== untriggeredId) {
         this.triggeredAliasToUuid.delete(untriggeredId);
       }
@@ -58384,19 +58384,19 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param uuid The (optionally suffixed) ID of the alert to kill.
      */
     killAlert(uuid) {
-      var _a7, _b5;
+      var _a8, _b6;
       const deactivatedId = this.deactivateSuffix(uuid);
       const untriggeredId = this.untriggerSuffix(uuid);
       let deactivatedUuid = void 0;
       let untriggeredUuid = void 0;
       if (deactivatedId !== void 0) {
-        deactivatedUuid = (_a7 = this.activeAliasToUuid.get(deactivatedId)) !== null && _a7 !== void 0 ? _a7 : deactivatedId;
+        deactivatedUuid = (_a8 = this.activeAliasToUuid.get(deactivatedId)) !== null && _a8 !== void 0 ? _a8 : deactivatedId;
         if (deactivatedUuid !== deactivatedId) {
           this.activeAliasToUuid.delete(deactivatedId);
         }
       }
       if (untriggeredId !== void 0) {
-        untriggeredUuid = (_b5 = this.triggeredAliasToUuid.get(untriggeredId)) !== null && _b5 !== void 0 ? _b5 : untriggeredId;
+        untriggeredUuid = (_b6 = this.triggeredAliasToUuid.get(untriggeredId)) !== null && _b6 !== void 0 ? _b6 : untriggeredId;
         if (untriggeredUuid !== untriggeredId) {
           this.triggeredAliasToUuid.delete(untriggeredId);
         }
@@ -58705,7 +58705,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param packet The packet to queue.
      */
     queuePacket(packet) {
-      var _a7;
+      var _a8;
       if (!this.isAwake) {
         return;
       }
@@ -58715,7 +58715,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         sequence,
         continuous: packet.continuous,
         currentIndexPlaying: 0,
-        timeout: (_a7 = packet.timeout) !== null && _a7 !== void 0 ? _a7 : _SoundServer.DEFAULT_TIMEOUT,
+        timeout: (_a8 = packet.timeout) !== null && _a8 !== void 0 ? _a8 : _SoundServer.DEFAULT_TIMEOUT,
         alive: true,
         timer: new DebounceTimer(),
         timeoutCallback: () => {
@@ -58972,8 +58972,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns a promise for a view listener.
      */
     static getListener() {
-      var _a7;
-      return (_a7 = _WeatherClient.listener) !== null && _a7 !== void 0 ? _a7 : _WeatherClient.listener = new Promise((resolve) => {
+      var _a8;
+      return (_a8 = _WeatherClient.listener) !== null && _a8 !== void 0 ? _a8 : _WeatherClient.listener = new Promise((resolve) => {
         const listener = RegisterViewListener("JS_LISTENER_WEATHER_DATA", () => {
           listener.on("SendPathWeatherResponse", _WeatherClient.onWeatherReceived.bind(_WeatherClient));
           listener.on("SendPathWeatherError", _WeatherClient.onWeatherError.bind(_WeatherClient));
@@ -59923,7 +59923,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       ATC2.get = function(source) {
         return __awaiter(this, void 0, void 0, function() {
           var url;
-          return __generator(this, function(_a7) {
+          return __generator(this, function(_a8) {
             if (!source) {
               throw new Error("No source provided");
             }
@@ -59943,7 +59943,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       Atis2.get = function(icao, source) {
         return __awaiter(this, void 0, void 0, function() {
           var url;
-          return __generator(this, function(_a7) {
+          return __generator(this, function(_a8) {
             if (!icao) {
               throw new Error("No ICAO provided");
             }
@@ -59966,7 +59966,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       Charts2.get = function(icao) {
         return __awaiter(this, void 0, void 0, function() {
           var url;
-          return __generator(this, function(_a7) {
+          return __generator(this, function(_a8) {
             if (!icao) {
               throw new Error("No ICAO provided");
             }
@@ -59985,7 +59985,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
       GitVersions2.getNewestCommit = function(user, repo, branch) {
         return __awaiter(this, void 0, void 0, function() {
-          return __generator(this, function(_a7) {
+          return __generator(this, function(_a8) {
             if (!user || !repo || !branch) {
               throw new Error("Missing argument");
             }
@@ -59998,7 +59998,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       GitVersions2.getReleases = function(user, repo, includePreReleases, skip, take) {
         return __awaiter(this, void 0, void 0, function() {
           var takePreReleasesArg, skipArg, takeArg;
-          return __generator(this, function(_a7) {
+          return __generator(this, function(_a8) {
             if (!user || !repo) {
               throw new Error("Missing argument");
             }
@@ -60018,7 +60018,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       };
       GitVersions2.getPulls = function(user, repo) {
         return __awaiter(this, void 0, void 0, function() {
-          return __generator(this, function(_a7) {
+          return __generator(this, function(_a8) {
             if (!user || !repo) {
               throw new Error("Missing argument");
             }
@@ -60028,7 +60028,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       };
       GitVersions2.getArtifact = function(user, repo, pull) {
         return __awaiter(this, void 0, void 0, function() {
-          return __generator(this, function(_a7) {
+          return __generator(this, function(_a8) {
             if (!user || !repo || !pull) {
               throw new Error("Missing argument");
             }
@@ -60064,7 +60064,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       Metar2.get = function(icao, source) {
         return __awaiter(this, void 0, void 0, function() {
           var url;
-          return __generator(this, function(_a7) {
+          return __generator(this, function(_a8) {
             if (!icao) {
               throw new Error("No ICAO provided");
             }
@@ -60087,7 +60087,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       Taf2.get = function(icao, source) {
         return __awaiter(this, void 0, void 0, function() {
           var url;
-          return __generator(this, function(_a7) {
+          return __generator(this, function(_a8) {
             if (!icao) {
               throw new Error("No ICAO provided");
             }
@@ -60125,7 +60125,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       };
       Telex2.update = function(status) {
         return __awaiter(this, void 0, void 0, function() {
-          return __generator(this, function(_a7) {
+          return __generator(this, function(_a8) {
             Telex2.connectionOrThrow();
             return [2, put(new URL("/txcxn", NXApi.url), Telex2.buildBody(status), { Authorization: Telex2.buildToken() }).then(Telex2.mapConnection)];
           });
@@ -60133,7 +60133,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       };
       Telex2.disconnect = function() {
         return __awaiter(this, void 0, void 0, function() {
-          return __generator(this, function(_a7) {
+          return __generator(this, function(_a8) {
             Telex2.connectionOrThrow();
             return [2, del(new URL("/txcxn", NXApi.url), { Authorization: Telex2.buildToken() }).then(function() {
               Telex2.accessToken = "";
@@ -60143,7 +60143,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       };
       Telex2.sendMessage = function(recipientFlight, message) {
         return __awaiter(this, void 0, void 0, function() {
-          return __generator(this, function(_a7) {
+          return __generator(this, function(_a8) {
             Telex2.connectionOrThrow();
             return [2, post(new URL("/txmsg", NXApi.url), {
               to: recipientFlight,
@@ -60154,7 +60154,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       };
       Telex2.fetchMessages = function() {
         return __awaiter(this, void 0, void 0, function() {
-          return __generator(this, function(_a7) {
+          return __generator(this, function(_a8) {
             Telex2.connectionOrThrow();
             return [2, get(new URL("/txmsg", NXApi.url), { Authorization: Telex2.buildToken() }).then(function(res) {
               return res.map(Telex2.mapMessage);
@@ -60183,28 +60183,28 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       Telex2.fetchAllConnections = function(bounds, stageCallback) {
         return __awaiter(this, void 0, void 0, function() {
           var flights, skip, total, data;
-          return __generator(this, function(_a7) {
-            switch (_a7.label) {
+          return __generator(this, function(_a8) {
+            switch (_a8.label) {
               case 0:
                 flights = [];
                 skip = 0;
                 total = 0;
-                _a7.label = 1;
+                _a8.label = 1;
               case 1:
                 return [4, Telex2.fetchConnections(skip, 100, bounds)];
               case 2:
-                data = _a7.sent();
+                data = _a8.sent();
                 total = data.total;
                 skip += data.count;
                 flights = flights.concat(data.results);
                 if (stageCallback) {
                   stageCallback(flights);
                 }
-                _a7.label = 3;
+                _a8.label = 3;
               case 3:
                 if (total > skip)
                   return [3, 1];
-                _a7.label = 4;
+                _a8.label = 4;
               case 4:
                 return [2, flights];
             }
@@ -60572,14 +60572,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   // .fbw/fbw-common/src/systems/shared/src/ApproachUtils.ts
   var _ApproachUtils = class _ApproachUtils {
     static parseApproachName(name) {
-      var _a7, _b5, _c;
+      var _a8, _b6, _c;
       const match = name.trim().match(/^(ILS|LOC|RNAV|NDB|VOR|GPS)? ?(RW)?([0-9]{1,2}[LCRT]?)?([\s-]*([A-Z0-9]))?$/);
       if (!match) {
         return void 0;
       }
       return {
-        type: (_a7 = match[1]) != null ? _a7 : "",
-        runway: (_b5 = match[3]) != null ? _b5 : "",
+        type: (_a8 = match[1]) != null ? _a8 : "",
+        runway: (_b6 = match[3]) != null ? _b6 : "",
         designator: (_c = match[5]) != null ? _c : ""
       };
     }
@@ -60693,11 +60693,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This subject, after its consumer has been set.
      */
     setConsumer(consumer) {
-      var _a7;
+      var _a8;
       if (!this._isAlive) {
         return this;
       }
-      (_a7 = this.consumerSub) == null ? void 0 : _a7.destroy();
+      (_a8 = this.consumerSub) == null ? void 0 : _a8.destroy();
       this.consumerSub = consumer == null ? void 0 : consumer.handle(this.consumerHandler, this._isPaused);
       return this;
     }
@@ -60706,11 +60706,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This subject, after it has been paused.
      */
     pause() {
-      var _a7;
+      var _a8;
       if (this._isPaused) {
         return this;
       }
-      (_a7 = this.consumerSub) == null ? void 0 : _a7.pause();
+      (_a8 = this.consumerSub) == null ? void 0 : _a8.pause();
       this._isPaused = true;
       return this;
     }
@@ -60723,21 +60723,21 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns This subject, after it has been resumed.
      */
     resume() {
-      var _a7;
+      var _a8;
       if (!this._isPaused) {
         return this;
       }
       this._isPaused = false;
-      (_a7 = this.consumerSub) == null ? void 0 : _a7.resume(true);
+      (_a8 = this.consumerSub) == null ? void 0 : _a8.resume(true);
       return this;
     }
     /**
      * Destroys this subject. Once destroyed, it will no longer consume events to update its value.
      */
     destroy() {
-      var _a7;
+      var _a8;
       this._isAlive = false;
-      (_a7 = this.consumerSub) == null ? void 0 : _a7.destroy();
+      (_a8 = this.consumerSub) == null ? void 0 : _a8.destroy();
     }
     /** @inheritdoc */
     withLifecycle(lifecycle) {
@@ -61082,13 +61082,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.isRequested.set(isVisible);
     }
     bind(isVisible) {
-      var _a7;
-      (_a7 = this.sub) == null ? void 0 : _a7.destroy();
+      var _a8;
+      (_a8 = this.sub) == null ? void 0 : _a8.destroy();
       this.sub = isVisible.pipe(this.isRequested);
     }
     destroy() {
-      var _a7;
-      (_a7 = this.sub) == null ? void 0 : _a7.destroy();
+      var _a8;
+      (_a8 = this.sub) == null ? void 0 : _a8.destroy();
     }
   };
 
@@ -61322,8 +61322,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           }
           if (enabled) {
             consoleSandbox(function() {
-              var _a7;
-              (_a7 = global2.console)[name].apply(_a7, __spread2([PREFIX + "[" + name + "]:"], args));
+              var _a8;
+              (_a8 = global2.console)[name].apply(_a8, __spread2([PREFIX + "[" + name + "]:"], args));
             });
           }
         };
@@ -61373,11 +61373,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     addNonEnumerableProperty(wrapped, "__sentry_original__", original);
   }
   function dropUndefinedKeys(val) {
-    var e_1, _a7;
+    var e_1, _a8;
     if (isPlainObject(val)) {
       var rv = {};
       try {
-        for (var _b5 = __values(Object.keys(val)), _c = _b5.next(); !_c.done; _c = _b5.next()) {
+        for (var _b6 = __values(Object.keys(val)), _c = _b6.next(); !_c.done; _c = _b6.next()) {
           var key = _c.value;
           if (typeof val[key] !== "undefined") {
             rv[key] = dropUndefinedKeys(val[key]);
@@ -61387,8 +61387,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         e_1 = { error: e_1_1 };
       } finally {
         try {
-          if (_c && !_c.done && (_a7 = _b5.return))
-            _a7.call(_b5);
+          if (_c && !_c.done && (_a8 = _b6.return))
+            _a8.call(_b6);
         } finally {
           if (e_1)
             throw e_1.error;
@@ -61451,8 +61451,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           result = isNativeFetch(sandbox.contentWindow.fetch);
         }
         doc.head.removeChild(sandbox);
-      } catch (err) {
-        IS_DEBUG_BUILD && logger.warn("Could not create sandbox iframe for pure fetch check, bailing to window.fetch: ", err);
+      } catch (err2) {
+        IS_DEBUG_BUILD && logger.warn("Could not create sandbox iframe for pure fetch check, bailing to window.fetch: ", err2);
       }
     }
     return result;
@@ -61507,12 +61507,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     instrument(type);
   }
   function triggerHandlers(type, data) {
-    var e_1, _a7;
+    var e_1, _a8;
     if (!type || !handlers[type]) {
       return;
     }
     try {
-      for (var _b5 = __values(handlers[type] || []), _c = _b5.next(); !_c.done; _c = _b5.next()) {
+      for (var _b6 = __values(handlers[type] || []), _c = _b6.next(); !_c.done; _c = _b6.next()) {
         var handler = _c.value;
         try {
           handler(data);
@@ -61524,8 +61524,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       e_1 = { error: e_1_1 };
     } finally {
       try {
-        if (_c && !_c.done && (_a7 = _b5.return))
-          _a7.call(_b5);
+        if (_c && !_c.done && (_a8 = _b6.return))
+          _a8.call(_b6);
       } finally {
         if (e_1)
           throw e_1.error;
@@ -62150,8 +62150,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return this;
       };
       Scope2.prototype.setTag = function(key, value) {
-        var _a7;
-        this._tags = __assign2(__assign2({}, this._tags), (_a7 = {}, _a7[key] = value, _a7));
+        var _a8;
+        this._tags = __assign2(__assign2({}, this._tags), (_a8 = {}, _a8[key] = value, _a8));
         this._notifyScopeListeners();
         return this;
       };
@@ -62161,8 +62161,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return this;
       };
       Scope2.prototype.setExtra = function(key, extra) {
-        var _a7;
-        this._extra = __assign2(__assign2({}, this._extra), (_a7 = {}, _a7[key] = extra, _a7));
+        var _a8;
+        this._extra = __assign2(__assign2({}, this._extra), (_a8 = {}, _a8[key] = extra, _a8));
         this._notifyScopeListeners();
         return this;
       };
@@ -62185,11 +62185,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return this.setTransactionName(name);
       };
       Scope2.prototype.setContext = function(key, context) {
-        var _a7;
+        var _a8;
         if (context === null) {
           delete this._contexts[key];
         } else {
-          this._contexts = __assign2(__assign2({}, this._contexts), (_a7 = {}, _a7[key] = context, _a7));
+          this._contexts = __assign2(__assign2({}, this._contexts), (_a8 = {}, _a8[key] = context, _a8));
         }
         this._notifyScopeListeners();
         return this;
@@ -62596,10 +62596,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return this._lastEventId;
       };
       Hub2.prototype.addBreadcrumb = function(breadcrumb, hint) {
-        var _a7 = this.getStackTop(), scope = _a7.scope, client = _a7.client;
+        var _a8 = this.getStackTop(), scope = _a8.scope, client = _a8.client;
         if (!scope || !client)
           return;
-        var _b5 = client.getOptions && client.getOptions() || {}, _c = _b5.beforeBreadcrumb, beforeBreadcrumb = _c === void 0 ? null : _c, _d = _b5.maxBreadcrumbs, maxBreadcrumbs = _d === void 0 ? DEFAULT_BREADCRUMBS : _d;
+        var _b6 = client.getOptions && client.getOptions() || {}, _c = _b6.beforeBreadcrumb, beforeBreadcrumb = _c === void 0 ? null : _c, _d = _b6.maxBreadcrumbs, maxBreadcrumbs = _d === void 0 ? DEFAULT_BREADCRUMBS : _d;
         if (maxBreadcrumbs <= 0)
           return;
         var timestamp = dateTimestampInSeconds();
@@ -62642,7 +62642,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           scope.setContext(name, context);
       };
       Hub2.prototype.configureScope = function(callback) {
-        var _a7 = this.getStackTop(), scope = _a7.scope, client = _a7.client;
+        var _a8 = this.getStackTop(), scope = _a8.scope, client = _a8.client;
         if (scope && client) {
           callback(scope);
         }
@@ -62697,8 +62697,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         }
       };
       Hub2.prototype.startSession = function(context) {
-        var _a7 = this.getStackTop(), scope = _a7.scope, client = _a7.client;
-        var _b5 = client && client.getOptions() || {}, release = _b5.release, environment = _b5.environment;
+        var _a8 = this.getStackTop(), scope = _a8.scope, client = _a8.client;
+        var _b6 = client && client.getOptions() || {}, release = _b6.release, environment = _b6.environment;
         var global4 = getGlobalObject();
         var userAgent = (global4.navigator || {}).userAgent;
         var session = new Session(__assign2(__assign2(__assign2({
@@ -62716,7 +62716,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return session;
       };
       Hub2.prototype._sendSessionUpdate = function() {
-        var _a7 = this.getStackTop(), scope = _a7.scope, client = _a7.client;
+        var _a8 = this.getStackTop(), scope = _a8.scope, client = _a8.client;
         if (!scope)
           return;
         var session = scope.getSession && scope.getSession();
@@ -62727,14 +62727,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         }
       };
       Hub2.prototype._invokeClient = function(method) {
-        var _a7;
+        var _a8;
         var args = [];
         for (var _i = 1; _i < arguments.length; _i++) {
           args[_i - 1] = arguments[_i];
         }
-        var _b5 = this.getStackTop(), scope = _b5.scope, client = _b5.client;
+        var _b6 = this.getStackTop(), scope = _b6.scope, client = _b6.client;
         if (client && client[method]) {
-          (_a7 = client)[method].apply(_a7, __spread(args, [scope]));
+          (_a8 = client)[method].apply(_a8, __spread(args, [scope]));
         }
       };
       Hub2.prototype._callExtensionMethod = function(method) {
@@ -62974,13 +62974,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return childSpan;
       };
       Span2.prototype.setTag = function(key, value) {
-        var _a7;
-        this.tags = __assign4(__assign4({}, this.tags), (_a7 = {}, _a7[key] = value, _a7));
+        var _a8;
+        this.tags = __assign4(__assign4({}, this.tags), (_a8 = {}, _a8[key] = value, _a8));
         return this;
       };
       Span2.prototype.setData = function(key, value) {
-        var _a7;
-        this.data = __assign4(__assign4({}, this.data), (_a7 = {}, _a7[key] = value, _a7));
+        var _a8;
+        this.data = __assign4(__assign4({}, this.data), (_a8 = {}, _a8[key] = value, _a8));
         return this;
       };
       Span2.prototype.setStatus = function(value) {
@@ -63024,14 +63024,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         });
       };
       Span2.prototype.updateWithContext = function(spanContext) {
-        var _a7, _b5, _c, _d, _e;
-        this.data = (_a7 = spanContext.data, _a7 !== null && _a7 !== void 0 ? _a7 : {});
+        var _a8, _b6, _c, _d, _e;
+        this.data = (_a8 = spanContext.data, _a8 !== null && _a8 !== void 0 ? _a8 : {});
         this.description = spanContext.description;
         this.endTimestamp = spanContext.endTimestamp;
         this.op = spanContext.op;
         this.parentSpanId = spanContext.parentSpanId;
         this.sampled = spanContext.sampled;
-        this.spanId = (_b5 = spanContext.spanId, _b5 !== null && _b5 !== void 0 ? _b5 : this.spanId);
+        this.spanId = (_b6 = spanContext.spanId, _b6 !== null && _b6 !== void 0 ? _b6 : this.spanId);
         this.startTimestamp = (_c = spanContext.startTimestamp, _c !== null && _c !== void 0 ? _c : this.startTimestamp);
         this.status = spanContext.status;
         this.tags = (_d = spanContext.tags, _d !== null && _d !== void 0 ? _d : {});
@@ -63195,9 +63195,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return dropUndefinedKeys(__assign4(__assign4({}, spanContext), { name: this.name, trimEnd: this._trimEnd }));
       };
       Transaction2.prototype.updateWithContext = function(transactionContext) {
-        var _a7;
+        var _a8;
         _super.prototype.updateWithContext.call(this, transactionContext);
-        this.name = (_a7 = transactionContext.name, _a7 !== null && _a7 !== void 0 ? _a7 : "");
+        this.name = (_a8 = transactionContext.name, _a8 !== null && _a8 !== void 0 ? _a8 : "");
         this._trimEnd = transactionContext.trimEnd;
         return this;
       };
@@ -63455,8 +63455,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns a string, or the empty string if the value is not present
      */
     static getRaw(key) {
-      var _a7;
-      return (_a7 = GetStoredData("".concat(this.aircraftProjectPrefix, "_").concat(key))) != null ? _a7 : "";
+      var _a8;
+      return (_a8 = GetStoredData("".concat(this.aircraftProjectPrefix, "_").concat(key))) != null ? _a8 : "";
     }
     /**
      * Sets a value in persistent storage
@@ -63655,8 +63655,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     async getHolds(fixIdentifier, airportIdentifier) {
       return (await this.backend.getHolds(airportIdentifier)).filter((hold) => {
-        var _a7;
-        return ((_a7 = hold.waypoint) == null ? void 0 : _a7.ident) === fixIdentifier;
+        var _a8;
+        return ((_a8 = hold.waypoint) == null ? void 0 : _a8.ident) === fixIdentifier;
       });
     }
     getIlsAtAirport(airportIdentifier, ident, lsIcaoCode) {
@@ -63914,15 +63914,15 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return [...ints.values(), ...ndbs.values(), ...vors.values()];
     }
     getCachedAirwayFixes(databaseID) {
-      var _a7;
-      if (!this.sharedCache || ((_a7 = this.sharedCache) == null ? void 0 : _a7.isDetached.get())) {
+      var _a8;
+      if (!this.sharedCache || ((_a8 = this.sharedCache) == null ? void 0 : _a8.isDetached.get())) {
         return;
       }
       return this.sharedCache.instance.airwayFixes.get(databaseID);
     }
     setCachedAirwayFixes(databaseID, fixes) {
-      var _a7;
-      if (!this.sharedCache || ((_a7 = this.sharedCache) == null ? void 0 : _a7.isDetached.get())) {
+      var _a8;
+      if (!this.sharedCache || ((_a8 = this.sharedCache) == null ? void 0 : _a8.isDetached.get())) {
         return;
       }
       this.sharedCache.instance.airwayFixes.set(databaseID, fixes);
@@ -63960,7 +63960,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return result;
     }
     mapAirport(msAirport) {
-      var _a7;
+      var _a8;
       const elevations = [];
       let longestRunway = [0, void 0];
       msAirport.runways.forEach((runway) => {
@@ -63987,7 +63987,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         name: Utils.Translate(msAirport.name),
         location: { lat: msAirport.lat, long: msAirport.lon, alt: elevation },
         longestRunwayLength: longestRunway[0],
-        longestRunwaySurfaceType: this.mapRunwaySurface((_a7 = longestRunway[1]) == null ? void 0 : _a7.surface),
+        longestRunwaySurfaceType: this.mapRunwaySurface((_a8 = longestRunway[1]) == null ? void 0 : _a8.surface),
         transitionAltitude,
         transitionLevel,
         magVar
@@ -64004,7 +64004,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           (msRunway.primaryElevation - msRunway.secondaryElevation) / (msRunway.length - msRunway.primaryThresholdLength - msRunway.secondaryThresholdLength)
         ) * 180 / Math.PI;
         msRunway.designation.split("-").forEach((designation, index) => {
-          var _a7;
+          var _a8;
           const primary = index === 0;
           const airportIdent = FacilityCache.ident(msAirport.icao);
           const runwayNumber = parseInt(designation);
@@ -64031,7 +64031,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             (appr) => appr.runwayNumber === runwayNumber && appr.runwayDesignator === runwayDesignator && this.approachHasLandingSystem(appr)
           );
           const lsIdent = lsAppr ? FacilityCache.ident(lsAppr.finalLegs[lsAppr.finalLegs.length - 1].originIcao) : "";
-          const lsFrequencyChannel = lsAppr ? (_a7 = navaids.get(lsAppr.finalLegs[lsAppr.finalLegs.length - 1].originIcao)) == null ? void 0 : _a7.freqMHz : void 0;
+          const lsFrequencyChannel = lsAppr ? (_a8 = navaids.get(lsAppr.finalLegs[lsAppr.finalLegs.length - 1].originIcao)) == null ? void 0 : _a8.freqMHz : void 0;
           runways.push({
             sectionCode: 4 /* Airport */,
             subSectionCode: 6 /* Runways */,
@@ -64321,7 +64321,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return [void 0, false];
     }
     async computeFinalApproachCourse(airport, approach) {
-      var _a7;
+      var _a8;
       const finalLeg = approach.finalLegs[approach.finalLegs.length - 1];
       const previousLeg = approach.finalLegs[approach.finalLegs.length - 2];
       if (!finalLeg || !previousLeg || !previousLeg.fixIcao.trim() || !finalLeg.fixIcao.trim()) {
@@ -64330,7 +64330,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       const facilities = await this.loadFacilitiesFromProcedures([approach]);
       let finalCoordinates = void 0;
       if (finalLeg.fixIcao.charAt(0) === "R") {
-        finalCoordinates = (_a7 = this.mapRunwayWaypoint(airport, finalLeg.fixIcao)) == null ? void 0 : _a7.location;
+        finalCoordinates = (_a8 = this.mapRunwayWaypoint(airport, finalLeg.fixIcao)) == null ? void 0 : _a8.location;
       } else {
         const finalWaypoint = facilities.get(finalLeg.fixIcao);
         finalCoordinates = finalWaypoint ? { lat: finalWaypoint.lat, long: finalWaypoint.lon } : void 0;
@@ -64440,7 +64440,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return approaches;
     }
     async mapArrivals(msAirport) {
-      var _a7;
+      var _a8;
       const icaoCode = this.getIcaoCodeFromAirport(msAirport);
       const airportIdent = FacilityCache.ident(msAirport.icao);
       const facilities = await this.loadFacilitiesFromProcedures(msAirport.arrivals);
@@ -64453,7 +64453,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             databaseId: "P".concat(icaoCode).concat(airportIdent).concat(msArrival.name),
             icaoCode,
             ident: msArrival.name,
-            authorisationRequired: (_a7 = msArrival.rnpAr) != null ? _a7 : false,
+            authorisationRequired: (_a8 = msArrival.rnpAr) != null ? _a8 : false,
             commonLegs: await Promise.all(
               msArrival.commonLegs.map(
                 (leg, legIndex) => this.mapLeg(leg, legIndex, facilities, msAirport, msArrival.name)
@@ -64523,13 +64523,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @returns The same array, for convenience.
      */
     static matchEngineOutDepartures(departures) {
-      var _a7, _b5, _c, _d;
+      var _a8, _b6, _c, _d;
       const eoSidsByRunway = departures.reduce((byRunway, sid) => {
-        var _a8, _b6;
+        var _a9, _b7;
         const m = sid.ident.match(_MsfsMapping.eoSidRegex);
         if (m !== null) {
           for (const runwayTrans of sid.runwayTransitions) {
-            (_b6 = (_a8 = byRunway.get(runwayTrans.ident)) == null ? void 0 : _a8.push(sid)) != null ? _b6 : byRunway.set(runwayTrans.ident, [sid]);
+            (_b7 = (_a9 = byRunway.get(runwayTrans.ident)) == null ? void 0 : _a9.push(sid)) != null ? _b7 : byRunway.set(runwayTrans.ident, [sid]);
           }
         }
         return byRunway;
@@ -64552,7 +64552,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               for (let i = 0; i < sidTrans.legs.length && i < eoTrans.legs.length; i++) {
                 const sid2 = sidTrans.legs[i];
                 const eo = eoTrans.legs[i];
-                if (sid2.type !== eo.type || ((_a7 = sid2.waypoint) == null ? void 0 : _a7.databaseId) !== ((_b5 = eo.waypoint) == null ? void 0 : _b5.databaseId) || ((_c = sid2.arcCentreFix) == null ? void 0 : _c.databaseId) !== ((_d = eo.arcCentreFix) == null ? void 0 : _d.databaseId)) {
+                if (sid2.type !== eo.type || ((_a8 = sid2.waypoint) == null ? void 0 : _a8.databaseId) !== ((_b6 = eo.waypoint) == null ? void 0 : _b6.databaseId) || ((_c = sid2.arcCentreFix) == null ? void 0 : _c.databaseId) !== ((_d = eo.arcCentreFix) == null ? void 0 : _d.databaseId)) {
                   break;
                 }
                 branchIndex = i;
@@ -64689,7 +64689,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         }
       }
       const icaos = Array.from(icaoSet);
-      const airports = await this.cache.getFacilities(
+      const airports2 = await this.cache.getFacilities(
         icaos.filter((icao) => icao.charAt(0) === "A"),
         "A" /* Airport */
       );
@@ -64705,7 +64705,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         icaos.filter((icao) => icao.charAt(0) === "W"),
         "W" /* Intersection */
       );
-      return new Map([...wps, ...ndbs, ...vors, ...airports]);
+      return new Map([...wps, ...ndbs, ...vors, ...airports2]);
     }
     async mapApproachTransitions(approach, facilities, airport, procedureIdent) {
       const transitions = await Promise.all(
@@ -64930,8 +64930,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return "".concat(prefix).concat(approach.runwayNumber.toFixed(0).padStart(2, "0")).concat(suffix);
     }
     getIcaoCodeFromAirport(msAirport) {
-      var _a7, _b5;
-      if (((_b5 = (_a7 = msAirport.icaoStruct) == null ? void 0 : _a7.region) == null ? void 0 : _b5.length) === 2) {
+      var _a8, _b6;
+      if (((_b6 = (_a8 = msAirport.icaoStruct) == null ? void 0 : _a8.region) == null ? void 0 : _b6.length) === 2) {
         return msAirport.icaoStruct.region;
       }
       const mapIcaos = msAirport.approaches.map((appr) => appr.finalLegs[appr.finalLegs.length - 1].fixIcao);
@@ -65273,7 +65273,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return msAirport.icao.substring(7, 11);
     }
     async getAirway(fixIdent, icaoCode, airwayIdent) {
-      var _a7, _b5;
+      var _a8, _b6;
       const fixes = (await this.cache.searchByIdent(fixIdent, 2 /* Intersections */, 100)).filter(
         (wp) => wp.icao.substring(1, 3) === icaoCode
       );
@@ -65329,7 +65329,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               throw new Error("(getAirways) Facility not loaded while looking back into route: ".concat(previousIcao));
             }
             previousFacs.unshift(fac);
-            previousIcao = (_a7 = fac.routes.find((it) => it.name === route.name)) == null ? void 0 : _a7.prevIcao;
+            previousIcao = (_a8 = fac.routes.find((it) => it.name === route.name)) == null ? void 0 : _a8.prevIcao;
           }
           if (nextIcao == null ? void 0 : nextIcao.trim()) {
             const fac = await this.cache.getFacility(
@@ -65340,7 +65340,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               throw new Error("(getAirways) Facility not loaded while looking back into route: ".concat(nextIcao));
             }
             nextFacs.push(fac);
-            nextIcao = (_b5 = fac.routes.find((it) => it.name === route.name)) == null ? void 0 : _b5.nextIcao;
+            nextIcao = (_b6 = fac.routes.find((it) => it.name === route.name)) == null ? void 0 : _b6.nextIcao;
           }
         }
         const allFixes = [
@@ -65884,8 +65884,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     /** @inheritdoc */
     async getAirports(idents) {
       const icaos = idents.map((ident) => "A      ".concat(ident));
-      const airports = await this.cache.getFacilities(icaos, "A" /* Airport */, _MsfsBackend.AIRPORT_LOAD_TIMEOUT);
-      return Array.from(airports.values()).map((airport) => this.mapping.mapAirport(airport));
+      const airports2 = await this.cache.getFacilities(icaos, "A" /* Airport */, _MsfsBackend.AIRPORT_LOAD_TIMEOUT);
+      return Array.from(airports2.values()).map((airport) => this.mapping.mapAirport(airport));
     }
     /** @inheritdoc */
     async getDepartures(airportIdentifier) {
@@ -66689,8 +66689,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         ret = _RadioUtils.incrementBcd32(ret, firstNibble, direction);
         if (!carry) {
           const min = bcd32 & ~channelInfo.carryMask | channelInfo.channels[0];
-          const max = bcd32 & ~channelInfo.carryMask | 2576980377 & channelInfo.carryMask & ~channelInfo.channelMask | channelInfo.channels[channelInfo.channels.length - 1];
-          ret = MathUtils2.clamp(ret, min, max);
+          const max2 = bcd32 & ~channelInfo.carryMask | 2576980377 & channelInfo.carryMask & ~channelInfo.channelMask | channelInfo.channels[channelInfo.channels.length - 1];
+          ret = MathUtils2.clamp(ret, min, max2);
         }
       }
       return MathUtils2.clamp(ret, channelInfo.min, channelInfo.max);
@@ -67106,8 +67106,408 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
   };
 
+  // node_modules/fflate/esm/browser.js
+  var u8 = Uint8Array;
+  var u16 = Uint16Array;
+  var i32 = Int32Array;
+  var fleb = new u8([
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
+    3,
+    4,
+    4,
+    4,
+    4,
+    5,
+    5,
+    5,
+    5,
+    0,
+    /* unused */
+    0,
+    0,
+    /* impossible */
+    0
+  ]);
+  var fdeb = new u8([
+    0,
+    0,
+    0,
+    0,
+    1,
+    1,
+    2,
+    2,
+    3,
+    3,
+    4,
+    4,
+    5,
+    5,
+    6,
+    6,
+    7,
+    7,
+    8,
+    8,
+    9,
+    9,
+    10,
+    10,
+    11,
+    11,
+    12,
+    12,
+    13,
+    13,
+    /* unused */
+    0,
+    0
+  ]);
+  var clim = new u8([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]);
+  var freb = function(eb3, start) {
+    var b = new u16(31);
+    for (var i = 0; i < 31; ++i) {
+      b[i] = start += 1 << eb3[i - 1];
+    }
+    var r = new i32(b[30]);
+    for (var i = 1; i < 30; ++i) {
+      for (var j = b[i]; j < b[i + 1]; ++j) {
+        r[j] = j - b[i] << 5 | i;
+      }
+    }
+    return { b, r };
+  };
+  var _a2 = freb(fleb, 2);
+  var fl = _a2.b;
+  var revfl = _a2.r;
+  fl[28] = 258, revfl[258] = 28;
+  var _b = freb(fdeb, 0);
+  var fd = _b.b;
+  var revfd = _b.r;
+  var rev = new u16(32768);
+  for (i = 0; i < 32768; ++i) {
+    x = (i & 43690) >> 1 | (i & 21845) << 1;
+    x = (x & 52428) >> 2 | (x & 13107) << 2;
+    x = (x & 61680) >> 4 | (x & 3855) << 4;
+    rev[i] = ((x & 65280) >> 8 | (x & 255) << 8) >> 1;
+  }
+  var x;
+  var i;
+  var hMap = function(cd3, mb, r) {
+    var s = cd3.length;
+    var i = 0;
+    var l = new u16(mb);
+    for (; i < s; ++i) {
+      if (cd3[i])
+        ++l[cd3[i] - 1];
+    }
+    var le = new u16(mb);
+    for (i = 1; i < mb; ++i) {
+      le[i] = le[i - 1] + l[i - 1] << 1;
+    }
+    var co;
+    if (r) {
+      co = new u16(1 << mb);
+      var rvb = 15 - mb;
+      for (i = 0; i < s; ++i) {
+        if (cd3[i]) {
+          var sv = i << 4 | cd3[i];
+          var r_1 = mb - cd3[i];
+          var v3 = le[cd3[i] - 1]++ << r_1;
+          for (var m = v3 | (1 << r_1) - 1; v3 <= m; ++v3) {
+            co[rev[v3] >> rvb] = sv;
+          }
+        }
+      }
+    } else {
+      co = new u16(s);
+      for (i = 0; i < s; ++i) {
+        if (cd3[i]) {
+          co[i] = rev[le[cd3[i] - 1]++] >> 15 - cd3[i];
+        }
+      }
+    }
+    return co;
+  };
+  var flt = new u8(288);
+  for (i = 0; i < 144; ++i)
+    flt[i] = 8;
+  var i;
+  for (i = 144; i < 256; ++i)
+    flt[i] = 9;
+  var i;
+  for (i = 256; i < 280; ++i)
+    flt[i] = 7;
+  var i;
+  for (i = 280; i < 288; ++i)
+    flt[i] = 8;
+  var i;
+  var fdt = new u8(32);
+  for (i = 0; i < 32; ++i)
+    fdt[i] = 5;
+  var i;
+  var flrm = /* @__PURE__ */ hMap(flt, 9, 1);
+  var fdrm = /* @__PURE__ */ hMap(fdt, 5, 1);
+  var max = function(a) {
+    var m = a[0];
+    for (var i = 1; i < a.length; ++i) {
+      if (a[i] > m)
+        m = a[i];
+    }
+    return m;
+  };
+  var bits = function(d, p, m) {
+    var o = p / 8 | 0;
+    return (d[o] | d[o + 1] << 8) >> (p & 7) & m;
+  };
+  var bits16 = function(d, p) {
+    var o = p / 8 | 0;
+    return (d[o] | d[o + 1] << 8 | d[o + 2] << 16) >> (p & 7);
+  };
+  var shft = function(p) {
+    return (p + 7) / 8 | 0;
+  };
+  var slc = function(v3, s, e) {
+    if (s == null || s < 0)
+      s = 0;
+    if (e == null || e > v3.length)
+      e = v3.length;
+    return new u8(v3.subarray(s, e));
+  };
+  var ec = [
+    "unexpected EOF",
+    "invalid block type",
+    "invalid length/literal",
+    "invalid distance",
+    "stream finished",
+    "no stream handler",
+    ,
+    "no callback",
+    "invalid UTF-8 data",
+    "extra field too long",
+    "date not in range 1980-2099",
+    "filename too long",
+    "stream finishing",
+    "invalid zip data"
+    // determined by unknown compression method
+  ];
+  var err = function(ind, msg, nt) {
+    var e = new Error(msg || ec[ind]);
+    e.code = ind;
+    if (Error.captureStackTrace)
+      Error.captureStackTrace(e, err);
+    if (!nt)
+      throw e;
+    return e;
+  };
+  var inflt = function(dat, st, buf, dict) {
+    var sl = dat.length, dl = dict ? dict.length : 0;
+    if (!sl || st.f && !st.l)
+      return buf || new u8(0);
+    var noBuf = !buf;
+    var resize = noBuf || st.i != 2;
+    var noSt = st.i;
+    if (noBuf)
+      buf = new u8(sl * 3);
+    var cbuf = function(l2) {
+      var bl = buf.length;
+      if (l2 > bl) {
+        var nbuf = new u8(Math.max(bl * 2, l2));
+        nbuf.set(buf);
+        buf = nbuf;
+      }
+    };
+    var final = st.f || 0, pos = st.p || 0, bt = st.b || 0, lm = st.l, dm = st.d, lbt = st.m, dbt = st.n;
+    var tbts = sl * 8;
+    do {
+      if (!lm) {
+        final = bits(dat, pos, 1);
+        var type = bits(dat, pos + 1, 3);
+        pos += 3;
+        if (!type) {
+          var s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
+          if (t > sl) {
+            if (noSt)
+              err(0);
+            break;
+          }
+          if (resize)
+            cbuf(bt + l);
+          buf.set(dat.subarray(s, t), bt);
+          st.b = bt += l, st.p = pos = t * 8, st.f = final;
+          continue;
+        } else if (type == 1)
+          lm = flrm, dm = fdrm, lbt = 9, dbt = 5;
+        else if (type == 2) {
+          var hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
+          var tl = hLit + bits(dat, pos + 5, 31) + 1;
+          pos += 14;
+          var ldt = new u8(tl);
+          var clt = new u8(19);
+          for (var i = 0; i < hcLen; ++i) {
+            clt[clim[i]] = bits(dat, pos + i * 3, 7);
+          }
+          pos += hcLen * 3;
+          var clb = max(clt), clbmsk = (1 << clb) - 1;
+          var clm = hMap(clt, clb, 1);
+          for (var i = 0; i < tl; ) {
+            var r = clm[bits(dat, pos, clbmsk)];
+            pos += r & 15;
+            var s = r >> 4;
+            if (s < 16) {
+              ldt[i++] = s;
+            } else {
+              var c = 0, n = 0;
+              if (s == 16)
+                n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i - 1];
+              else if (s == 17)
+                n = 3 + bits(dat, pos, 7), pos += 3;
+              else if (s == 18)
+                n = 11 + bits(dat, pos, 127), pos += 7;
+              while (n--)
+                ldt[i++] = c;
+            }
+          }
+          var lt = ldt.subarray(0, hLit), dt = ldt.subarray(hLit);
+          lbt = max(lt);
+          dbt = max(dt);
+          lm = hMap(lt, lbt, 1);
+          dm = hMap(dt, dbt, 1);
+        } else
+          err(1);
+        if (pos > tbts) {
+          if (noSt)
+            err(0);
+          break;
+        }
+      }
+      if (resize)
+        cbuf(bt + 131072);
+      var lms = (1 << lbt) - 1, dms = (1 << dbt) - 1;
+      var lpos = pos;
+      for (; ; lpos = pos) {
+        var c = lm[bits16(dat, pos) & lms], sym = c >> 4;
+        pos += c & 15;
+        if (pos > tbts) {
+          if (noSt)
+            err(0);
+          break;
+        }
+        if (!c)
+          err(2);
+        if (sym < 256)
+          buf[bt++] = sym;
+        else if (sym == 256) {
+          lpos = pos, lm = null;
+          break;
+        } else {
+          var add2 = sym - 254;
+          if (sym > 264) {
+            var i = sym - 257, b = fleb[i];
+            add2 = bits(dat, pos, (1 << b) - 1) + fl[i];
+            pos += b;
+          }
+          var d = dm[bits16(dat, pos) & dms], dsym = d >> 4;
+          if (!d)
+            err(3);
+          pos += d & 15;
+          var dt = fd[dsym];
+          if (dsym > 3) {
+            var b = fdeb[dsym];
+            dt += bits16(dat, pos) & (1 << b) - 1, pos += b;
+          }
+          if (pos > tbts) {
+            if (noSt)
+              err(0);
+            break;
+          }
+          if (resize)
+            cbuf(bt + 131072);
+          var end = bt + add2;
+          if (bt < dt) {
+            var shift = dl - dt, dend = Math.min(dt, end);
+            if (shift + bt < 0)
+              err(3);
+            for (; bt < dend; ++bt)
+              buf[bt] = dict[shift + bt];
+          }
+          for (; bt < end; ++bt)
+            buf[bt] = buf[bt - dt];
+        }
+      }
+      st.l = lm, st.p = lpos, st.b = bt, st.f = final;
+      if (lm)
+        final = 1, st.m = lbt, st.d = dm, st.n = dbt;
+    } while (!final);
+    return bt != buf.length && noBuf ? slc(buf, 0, bt) : buf.subarray(0, bt);
+  };
+  var et = /* @__PURE__ */ new u8(0);
+  function inflateSync(data, opts) {
+    return inflt(data, { i: 2 }, opts && opts.out, opts && opts.dictionary);
+  }
+  var td = typeof TextDecoder != "undefined" && /* @__PURE__ */ new TextDecoder();
+  var tds = 0;
+  try {
+    td.decode(et, { stream: true });
+    tds = 1;
+  } catch (e) {
+  }
+  var dutf8 = function(d) {
+    for (var r = "", i = 0; ; ) {
+      var c = d[i++];
+      var eb3 = (c > 127) + (c > 223) + (c > 239);
+      if (i + eb3 > d.length)
+        return { s: r, r: slc(d, i - 1) };
+      if (!eb3)
+        r += String.fromCharCode(c);
+      else if (eb3 == 3) {
+        c = ((c & 15) << 18 | (d[i++] & 63) << 12 | (d[i++] & 63) << 6 | d[i++] & 63) - 65536, r += String.fromCharCode(55296 | c >> 10, 56320 | c & 1023);
+      } else if (eb3 & 1)
+        r += String.fromCharCode((c & 31) << 6 | d[i++] & 63);
+      else
+        r += String.fromCharCode((c & 15) << 12 | (d[i++] & 63) << 6 | d[i++] & 63);
+    }
+  };
+  function strFromU8(dat, latin1) {
+    if (latin1) {
+      var r = "";
+      for (var i = 0; i < dat.length; i += 16384)
+        r += String.fromCharCode.apply(null, dat.subarray(i, i + 16384));
+      return r;
+    } else if (td) {
+      return td.decode(dat);
+    } else {
+      var _a8 = dutf8(dat), s = _a8.s, r = _a8.r;
+      if (r.length)
+        err(8);
+      return s;
+    }
+  }
+
   // .fbw/fbw-common/src/systems/shared/src/navigraph/amdb.ts
   var BRIDGE = "http://127.0.0.1:8770/v1";
+  var HOSTED = "".replace(/\/+$/, "");
+  var BUNDLE = "".replace(/\/+$/, "");
+  var R = 63710088e-1;
+  var HOSTED_WAIT_MS = 5e3;
   async function get2(query) {
     const response = await fetch("".concat(BRIDGE, "/").concat(query), { headers: { Accept: "application/json" } });
     if (!response.ok) {
@@ -67115,13 +67515,177 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     return response.json();
   }
+  var bridgeAnswers;
+  function bridgeUp() {
+    if (false) {
+      return Promise.resolve(false);
+    }
+    if (!HOSTED && !BUNDLE) {
+      return Promise.resolve(true);
+    }
+    if (!bridgeAnswers) {
+      bridgeAnswers = new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(false), 1500);
+        fetch("".concat(BRIDGE, "/cycle")).then(
+          (r) => {
+            clearTimeout(timer);
+            resolve(r.ok);
+          },
+          () => {
+            clearTimeout(timer);
+            resolve(false);
+          }
+        );
+      });
+    }
+    return bridgeAnswers;
+  }
+  var hostedReachable = HOSTED !== "";
+  var Missing = class extends Error {
+  };
+  function hosted(path) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("".concat(HOSTED, " did not answer in time"))), HOSTED_WAIT_MS);
+      fetch("".concat(HOSTED, "/").concat(path)).then(
+        (r) => {
+          clearTimeout(timer);
+          if (!r.ok) {
+            reject(new Missing("".concat(HOSTED, "/").concat(path, " answered ").concat(r.status)));
+          } else {
+            r.json().then(resolve, reject);
+          }
+        },
+        (e) => {
+          clearTimeout(timer);
+          reject(e);
+        }
+      );
+    });
+  }
+  var bundleIndex;
+  var packs = /* @__PURE__ */ new Map();
+  async function bundled(key) {
+    if (!BUNDLE) {
+      throw new Missing("".concat(key, ": no airports are bundled with this aircraft"));
+    }
+    if (!bundleIndex) {
+      bundleIndex = fetch("".concat(BUNDLE, "/index.json")).then((r) => r.json()).then((j) => j.files);
+    }
+    const at = (await bundleIndex)[key];
+    if (!at) {
+      throw new Missing("".concat(key, " is not bundled with this aircraft"));
+    }
+    const [n, offset, length3] = at;
+    let pack = packs.get(n);
+    if (!pack) {
+      if (packs.size >= 2) {
+        packs.delete(packs.keys().next().value);
+      }
+      pack = fetch("".concat(BUNDLE, "/p").concat(String(n).padStart(3, "0"), ".bin")).then((r) => r.arrayBuffer()).then((b) => new Uint8Array(b));
+      pack.catch(() => packs.delete(n));
+      packs.set(n, pack);
+    }
+    return JSON.parse(strFromU8(inflateSync((await pack).subarray(offset, offset + length3))));
+  }
+  async function read(hostedPath, bundleKey) {
+    if (hostedReachable) {
+      try {
+        return await hosted(hostedPath);
+      } catch (e) {
+        if (e instanceof Missing || !BUNDLE) {
+          throw e;
+        }
+        hostedReachable = false;
+        console.warn("[AMDB] ".concat(e, "; reading the airports bundled with the aircraft from now on"));
+      }
+    }
+    return bundled(bundleKey);
+  }
+  var airports = /* @__PURE__ */ new Map();
+  function airportFile(icao) {
+    const code = icao.toUpperCase();
+    let file = airports.get(code);
+    if (!file) {
+      if (airports.size >= 4) {
+        airports.delete(airports.keys().next().value);
+      }
+      file = read("v1/".concat(code.slice(0, 2), "/").concat(code, ".json"), code);
+      file.catch(() => airports.delete(code));
+      airports.set(code, file);
+    }
+    return file;
+  }
+  var ALIAS = { touchdownliftofarea: "touchdownliftoffarea" };
+  function toLonLat(arp, x, y) {
+    const lat0 = arp[0] * Math.PI / 180;
+    const rho = Math.hypot(x, y);
+    if (rho < 1e-9) {
+      return [arp[1], arp[0]];
+    }
+    const c = rho / R;
+    const sinc = Math.sin(c);
+    const cosc = Math.cos(c);
+    const lat = Math.asin(Math.max(-1, Math.min(1, cosc * Math.sin(lat0) + y * sinc * Math.cos(lat0) / rho)));
+    const lon = arp[1] * Math.PI / 180 + Math.atan2(x * sinc, rho * Math.cos(lat0) * cosc - y * Math.sin(lat0) * sinc);
+    return [lon * 180 / Math.PI, lat * 180 / Math.PI];
+  }
+  function mapCoordinates(c, arp) {
+    return typeof c[0] === "number" ? toLonLat(arp, c[0], c[1]) : c.map((inner) => mapCoordinates(inner, arp));
+  }
+  function toWgs84(collection, arp) {
+    const point2 = (g) => g && g.coordinates ? __spreadProps(__spreadValues({}, g), { coordinates: mapCoordinates(g.coordinates, arp) }) : g;
+    return __spreadProps(__spreadValues({}, collection), {
+      features: collection.features.map((f) => {
+        const properties = __spreadValues({}, f.properties);
+        for (const key of ["centroid", "midpoint"]) {
+          if (properties[key]) {
+            properties[key] = point2(properties[key]);
+          }
+        }
+        return __spreadProps(__spreadValues({}, f), { geometry: point2(f.geometry), properties });
+      })
+    });
+  }
   async function searchAmdbAirports(queryString) {
-    return get2("search?q=".concat(encodeURIComponent(queryString)));
+    if (await bridgeUp()) {
+      return get2("search?q=".concat(encodeURIComponent(queryString)));
+    }
+    const q = queryString.trim().toUpperCase();
+    if (!q) {
+      return read("v1/search.json", "search");
+    }
+    if (!/^[0-9A-Z]/.test(q)) {
+      return [];
+    }
+    const rows = await read("v1/search/".concat(q[0], ".json"), "search/".concat(q[0])).catch(() => []);
+    return rows.filter((r) => {
+      var _a8, _b6;
+      return r.idarpt.startsWith(q) || ((_a8 = r.iata) != null ? _a8 : "").toUpperCase().startsWith(q) || ((_b6 = r.name) != null ? _b6 : "").toUpperCase().startsWith(q);
+    });
   }
   async function getAmdbData(icao, includeFeatureTypes, excludeFeatureTypes, projection = "NAVIGRAPH:ARP_AZEQ") {
-    const exclude = excludeFeatureTypes ? excludeFeatureTypes.join(",") : "";
-    const include = includeFeatureTypes ? includeFeatureTypes.join(",") : "";
-    return get2("".concat(icao, "?projection=").concat(projection, "&format=geojson&exclude=").concat(exclude, "&include=").concat(include));
+    if (await bridgeUp()) {
+      const exclude = excludeFeatureTypes ? excludeFeatureTypes.join(",") : "";
+      const include = includeFeatureTypes ? includeFeatureTypes.join(",") : "";
+      return get2("".concat(icao, "?projection=").concat(projection, "&format=geojson&exclude=").concat(exclude, "&include=").concat(include));
+    }
+    const file = await airportFile(icao);
+    const wgs84 = projection.toUpperCase() === "EPSG:4326";
+    const canonical = (n) => {
+      var _a8;
+      return (_a8 = ALIAS[n.toLowerCase()]) != null ? _a8 : n.toLowerCase();
+    };
+    const names = includeFeatureTypes && includeFeatureTypes.length ? includeFeatureTypes.map((n) => n.toLowerCase()) : Object.keys(file.layers);
+    const skip = new Set((excludeFeatureTypes != null ? excludeFeatureTypes : []).map(canonical));
+    const out = {};
+    for (const name of names) {
+      const key = canonical(name);
+      const layer = file.layers[key];
+      if (layer && !skip.has(key)) {
+        out[name] = wgs84 ? toWgs84(layer, file.arp) : layer;
+      }
+    }
+    return out;
   }
 
   // .fbw/fbw-common/src/systems/shared/src/navigraph/client.ts
@@ -67515,8 +68079,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return value;
     }
     read() {
-      var _a7;
-      return (_a7 = this.previousOutput) != null ? _a7 : false;
+      var _a8;
+      return (_a8 = this.previousOutput) != null ? _a8 : false;
     }
   };
 
@@ -67645,10 +68209,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     /** @inheritdoc */
     init() {
       this.rmpState.sub((rmpState) => {
-        var _a7, _b5, _c;
+        var _a8, _b6, _c;
         console.log("rmpState", RmpState[rmpState]);
         if (rmpState === 2 /* On */) {
-          (_a7 = this.powerOffRelaySub) == null ? void 0 : _a7.pause();
+          (_a8 = this.powerOffRelaySub) == null ? void 0 : _a8.pause();
         }
         for (const sub2 of this.subs) {
           if (rmpState === 2 /* On */) {
@@ -67659,7 +68223,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         }
         if (rmpState !== 2 /* On */) {
           Arinc429Word.toSimVarValue(this.tuningVar, 0, 0 /* FailureWarning */);
-          (_b5 = this.powerOffRelayValue) == null ? void 0 : _b5.set(0);
+          (_b6 = this.powerOffRelayValue) == null ? void 0 : _b6.set(0);
           (_c = this.powerOffRelaySub) == null ? void 0 : _c.resume();
         }
       }, true);
@@ -67796,9 +68360,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   // .fbw/fbw-common/src/systems/instruments/src/MsfsAvionicsCommon/Layer.tsx
   var Layer = class extends DisplayComponent {
     render() {
-      var _a7, _b5, _c;
+      var _a8, _b6, _c;
       const { x, y } = this.props;
-      const ref = (_a7 = this.props.ref) != null ? _a7 : FSComponent.createRef();
+      const ref = (_a8 = this.props.ref) != null ? _a8 : FSComponent.createRef();
       let value;
       if (typeof x !== "number" && typeof y !== "number") {
         value = MappedSubject.create(([x2, y2]) => "translate(".concat(x2, ", ").concat(y2, ")"), x, y);
@@ -67812,7 +68376,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         {
           ref,
           transform: value,
-          visibility: (_c = (_b5 = this.props.visible) == null ? void 0 : _b5.map((v3) => v3 ? "inherit" : "hidden")) != null ? _c : "inherit"
+          visibility: (_c = (_b6 = this.props.visible) == null ? void 0 : _b6.map((v3) => v3 ? "inherit" : "hidden")) != null ? _c : "inherit"
         },
         this.props.children
       );
@@ -67917,10 +68481,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     onUpdate() {
-      var _a7;
+      var _a8;
       const cmd = SimVar.GetSimVarValue(this.cmdVar, "number");
       if (cmd) {
-        const name = (_a7 = COMMAND_NAMES[cmd]) != null ? _a7 : "";
+        const name = (_a8 = COMMAND_NAMES[cmd]) != null ? _a8 : "";
         this.command(this.side === "R" ? name.replace("AMDB_OANS_", "AMDB_OANS_FO_") : name);
         SimVar.SetSimVarValue(this.cmdVar, "number", 0);
       }
@@ -67966,8 +68530,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   ];
   var fenixAutobrake = {
     armed: () => {
-      var _a7;
-      return (_a7 = FENIX_AUTOBRAKE.find((a) => SimVar.GetSimVarValue(a.light, "number") > 0.5)) == null ? void 0 : _a7.name;
+      var _a8;
+      return (_a8 = FENIX_AUTOBRAKE.find((a) => SimVar.GetSimVarValue(a.light, "number") > 0.5)) == null ? void 0 : _a8.name;
     },
     disarm: () => {
       const lit = FENIX_AUTOBRAKE.find((a) => SimVar.GetSimVarValue(a.light, "number") > 0.5);
@@ -67982,9 +68546,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   };
   var fbwAutobrake = {
     armed: () => {
-      var _a7;
+      var _a8;
       const mode = Math.round(SimVar.GetSimVarValue("L:A32NX_AUTOBRAKES_ARMED_MODE", "number"));
-      return mode > 0 ? (_a7 = ["", "LO", "MED", "MAX"][mode]) != null ? _a7 : "MODE ".concat(mode) : void 0;
+      return mode > 0 ? (_a8 = ["", "LO", "MED", "MAX"][mode]) != null ? _a8 : "MODE ".concat(mode) : void 0;
     },
     disarm: () => SimVar.SetSimVarValue("K:A32NX.AUTOBRAKE_SET_DISARM", "number", 0)
   };
@@ -68076,7 +68640,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return d * Math.cos(bearing2 - r.heading * rad);
     }
     onUpdate() {
-      var _a7, _b5;
+      var _a8, _b6;
       const r = this.read();
       const dt = r.time - this.lastTime;
       this.lastTime = r.time;
@@ -68096,14 +68660,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       const active = this.state >= 2 /* Rolling */;
       this.publish({
         state: this.state,
-        exit: (_b5 = (_a7 = this.exit) == null ? void 0 : _a7.name) != null ? _b5 : null,
+        exit: (_b6 = (_a8 = this.exit) == null ? void 0 : _a8.name) != null ? _b6 : null,
         metres: active && Number.isFinite(ahead) ? Math.max(0, Math.round(ahead)) : null,
         missed: active && this.missed
       });
     }
     /** Armed or not, and the start of the rollout. */
     watch(r) {
-      var _a7;
+      var _a8;
       if (this.takeoverAt !== null) {
         if (r.time - this.takeoverAt < TAKEOVER_CHECK_S) {
           return;
@@ -68118,7 +68682,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
       this.setState(this.exit && r.armRequested ? 1 /* Armed */ : 0 /* Off */);
       const rolling = r.onGround && r.gs > ARM_SPEED;
-      this.slowingSince = rolling && r.accel < -0.15 ? (_a7 = this.slowingSince) != null ? _a7 : r.time : null;
+      this.slowingSince = rolling && r.accel < -0.15 ? (_a8 = this.slowingSince) != null ? _a8 : r.time : null;
       const started = rolling && (r.spoilers > 0.5 || this.slowingSince !== null && r.time - this.slowingSince >= 1);
       if (!started || this.rolloutDone || this.state !== 1 /* Armed */) {
         return;
@@ -68137,7 +68701,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       log("takeover:-".concat(r.autobrake, "-taken-off-at-").concat(Math.round(r.gs / KT), "kt-exit-").concat(Math.round(this.ahead(r)), "m"));
     }
     begin(r) {
-      var _a7;
+      var _a8;
       const remaining = Math.max(1, this.ahead(r) - RELEASE_BEFORE_EXIT_M);
       this.releaseSpeed = this.exitType === HIGH_SPEED_EXIT ? RELEASE_SPEED_HIGH_SPEED_EXIT : RELEASE_SPEED;
       this.releaseTarget = this.releaseSpeed * RELEASE_AIM;
@@ -68150,7 +68714,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.nextLog = 0;
       this.missed = false;
       this.setState(2 /* Rolling */);
-      log("active:-".concat(Math.round(r.gs / KT), "kt-exit-").concat((_a7 = this.exit) == null ? void 0 : _a7.name, "-").concat(Math.round(this.ahead(r)), "m-rate-").concat(this.desired, "-release-").concat(Math.round(this.releaseSpeed / KT), "kt"));
+      log("active:-".concat(Math.round(r.gs / KT), "kt-exit-").concat((_a8 = this.exit) == null ? void 0 : _a8.name, "-").concat(Math.round(this.ahead(r)), "m-rate-").concat(this.desired, "-release-").concat(Math.round(this.releaseSpeed / KT), "kt"));
     }
     rollout(r, dt) {
       if (this.state === 5 /* LettingGo */) {
@@ -68186,9 +68750,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       if (target === null) {
         this.integral = 0;
       } else {
-        const err = this.decel - target;
-        this.integral = Math.min(1, Math.max(0, this.integral + 0.6 * err * dt));
-        want = Math.min(1, Math.max(0, this.integral + 0.15 * err));
+        const err2 = this.decel - target;
+        this.integral = Math.min(1, Math.max(0, this.integral + 0.6 * err2 * dt));
+        want = Math.min(1, Math.max(0, this.integral + 0.15 * err2));
       }
       this.pedal += Math.min(PEDAL_RATE_PER_S * dt, Math.max(-PEDAL_RATE_PER_S * dt, want - this.pedal));
       this.brake(this.pedal);
@@ -68217,6 +68781,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
   };
   function log(what) {
+    if (false) {
+      return;
+    }
     fetch("http://127.0.0.1:8770/amdb-oans-event?btv-".concat(what)).catch(() => void 0);
   }
 
@@ -72821,9 +73388,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return xc[i] > yc[i] ^ a ? 1 : -1;
     return k == l ? 0 : k > l ^ a ? 1 : -1;
   }
-  function intCheck(n, min, max, name) {
-    if (n < min || n > max || n !== mathfloor(n)) {
-      throw Error(bignumberError + (name || "Argument") + (typeof n == "number" ? n < min || n > max ? " out of range: " : " not an integer: " : " not a primitive number: ") + String(n));
+  function intCheck(n, min, max2, name) {
+    if (n < min || n > max2 || n !== mathfloor(n)) {
+      throw Error(bignumberError + (name || "Argument") + (typeof n == "number" ? n < min || n > max2 ? " out of range: " : " not an integer: " : " not a primitive number: ") + String(n));
     }
   }
   function isOdd(n) {
@@ -73078,14 +73645,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       };
     }
   };
-  var _a2, _b;
-  var SplayTreeMap = (_b = class extends SplayTree {
+  var _a3, _b2;
+  var SplayTreeMap = (_b2 = class extends SplayTree {
     constructor(compare2, isValidKey) {
       super();
       __publicField(this, "root", null);
       __publicField(this, "compare");
       __publicField(this, "validKey");
-      __publicField(this, _a2, "[object Map]");
+      __publicField(this, _a3, "[object Map]");
       this.compare = compare2 != null ? compare2 : this.defaultCompare();
       this.validKey = isValidKey != null ? isValidKey : (a) => a != null && a != void 0;
     }
@@ -73268,15 +73835,15 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     [Symbol.iterator]() {
       return new SplayTreeMapEntryIterableIterator(this.wrap());
     }
-  }, _a2 = Symbol.toStringTag, _b);
-  var _a3, _b2;
-  var SplayTreeSet = (_b2 = class extends SplayTree {
+  }, _a3 = Symbol.toStringTag, _b2);
+  var _a4, _b3;
+  var SplayTreeSet = (_b3 = class extends SplayTree {
     constructor(compare2, isValidKey) {
       super();
       __publicField(this, "root", null);
       __publicField(this, "compare");
       __publicField(this, "validKey");
-      __publicField(this, _a3, "[object Set]");
+      __publicField(this, _a4, "[object Set]");
       this.compare = compare2 != null ? compare2 : this.defaultCompare();
       this.validKey = isValidKey != null ? isValidKey : (v3) => v3 != null && v3 != void 0;
     }
@@ -73374,7 +73941,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return node.key;
     }
     retainAll(elements) {
-      const retainSet = new _b2(this.compare, this.validKey);
+      const retainSet = new _b3(this.compare, this.validKey);
       const modificationCount = this.modificationCount;
       for (const object of elements) {
         if (modificationCount != this.modificationCount) {
@@ -73399,7 +73966,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return this.root.key;
     }
     intersection(other) {
-      const result = new _b2(this.compare, this.validKey);
+      const result = new _b3(this.compare, this.validKey);
       for (const element of this) {
         if (other.has(element))
           result.add(element);
@@ -73407,7 +73974,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return result;
     }
     difference(other) {
-      const result = new _b2(this.compare, this.validKey);
+      const result = new _b3(this.compare, this.validKey);
       for (const element of this) {
         if (!other.has(element))
           result.add(element);
@@ -73420,7 +73987,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return u7;
     }
     clone() {
-      const set2 = new _b2(this.compare, this.validKey);
+      const set2 = new _b3(this.compare, this.validKey);
       set2.size = this.size;
       set2.root = this.copyNode(this.root);
       return set2;
@@ -73466,7 +74033,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     [Symbol.iterator]() {
       return new SplayTreeKeyIterableIterator(this.wrap());
     }
-  }, _a3 = Symbol.toStringTag, _b2);
+  }, _a4 = Symbol.toStringTag, _b3);
   var SplayTreeIterableIterator = class {
     constructor(tree) {
       __publicField(this, "tree");
@@ -73941,7 +74508,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /* Returns the ring that encloses this one, if any */
     _calcEnclosingRing() {
-      var _a7, _b5;
+      var _a8, _b6;
       let leftMostEvt = this.events[0];
       for (let i = 1, iMax = this.events.length; i < iMax; i++) {
         const evt = this.events[i];
@@ -73956,10 +74523,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         if (!prevPrevSeg)
           return prevSeg.ringOut;
         if (prevPrevSeg.ringOut !== prevSeg.ringOut) {
-          if (((_a7 = prevPrevSeg.ringOut) == null ? void 0 : _a7.enclosingRing()) !== prevSeg.ringOut) {
+          if (((_a8 = prevPrevSeg.ringOut) == null ? void 0 : _a8.enclosingRing()) !== prevSeg.ringOut) {
             return prevSeg.ringOut;
           } else
-            return (_b5 = prevSeg.ringOut) == null ? void 0 : _b5.enclosingRing();
+            return (_b6 = prevSeg.ringOut) == null ? void 0 : _b6.enclosingRing();
         }
         prevSeg = prevPrevSeg.prevInResult();
         prevPrevSeg = prevSeg ? prevSeg.prevInResult() : null;
@@ -74010,7 +74577,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return geom;
     }
     _composePolys(rings) {
-      var _a7;
+      var _a8;
       const polys = [];
       for (let i = 0, iMax = rings.length; i < iMax; i++) {
         const ring = rings[i];
@@ -74022,7 +74589,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           const enclosingRing = ring.enclosingRing();
           if (!(enclosingRing == null ? void 0 : enclosingRing.poly))
             polys.push(new PolyOut(enclosingRing));
-          (_a7 = enclosingRing == null ? void 0 : enclosingRing.poly) == null ? void 0 : _a7.addInterior(ring);
+          (_a8 = enclosingRing == null ? void 0 : enclosingRing.poly) == null ? void 0 : _a8.addInterior(ring);
         }
       }
       return polys;
@@ -75000,12 +75567,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     return points;
   }
   function simplify2(geojson, options = {}) {
-    var _a7, _b5, _c;
+    var _a8, _b6, _c;
     options = options != null ? options : {};
     if (!isObject(options))
       throw new Error("options is invalid");
-    const tolerance = (_a7 = options.tolerance) != null ? _a7 : 1;
-    const highQuality = (_b5 = options.highQuality) != null ? _b5 : false;
+    const tolerance = (_a8 = options.tolerance) != null ? _a8 : 1;
+    const highQuality = (_b6 = options.highQuality) != null ? _b6 : false;
     const mutate = (_c = options.mutate) != null ? _c : false;
     if (!geojson)
       throw new Error("geojson is required");
@@ -75228,13 +75795,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.lgciuDiscreteWord2_2
       );
       this.skip = 0;
-      var _a7, _b5;
+      var _a8, _b6;
       this.dryStoppingDistance.sub(() => this.drawBtvLayer());
       this.wetStoppingDistance.sub(() => this.drawBtvLayer());
       this.liveStoppingDistance.sub(() => this.drawBtvLayer());
       this.remaininingDistToRwyEnd.sub(() => this.drawBtvLayer());
-      (_a7 = this.aircraftOnGround) == null ? void 0 : _a7.sub(() => this.drawBtvLayer());
-      (_b5 = this.zoomLevelIndex) == null ? void 0 : _b5.sub(() => this.drawBtvLayer());
+      (_a8 = this.aircraftOnGround) == null ? void 0 : _a8.sub(() => this.drawBtvLayer());
+      (_b6 = this.zoomLevelIndex) == null ? void 0 : _b6.sub(() => this.drawBtvLayer());
       this.sub.on("amdb_taxi_route").handle((route) => {
         this.amdbTaxiRoute = route != null ? route : [];
         this.drawBtvLayer();
@@ -75242,7 +75809,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.clearSelection();
     }
     async selectRunwayFromOans(runway, centerlineFeature, thresholdFeature) {
-      var _a7, _b5;
+      var _a8, _b6;
       this.clearSelection();
       const thrLoc = thresholdFeature.geometry.coordinates;
       this.btvThresholdPositionOansReference = thrLoc;
@@ -75256,7 +75823,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.btvOppositeThresholdPositionOansReference = lastEl;
       }
       const lda = dist1 > dist2 ? dist1 : dist2;
-      const heading = (_b5 = (_a7 = thresholdFeature.properties) == null ? void 0 : _a7.brngmag) != null ? _b5 : 0;
+      const heading = (_b6 = (_a8 = thresholdFeature.properties) == null ? void 0 : _a8.brngmag) != null ? _b6 : 0;
       this.btvRunwayLda.set(lda);
       this.btvRunwayBearingTrue.set(heading);
       this.btvRunway.set(runway);
@@ -75265,7 +75832,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.drawBtvLayer();
     }
     async selectExitFromOans(exit, feature2) {
-      var _a7, _b5, _c;
+      var _a8, _b6, _c;
       if (this.btvRunway.get() == null || !this.btvThresholdPositionOansReference || !this.btvOppositeThresholdPositionOansReference) {
         return;
       }
@@ -75290,7 +75857,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return;
       }
       this.btvExitPositionOansReference = exitDistFromCenterLine1 < exitDistFromCenterLine2 ? exitLoc1 : exitLoc2;
-      const arpCoords = (_a7 = this.airportCoordinates) == null ? void 0 : _a7.get();
+      const arpCoords = (_a8 = this.airportCoordinates) == null ? void 0 : _a8.get();
       if (!arpCoords) {
         console.warn("Cannot select BTV exit position: airport coordinates unavailable");
         return;
@@ -75307,7 +75874,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.btvExitPositionOansReference[1]
       ) - BTV_MIN_TOUCHDOWN_ZONE_DISTANCE;
       this.bus.getPublisher().pub("oansSelectedExit", exit, true);
-      this.bus.getPublisher().pub("amdb_btv_exit_type", (_c = (_b5 = feature2.properties) == null ? void 0 : _b5.exittype) != null ? _c : 1, true);
+      this.bus.getPublisher().pub("amdb_btv_exit_type", (_c = (_b6 = feature2.properties) == null ? void 0 : _b6.exittype) != null ? _c : 1, true);
       this.btvPathGeometry = Array.from(feature2.geometry.coordinates);
       if (exitDistFromCenterLine1 < exitDistFromCenterLine2) {
         this.btvPathGeometry.unshift(thrLoc);
@@ -75334,9 +75901,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       pub.pub("oansSelectedExit", null, true);
     }
     drawBtvPath() {
-      var _a7, _b5, _c, _d, _e, _f;
-      const ctx = (_a7 = this.canvasRef) == null ? void 0 : _a7.instance.getContext("2d");
-      if (!this.btvPathGeometry.length || !((_b5 = this.canvasRef) == null ? void 0 : _b5.getOrDefault()) || !ctx) {
+      var _a8, _b6, _c, _d, _e, _f;
+      const ctx = (_a8 = this.canvasRef) == null ? void 0 : _a8.instance.getContext("2d");
+      if (!this.btvPathGeometry.length || !((_b6 = this.canvasRef) == null ? void 0 : _b6.getOrDefault()) || !ctx) {
         return;
       }
       ctx.resetTransform();
@@ -75353,9 +75920,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       ctx.stroke(path);
     }
     drawStopLines() {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
-      const ctx = (_a7 = this.canvasRef) == null ? void 0 : _a7.instance.getContext("2d");
-      const aircraftPpos = (_b5 = this.aircraftPpos) == null ? void 0 : _b5.get();
+      var _a8, _b6, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+      const ctx = (_a8 = this.canvasRef) == null ? void 0 : _a8.instance.getContext("2d");
+      const aircraftPpos = (_b6 = this.aircraftPpos) == null ? void 0 : _b6.get();
       const acOnGround = (_c = this.aircraftOnGround) == null ? void 0 : _c.get();
       const rwyBearingTrue = this.btvRunwayBearingTrue.get();
       if (!((_d = this.btvThresholdPositionOansReference) == null ? void 0 : _d.length) || !this.btvOppositeThresholdPositionOansReference || !((_e = this.canvasRef) == null ? void 0 : _e.getOrDefault()) || !ctx || !aircraftPpos || !this.getZoomLevelInverseScale || acOnGround === void 0 || rwyBearingTrue === null) {
@@ -75524,9 +76091,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     drawAmdbTaxiRoute() {
-      var _a7, _b5, _c, _d, _e, _f;
-      const ctx = (_a7 = this.canvasRef) == null ? void 0 : _a7.instance.getContext("2d");
-      if (this.amdbTaxiRoute.length < 2 || !((_b5 = this.canvasRef) == null ? void 0 : _b5.getOrDefault()) || !ctx) {
+      var _a8, _b6, _c, _d, _e, _f;
+      const ctx = (_a8 = this.canvasRef) == null ? void 0 : _a8.instance.getContext("2d");
+      if (this.amdbTaxiRoute.length < 2 || !((_b6 = this.canvasRef) == null ? void 0 : _b6.getOrDefault()) || !ctx) {
         return;
       }
       ctx.resetTransform();
@@ -75543,8 +76110,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       ctx.stroke(path);
     }
     drawBtvLayer() {
-      var _a7, _b5, _c, _d, _e;
-      if (!((_a7 = this.canvasRef) == null ? void 0 : _a7.getOrDefault())) {
+      var _a8, _b6, _c, _d, _e;
+      if (!((_a8 = this.canvasRef) == null ? void 0 : _a8.getOrDefault())) {
         return;
       }
       const isStopLineStyle = (s) => [
@@ -75553,7 +76120,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         "btv-stop-line-magenta" /* BtvStopLineMagenta */,
         "btv-stop-line-red" /* BtvStopLineRed */
       ].includes(s);
-      (_b5 = this.canvasRef.instance.getContext("2d")) == null ? void 0 : _b5.resetTransform();
+      (_b6 = this.canvasRef.instance.getContext("2d")) == null ? void 0 : _b6.resetTransform();
       (_c = this.canvasRef.instance.getContext("2d")) == null ? void 0 : _c.clearRect(0, 0, this.canvasRef.instance.width, this.canvasRef.instance.height);
       while (((_d = this.labelManager) == null ? void 0 : _d.visibleLabels.getArray().findIndex((it) => isStopLineStyle(it.style))) !== -1) {
         (_e = this.labelManager) == null ? void 0 : _e.visibleLabels.removeAt(
@@ -75573,12 +76140,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * @param runwayFeatures Runway AMDB feature collection
      */
     updateRwyAheadAdvisory(globalPos, airportRefPos, aircraftBearing, runwayFeatures) {
-      var _a7;
+      var _a8;
       this.skip++;
       if (this.skip % 10 !== 0) {
         return;
       }
-      const aircraftPpos = (_a7 = this.aircraftPpos) == null ? void 0 : _a7.get();
+      const aircraftPpos = (_a8 = this.aircraftPpos) == null ? void 0 : _a8.get();
       if (this.onGround.get() === false || this.groundSpeed.get().ssm !== 3 /* NormalOperation */ || this.groundSpeed.get().value > 40 || this.groundSpeed.get().value < 1 || !aircraftPpos) {
         this.transmitRwyAheadAdvisory(false, "", true);
         return;
@@ -76121,14 +76688,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
 
   // .fbw/fbw-common/src/systems/instruments/src/OANC/OancLabelFilter.ts
   function filterLabel(label, filter, fmsDepRunway, fmsLdgRunway, btvSelectedRunway, btvSelectedExit) {
-    var _a7, _b5, _c, _d, _e, _f, _g;
+    var _a8, _b6, _c, _d, _e, _f, _g;
     if (label.style === "runway-end-fms-selected" /* FmsSelectedRunwayEnd */ && label.text) {
       return label.text === (fmsDepRunway == null ? void 0 : fmsDepRunway.substring(4)) || label.text === (fmsLdgRunway == null ? void 0 : fmsLdgRunway.substring(4));
     }
     if (label.style === "runway-arrow-btv-selected" /* BtvSelectedRunwayArrow */ && label.text) {
       return label.text === (btvSelectedRunway == null ? void 0 : btvSelectedRunway.substring(4));
     }
-    if (btvSelectedRunway && ((_a7 = label.associatedFeature) == null ? void 0 : _a7.properties.feattype) === 4 /* PaintedCenterline */ && label.text === (btvSelectedRunway == null ? void 0 : btvSelectedRunway.substring(4))) {
+    if (btvSelectedRunway && ((_a8 = label.associatedFeature) == null ? void 0 : _a8.properties.feattype) === 4 /* PaintedCenterline */ && label.text === (btvSelectedRunway == null ? void 0 : btvSelectedRunway.substring(4))) {
       return true;
     }
     if (btvSelectedExit && label.style === "exit-line-btv-selected" /* BtvSelectedExit */) {
@@ -76144,7 +76711,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     ].includes(label.style)) {
       return true;
     }
-    const exitServes = ((_b5 = label.associatedFeature) == null ? void 0 : _b5.properties.feattype) === 19 /* RunwayExitLine */ ? label.associatedFeature.properties.idthr : void 0;
+    const exitServes = ((_b6 = label.associatedFeature) == null ? void 0 : _b6.properties.feattype) === 19 /* RunwayExitLine */ ? label.associatedFeature.properties.idthr : void 0;
     if (btvSelectedRunway && typeof exitServes === "string" && !exitServes.split(".").includes(btvSelectedRunway.substring(4))) {
       return false;
     }
@@ -76161,12 +76728,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
   }
   function labelStyle(label, fmsDataStore, isFmsOrigin, isFmsDestination, btvSelectedRunway, btvSelectedExit) {
-    var _a7, _b5;
+    var _a8, _b6;
     if (label.style === "runway-end" /* RunwayEnd */ || label.style === "runway-end-btv-selected" /* BtvSelectedRunwayEnd */) {
       return (btvSelectedRunway == null ? void 0 : btvSelectedRunway.substring(4)) === label.text ? "runway-end-btv-selected" /* BtvSelectedRunwayEnd */ : "runway-end" /* RunwayEnd */;
     }
     if (label.style === "runway-axis" /* RunwayAxis */ || label.style === "runway-axis-fms-selected" /* FmsSelectedRunwayAxis */) {
-      const isSelectedRunway = isFmsOrigin && label.text === ((_a7 = fmsDataStore.departureRunway.get()) == null ? void 0 : _a7.substring(4)) || isFmsDestination && label.text === ((_b5 = fmsDataStore.landingRunway.get()) == null ? void 0 : _b5.substring(4));
+      const isSelectedRunway = isFmsOrigin && label.text === ((_a8 = fmsDataStore.departureRunway.get()) == null ? void 0 : _a8.substring(4)) || isFmsDestination && label.text === ((_b6 = fmsDataStore.landingRunway.get()) == null ? void 0 : _b6.substring(4));
       return isSelectedRunway ? "runway-axis-fms-selected" /* FmsSelectedRunwayAxis */ : "runway-axis" /* RunwayAxis */;
     }
     if (label.style === "exit-line" /* ExitLine */ || label.style === "exit-line-btv-selected" /* BtvSelectedExit */) {
@@ -76186,7 +76753,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.visibleLabelElements = /* @__PURE__ */ new Map();
     }
     reflowLabels(fmsDepRunway, fmsLdgRunway, btvSelectedRunway, btvSelectedExit) {
-      var _a7;
+      var _a8;
       let [offsetX, offsetY] = this.oanc.arpReferencedMapParams.coordinatesToXYy(this.oanc.referencePos);
       offsetY *= -1;
       const mapCurrentHeading = this.oanc.interpolatedMapHeading.get();
@@ -76234,7 +76801,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             }
             element.style.left = "".concat(labelScreenX, "px");
             element.style.top = "".concat(labelScreenY, "px");
-            const labelRotation = (_a7 = label.rotation) != null ? _a7 : 0;
+            const labelRotation = (_a8 = label.rotation) != null ? _a8 : 0;
             if (label.style === "runway-end" /* RunwayEnd */ || label.style === "runway-end-btv-selected" /* BtvSelectedRunwayEnd */) {
               element.style.transform = "translate(-50%, -50%) rotate(".concat(labelRotation - mapCurrentHeading, "deg) translate(0px, 50px)");
             } else if (label.style === "runway-arrow-btv-selected" /* BtvSelectedRunwayArrow */) {
@@ -76337,7 +76904,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.oanc = oanc;
     }
     computePosition() {
-      var _a7;
+      var _a8;
       if (!this.oanc.data) {
         return;
       }
@@ -76358,7 +76925,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               return feature2.properties.idlin;
             case 0 /* RunwayElement */:
             case 8 /* Stopway */:
-              return (_a7 = feature2.properties.idrwy) == null ? void 0 : _a7.replace(".", "-");
+              return (_a8 = feature2.properties.idrwy) == null ? void 0 : _a8.replace(".", "-");
             case 33 /* BlastPad */:
             case 9 /* RunwayDisplacedArea */:
               return feature2.properties.idthr;
@@ -76459,16 +77026,16 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         featureIdsWithCrosses: [
           ...new Set(
             this.crosses.getArray().map((l) => {
-              var _a7;
-              return (_a7 = l.associatedFeature) == null ? void 0 : _a7.properties.id;
+              var _a8;
+              return (_a8 = l.associatedFeature) == null ? void 0 : _a8.properties.id;
             }).filter((it) => it !== void 0)
           )
         ],
         featureIdsWithFlags: [
           ...new Set(
             this.flags.getArray().map((l) => {
-              var _a7;
-              return (_a7 = l.associatedFeature) == null ? void 0 : _a7.properties.id;
+              var _a8;
+              return (_a8 = l.associatedFeature) == null ? void 0 : _a8.properties.id;
             }).filter((it) => it !== void 0)
           )
         ]
@@ -76476,16 +77043,16 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.bus.getPublisher().pub("oans_symbols_for_feature_ids", data, true);
     }
     addSymbolAtFeature(id, feattype, addFunction) {
-      var _a7, _b5, _c;
-      const feature2 = (_a7 = this.oanc.data) == null ? void 0 : _a7.features.filter(
+      var _a8, _b6, _c;
+      const feature2 = (_a8 = this.oanc.data) == null ? void 0 : _a8.features.filter(
         (it) => {
-          var _a8;
-          return ((_a8 = it.properties) == null ? void 0 : _a8.id) === id && it.properties.feattype === feattype;
+          var _a9;
+          return ((_a9 = it.properties) == null ? void 0 : _a9.id) === id && it.properties.feattype === feattype;
         }
       );
       if (feature2) {
         if (feattype === 16 /* TaxiwayGuidanceLine */) {
-          const taxiwayLines = (_b5 = this.oanc.data) == null ? void 0 : _b5.features.filter(
+          const taxiwayLines = (_b6 = this.oanc.data) == null ? void 0 : _b6.features.filter(
             (f) => f.properties.idlin === feature2[0].properties.idlin && (f.properties.feattype === 16 /* TaxiwayGuidanceLine */ || f.properties.feattype === 19 /* RunwayExitLine */)
           );
           if (taxiwayLines) {
@@ -76525,31 +77092,31 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.addSymbolAtFeature(id, feattype, this.addFlag.bind(this));
     }
     removeSymbolAtFeature(id, feattype, symbols, removeFunction) {
-      var _a7, _b5;
+      var _a8, _b6;
       const isTaxiway = symbols.some(
         (v3) => {
-          var _a8;
-          return ((_a8 = v3.associatedFeature) == null ? void 0 : _a8.properties.id) === id && v3.associatedFeature.properties.feattype === 16 /* TaxiwayGuidanceLine */;
+          var _a9;
+          return ((_a9 = v3.associatedFeature) == null ? void 0 : _a9.properties.id) === id && v3.associatedFeature.properties.feattype === 16 /* TaxiwayGuidanceLine */;
         }
       );
       if (isTaxiway) {
         let taxiwayName = "";
         for (const label of symbols) {
-          if (((_a7 = label.associatedFeature) == null ? void 0 : _a7.properties.id) === id && label.associatedFeature.properties.feattype === feattype) {
-            taxiwayName = (_b5 = label.associatedFeature.properties.idlin) != null ? _b5 : "";
+          if (((_a8 = label.associatedFeature) == null ? void 0 : _a8.properties.id) === id && label.associatedFeature.properties.feattype === feattype) {
+            taxiwayName = (_b6 = label.associatedFeature.properties.idlin) != null ? _b6 : "";
             break;
           }
         }
         const idsToDelete = symbols.map((label) => {
-          var _a8;
-          return ((_a8 = label.associatedFeature) == null ? void 0 : _a8.properties.idlin) === taxiwayName ? parseInt(label.text) : null;
+          var _a9;
+          return ((_a9 = label.associatedFeature) == null ? void 0 : _a9.properties.idlin) === taxiwayName ? parseInt(label.text) : null;
         }).filter((i) => i !== null);
         idsToDelete.forEach((i) => removeFunction(i));
       } else {
         const idsToDelete = symbols.map(
           (label) => {
-            var _a8;
-            return ((_a8 = label.associatedFeature) == null ? void 0 : _a8.properties.id) === id && label.associatedFeature.properties.feattype === feattype ? parseInt(label.text) : null;
+            var _a9;
+            return ((_a9 = label.associatedFeature) == null ? void 0 : _a9.properties.id) === id && label.associatedFeature.properties.feattype === feattype ? parseInt(label.text) : null;
           }
         ).filter((i) => i !== null);
         idsToDelete.forEach((i) => removeFunction(i));
@@ -76577,14 +77144,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return {
         hasCross: this.crosses.getArray().some(
           (label) => {
-            var _a7;
-            return ((_a7 = label.associatedFeature) == null ? void 0 : _a7.properties.id) === id && label.associatedFeature.properties.feattype === feattype;
+            var _a8;
+            return ((_a8 = label.associatedFeature) == null ? void 0 : _a8.properties.id) === id && label.associatedFeature.properties.feattype === feattype;
           }
         ),
         hasFlag: this.flags.getArray().some(
           (label) => {
-            var _a7;
-            return ((_a7 = label.associatedFeature) == null ? void 0 : _a7.properties.id) === id && label.associatedFeature.properties.feattype === feattype;
+            var _a8;
+            return ((_a8 = label.associatedFeature) == null ? void 0 : _a8.properties.id) === id && label.associatedFeature.properties.feattype === feattype;
           }
         )
       };
@@ -76598,7 +77165,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.transform = this.props.rotation.map((it) => "rotate(".concat(it, " 384 626)"));
     }
     render() {
-      var _a7;
+      var _a8;
       return /* @__PURE__ */ FSComponent.buildComponent("g", { visibility: this.props.visible.map((it) => it ? "inherit" : "hidden"), transform: this.transform }, /* @__PURE__ */ FSComponent.buildComponent(
         "line",
         {
@@ -76618,7 +77185,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           y1: this.props.ndMode.map((mode) => mode === 3 /* ARC */ ? 108 : 116),
           x2: 384,
           y2: this.props.ndMode.map((mode) => mode === 3 /* ARC */ ? 148 : 152),
-          class: (_a7 = this.props.colorClass) != null ? _a7 : "Yellow",
+          class: (_a8 = this.props.colorClass) != null ? _a8 : "Yellow",
           "stroke-width": 5,
           "stroke-linejoin": "round",
           "stroke-linecap": "round"
@@ -77027,10 +77594,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
      * AMDB Bridge may still be building it -- unless another has been loaded meanwhile.
      */
     amdbLoadFailed(icao, performanceModeUnload) {
-      var _a7;
+      var _a8;
       this.dataLoading = false;
       this.airportLoading.set(false);
-      const tries = ((_a7 = this.amdbLoadFailures.get(icao)) != null ? _a7 : 0) + 1;
+      const tries = ((_a8 = this.amdbLoadFailures.get(icao)) != null ? _a8 : 0) + 1;
       this.amdbLoadFailures.set(icao, tries);
       if (tries <= 6) {
         setTimeout(() => {
@@ -77041,7 +77608,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     async loadAirportMap(icao, performanceModeUnload = false) {
-      var _a7, _b5, _c, _d, _e;
+      var _a8, _b6, _c, _d, _e;
       this.dataLoading = true;
       this.airportLoading.set(true);
       this.unloadAirportMap(performanceModeUnload);
@@ -77103,7 +77670,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return [...acc, ...features2];
       }, []);
       const airportMap = featureCollection(features);
-      const wgs84ReferencePoint = (_a7 = wgs84ArpDat.aerodromereferencepoint) == null ? void 0 : _a7.features[0];
+      const wgs84ReferencePoint = (_a8 = wgs84ArpDat.aerodromereferencepoint) == null ? void 0 : _a8.features[0];
       if (!wgs84ReferencePoint) {
         console.error("[OANC](loadAirportMap) Invalid airport data - aerodrome reference point not found");
         this.amdbLoadFailed(icao, performanceModeUnload);
@@ -77121,7 +77688,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.arpCoordinates.set({ lat: refPointLat, long: refPointLong });
       this.data = airportMap;
       if (wgs84ReferencePoint) {
-        this.dataAirportName.set((_c = (_b5 = wgs84ReferencePoint == null ? void 0 : wgs84ReferencePoint.properties) == null ? void 0 : _b5.name) != null ? _c : "");
+        this.dataAirportName.set((_c = (_b6 = wgs84ReferencePoint == null ? void 0 : wgs84ReferencePoint.properties) == null ? void 0 : _b6.name) != null ? _c : "");
         this.dataAirportIcao.set(icao);
         this.dataAirportIata.set((_e = (_d = wgs84ReferencePoint == null ? void 0 : wgs84ReferencePoint.properties) == null ? void 0 : _d.iata) != null ? _e : "");
       }
@@ -77165,18 +77732,18 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return null;
     }
     createLabelElement(label) {
-      var _a7;
+      var _a8;
       const element = document.createElement("div");
       element.classList.add("oanc-label");
       element.classList.add("oanc-label-style-".concat(label.style));
       element.textContent = label.text;
       if (label.style === "runway-end" /* RunwayEnd */) {
         element.addEventListener("click", () => {
-          var _a8;
-          const thresholdFeature = (_a8 = this.data) == null ? void 0 : _a8.features.filter(
+          var _a9;
+          const thresholdFeature = (_a9 = this.data) == null ? void 0 : _a9.features.filter(
             (it) => {
-              var _a9;
-              return it.properties.feattype === 2 /* RunwayThreshold */ && ((_a9 = it.properties) == null ? void 0 : _a9.idthr) === label.text;
+              var _a10;
+              return it.properties.feattype === 2 /* RunwayThreshold */ && ((_a10 = it.properties) == null ? void 0 : _a10.idthr) === label.text;
             }
           );
           if (thresholdFeature && label.associatedFeature) {
@@ -77188,7 +77755,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           }
         });
       }
-      if (label.style === "exit-line" /* ExitLine */ && ((_a7 = label.associatedFeature) == null ? void 0 : _a7.properties.feattype) === 19 /* RunwayExitLine */) {
+      if (label.style === "exit-line" /* ExitLine */ && ((_a8 = label.associatedFeature) == null ? void 0 : _a8.properties.feattype) === 19 /* RunwayExitLine */) {
         element.addEventListener("click", () => {
           if (label.associatedFeature) {
             this.btvUtils.selectExitFromOans(label.text, label.associatedFeature);
@@ -77264,7 +77831,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     generateAllLabels(data) {
-      var _a7, _b5, _c, _d, _e;
+      var _a8, _b6, _c, _d, _e;
       for (const feature2 of data.features) {
         if (!LABEL_FEATURE_TYPES.includes(feature2.properties.feattype)) {
           continue;
@@ -77318,8 +77885,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           }
           const isFmsOrigin = this.dataAirportIcao.get() === this.fmsDataStore.origin.get();
           const isFmsDestination = this.dataAirportIcao.get() === this.fmsDataStore.origin.get();
-          const depRwy = (_a7 = this.fmsDataStore.departureRunway.get()) == null ? void 0 : _a7.substring(4);
-          const ldgRwy = (_b5 = this.fmsDataStore.landingRunway.get()) == null ? void 0 : _b5.substring(4);
+          const depRwy = (_a8 = this.fmsDataStore.departureRunway.get()) == null ? void 0 : _a8.substring(4);
+          const ldgRwy = (_b6 = this.fmsDataStore.landingRunway.get()) == null ? void 0 : _b6.substring(4);
           const isSelectedRunway = isFmsOrigin && depRwy && designators.includes(depRwy) || isFmsDestination && ldgRwy && designators.includes(ldgRwy);
           const label1 = {
             text: designators[0],
@@ -77428,8 +77995,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               return distance2 > shortestDistance2 ? distance2 : shortestDistance2;
             }, Number.MAX_SAFE_INTEGER);
             if (feature2.properties.feattype === 23 /* ParkingStandLocation */ && existing.some((it) => {
-              var _a8;
-              return feature2.properties.termref === ((_a8 = it.associatedFeature) == null ? void 0 : _a8.properties.termref);
+              var _a9;
+              return feature2.properties.termref === ((_a9 = it.associatedFeature) == null ? void 0 : _a9.properties.termref);
             }) || shortestDistance < 50) {
               continue;
             }
@@ -77723,9 +78290,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.lastPanY = event.screenY;
     }
     handleCursorPanStop(event) {
-      var _a7, _b5, _c;
-      (_a7 = this.props.contextMenuX) == null ? void 0 : _a7.set(event.screenX);
-      (_b5 = this.props.contextMenuY) == null ? void 0 : _b5.set(event.screenY);
+      var _a8, _b6, _c;
+      (_a8 = this.props.contextMenuX) == null ? void 0 : _a8.set(event.screenX);
+      (_b6 = this.props.contextMenuY) == null ? void 0 : _b6.set(event.screenY);
       if (!this.isPanning) {
         this.isPanningArmed = false;
         (_c = this.props.contextMenuVisible) == null ? void 0 : _c.set(!this.props.contextMenuVisible.get());
@@ -77946,9 +78513,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       let doStroke = false;
       let doFill = false;
       const matchingRule = layerSpec.styleRules.find((it) => {
-        var _a7, _b5, _c;
+        var _a8, _b6, _c;
         if (feature2.properties.feattype === 27 /* VerticalPolygonalStructure */) {
-          return ((_a7 = it.forFeatureTypes) == null ? void 0 : _a7.includes(feature2.properties.feattype)) && feature2.properties.plysttyp && ((_b5 = it.forPolygonStructureTypes) == null ? void 0 : _b5.includes(feature2.properties.plysttyp));
+          return ((_a8 = it.forFeatureTypes) == null ? void 0 : _a8.includes(feature2.properties.feattype)) && feature2.properties.plysttyp && ((_b6 = it.forPolygonStructureTypes) == null ? void 0 : _b6.includes(feature2.properties.plysttyp));
         }
         return (_c = it.forFeatureTypes) == null ? void 0 : _c.includes(feature2.properties.feattype);
       });
@@ -78043,9 +78610,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
   }
   function fenixBuildingAxisBearing(feature2) {
-    var _a7;
+    var _a8;
     const g = feature2.geometry;
-    const ring = g.type === "Polygon" ? g.coordinates[0] : g.type === "MultiPolygon" ? (_a7 = g.coordinates[0]) == null ? void 0 : _a7[0] : void 0;
+    const ring = g.type === "Polygon" ? g.coordinates[0] : g.type === "MultiPolygon" ? (_a8 = g.coordinates[0]) == null ? void 0 : _a8[0] : void 0;
     if (!ring || ring.length < 3) {
       return void 0;
     }
@@ -78142,7 +78709,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.contextMenuRef.instance.style.display = "none";
     }
     onAfterRender(node) {
-      var _a7;
+      var _a8;
       super.onAfterRender(node);
       if (!this.props.idPrefix) {
         console.error("ContextMenu: No idPrefix set.");
@@ -78150,10 +78717,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.contextMenuRef.instance.style.display = "none";
       this.subs.push(
         this.props.values.sub((items) => {
-          var _a8;
-          (_a8 = this.renderedMenuItems) == null ? void 0 : _a8.forEach((val, i) => {
-            var _a9;
-            (_a9 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a9.removeEventListener("click", this.onItemClick.bind(this, val));
+          var _a9;
+          (_a9 = this.renderedMenuItems) == null ? void 0 : _a9.forEach((val, i) => {
+            var _a10;
+            (_a10 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a10.removeEventListener("click", this.onItemClick.bind(this, val));
           });
           while (this.contextMenuRef.instance.firstChild) {
             this.contextMenuRef.instance.removeChild(this.contextMenuRef.instance.firstChild);
@@ -78172,12 +78739,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           ));
           FSComponent.render(itemNodes, this.contextMenuRef.instance);
           items == null ? void 0 : items.forEach((val, i) => {
-            var _a9;
-            (_a9 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a9.addEventListener("click", this.onItemClick.bind(this, val));
+            var _a10;
+            (_a10 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a10.addEventListener("click", this.onItemClick.bind(this, val));
           });
         }, true)
       );
-      (_a7 = document.getElementById("MFD_CONTENT")) == null ? void 0 : _a7.addEventListener("click", this.onCloseHandler);
+      (_a8 = document.getElementById("MFD_CONTENT")) == null ? void 0 : _a8.addEventListener("click", this.onCloseHandler);
     }
     onItemClick(val) {
       if (!val.disabled) {
@@ -78194,13 +78761,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return /* @__PURE__ */ FSComponent.buildComponent("div", { ref: this.contextMenuRef, class: "mfd-context-menu" });
     }
     destroy() {
-      var _a7;
+      var _a8;
       for (const s of this.subs) {
         s.destroy();
       }
-      (_a7 = this.renderedMenuItems) == null ? void 0 : _a7.forEach((val, i) => {
-        var _a8;
-        (_a8 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a8.removeEventListener("click", this.onItemClick.bind(this, val));
+      (_a8 = this.renderedMenuItems) == null ? void 0 : _a8.forEach((val, i) => {
+        var _a9;
+        (_a9 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a9.removeEventListener("click", this.onItemClick.bind(this, val));
       });
       super.destroy();
     }
@@ -78317,9 +78884,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.reFormatTrigger = Subject.create(false);
       this.subscriptions.push(
         this.isHpa.sub((isHpa2) => {
-          var _a7;
+          var _a8;
           this.placeholder = isHpa2 ? _QnhFormat.HPA_PLACE_HOLDER : _QnhFormat.INHG_PLACE_HOLDER;
-          (_a7 = this.reFormatTrigger) == null ? void 0 : _a7.notify();
+          (_a8 = this.reFormatTrigger) == null ? void 0 : _a8.notify();
         }, true)
       );
     }
@@ -78387,19 +78954,19 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   // .fbw/fbw-a380x/src/systems/instruments/src/MsfsAvionicsCommon/UiWidgets/shapes.tsx
   var TriangleDown = class extends DisplayComponent {
     render() {
-      var _a7;
-      return /* @__PURE__ */ FSComponent.buildComponent("svg", { class: this.props.class, height: "15", width: "15" }, /* @__PURE__ */ FSComponent.buildComponent("polygon", { points: "0,0 15,0 7.5,15", style: { fill: (_a7 = this.props.color) != null ? _a7 : "white" } }));
+      var _a8;
+      return /* @__PURE__ */ FSComponent.buildComponent("svg", { class: this.props.class, height: "15", width: "15" }, /* @__PURE__ */ FSComponent.buildComponent("polygon", { points: "0,0 15,0 7.5,15", style: { fill: (_a8 = this.props.color) != null ? _a8 : "white" } }));
     }
   };
   var TriangleUp = class extends DisplayComponent {
     render() {
-      var _a7;
-      return /* @__PURE__ */ FSComponent.buildComponent("svg", { class: this.props.class, height: "15", width: "15" }, /* @__PURE__ */ FSComponent.buildComponent("polygon", { points: "7.5,0 15,15 0,15", style: { fill: (_a7 = this.props.color) != null ? _a7 : "white" } }));
+      var _a8;
+      return /* @__PURE__ */ FSComponent.buildComponent("svg", { class: this.props.class, height: "15", width: "15" }, /* @__PURE__ */ FSComponent.buildComponent("polygon", { points: "7.5,0 15,15 0,15", style: { fill: (_a8 = this.props.color) != null ? _a8 : "white" } }));
     }
   };
 
   // .fbw/fbw-a380x/src/systems/instruments/src/MsfsAvionicsCommon/UiWidgets/Button.tsx
-  var _a4, _b3;
+  var _a5, _b4;
   var Button = class extends DisplayComponent {
     constructor() {
       super(...arguments);
@@ -78412,11 +78979,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.menuOpensUpwards = Subject.create(false);
       this.renderedMenuItems = [];
       this.disabled = SubscribableUtils.toSubscribable(
-        (_a4 = this.props.disabled) != null ? _a4 : false,
+        (_a5 = this.props.disabled) != null ? _a5 : false,
         true
       );
       this.arrowColour = this.disabled.map((v3) => v3 ? "grey" : "white");
-      this.visible = SubscribableUtils.toSubscribable((_b3 = this.props.visible) != null ? _b3 : Subject.create(true), true);
+      this.visible = SubscribableUtils.toSubscribable((_b4 = this.props.visible) != null ? _b4 : Subject.create(true), true);
       this.onClickHandler = this.onClick.bind(this);
       this.onDropdownMenuElementClickHandler = this.onDropdownMenuElementClick.bind(this);
       this.onCloseDropdownHandler = this.onCloseDropdown.bind(this);
@@ -78437,7 +79004,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.dropdownMenuRef.instance.scrollTo({ behavior: "instant", left: 0, top: elementIndex * 36 });
     }
     onAfterRender(node) {
-      var _a7;
+      var _a8;
       super.onAfterRender(node);
       if (this.props.disabled === void 0) {
         this.props.disabled = Subject.create(false);
@@ -78457,8 +79024,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.buttonRef.instance.addEventListener("click", this.onClickHandler);
       this.subs.push(
         this.disabled.sub((val) => {
-          var _a8;
-          (_a8 = this.buttonRef.getOrDefault()) == null ? void 0 : _a8.classList.toggle("disabled", val);
+          var _a9;
+          (_a9 = this.buttonRef.getOrDefault()) == null ? void 0 : _a9.classList.toggle("disabled", val);
         }, true)
       );
       this.subs.push(
@@ -78468,23 +79035,23 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       );
       this.subs.push(
         this.props.selected.sub((val) => {
-          var _a8;
-          (_a8 = this.buttonRef.getOrDefault()) == null ? void 0 : _a8.classList.toggle("selected", val);
+          var _a9;
+          (_a9 = this.buttonRef.getOrDefault()) == null ? void 0 : _a9.classList.toggle("selected", val);
         }, true)
       );
       this.subs.push(
         this.props.highlighted.sub((val) => {
-          var _a8;
-          (_a8 = this.buttonRef.getOrDefault()) == null ? void 0 : _a8.classList.toggle("highlighted", val);
+          var _a9;
+          (_a9 = this.buttonRef.getOrDefault()) == null ? void 0 : _a9.classList.toggle("highlighted", val);
         }, true)
       );
       if (this.props.menuItems !== void 0) {
         this.subs.push(
           this.props.menuItems.sub((items) => {
-            var _a8, _b5;
-            (_a8 = this.renderedMenuItems) == null ? void 0 : _a8.forEach((val, i) => {
-              var _a9;
-              (_a9 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a9.removeEventListener("click", this.onDropdownMenuElementClickHandler.bind(this, val));
+            var _a9, _b6;
+            (_a9 = this.renderedMenuItems) == null ? void 0 : _a9.forEach((val, i) => {
+              var _a10;
+              (_a10 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a10.removeEventListener("click", this.onDropdownMenuElementClickHandler.bind(this, val));
             });
             while (this.dropdownMenuRef.instance.firstChild) {
               this.dropdownMenuRef.instance.removeChild(this.dropdownMenuRef.instance.firstChild);
@@ -78492,14 +79059,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             this.renderedMenuItems = items;
             const itemNodes = /* @__PURE__ */ FSComponent.buildComponent("div", null, items == null ? void 0 : items.map(
               (el, idx) => {
-                var _a9;
+                var _a10;
                 return /* @__PURE__ */ FSComponent.buildComponent(
                   "span",
                   {
                     id: "".concat(this.props.idPrefix, "_").concat(idx),
                     class: {
                       "mfd-dropdown-menu-element": true,
-                      disabled: (_a9 = el.disabled) != null ? _a9 : false
+                      disabled: (_a10 = el.disabled) != null ? _a10 : false
                     }
                   },
                   el.label
@@ -78513,7 +79080,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
                 continue;
               }
               const i = items.indexOf(val);
-              (_b5 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _b5.addEventListener("click", this.onDropdownMenuElementClickHandler.bind(this, val));
+              (_b6 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _b6.addEventListener("click", this.onDropdownMenuElementClickHandler.bind(this, val));
             }
             this.dropdownMenuRef.instance.style.display = "block";
             this.buttonRef.instance.classList.add("opened");
@@ -78528,7 +79095,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           }, true)
         );
       }
-      (_a7 = document.getElementById("MFD_CONTENT")) == null ? void 0 : _a7.addEventListener("click", this.onCloseDropdownHandler);
+      (_a8 = document.getElementById("MFD_CONTENT")) == null ? void 0 : _a8.addEventListener("click", this.onCloseDropdownHandler);
       this.buttonRef.instance.addEventListener("click", this.onButtonClickHandler);
       this.subs.push(
         this.dropdownIsOpened.sub((val) => {
@@ -78556,8 +79123,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     onCloseDropdown(e) {
-      var _a7;
-      if (!((_a7 = this.topRef.getOrDefault()) == null ? void 0 : _a7.contains(e.target)) && this.dropdownIsOpened.get()) {
+      var _a8;
+      if (!((_a8 = this.topRef.getOrDefault()) == null ? void 0 : _a8.contains(e.target)) && this.dropdownIsOpened.get()) {
         this.dropdownIsOpened.set(false);
       }
     }
@@ -78567,14 +79134,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     destroy() {
-      var _a7, _b5;
+      var _a8, _b6;
       this.subs.forEach((x) => x.destroy());
       this.buttonRef.instance.removeEventListener("click", this.onClickHandler);
-      (_a7 = document.getElementById("MFD_CONTENT")) == null ? void 0 : _a7.removeEventListener("click", this.onCloseDropdownHandler);
+      (_a8 = document.getElementById("MFD_CONTENT")) == null ? void 0 : _a8.removeEventListener("click", this.onCloseDropdownHandler);
       this.buttonRef.instance.removeEventListener("click", this.onButtonClickHandler);
-      (_b5 = this.renderedMenuItems) == null ? void 0 : _b5.forEach((val, i) => {
-        var _a8;
-        (_a8 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a8.removeEventListener("click", this.onDropdownMenuElementClickHandler.bind(this, val));
+      (_b6 = this.renderedMenuItems) == null ? void 0 : _b6.forEach((val, i) => {
+        var _a9;
+        (_a9 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a9.removeEventListener("click", this.onDropdownMenuElementClickHandler.bind(this, val));
       });
       super.destroy();
     }
@@ -78614,7 +79181,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   };
 
   // .fbw/fbw-a380x/src/systems/instruments/src/MsfsAvionicsCommon/UiWidgets/InputField.tsx
-  var _a5;
+  var _a6;
   var _InputField = class _InputField extends DisplayComponent {
     constructor() {
       super(...arguments);
@@ -78635,7 +79202,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.isFocused = Subject.create(false);
       this.isValidating = Subject.create(false);
       this.alignTextSub = SubscribableUtils.toSubscribable(
-        (_a5 = this.props.alignText) != null ? _a5 : "center",
+        (_a6 = this.props.alignText) != null ? _a6 : "center",
         true
       );
       this.canOverFlow = this.props.freeText || this.props.dataEntryFormat.maxOverflowDigits !== void 0;
@@ -78659,12 +79226,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       };
       this.onKeyPressHandler = this.onKeyPress.bind(this);
       this.handleKeyInput = (key) => {
-        var _a7, _b5;
+        var _a8, _b6;
         if (this.modifiedFieldValue.get() === null) {
           this.modifiedFieldValue.set("");
           this.spanningDivRef.instance.style.justifyContent = "flex-start";
         }
-        const modifiedFieldValueLength = (_b5 = (_a7 = this.modifiedFieldValue.get()) == null ? void 0 : _a7.length) != null ? _b5 : 0;
+        const modifiedFieldValueLength = (_b6 = (_a8 = this.modifiedFieldValue.get()) == null ? void 0 : _a8.length) != null ? _b6 : 0;
         if (modifiedFieldValueLength < this.props.dataEntryFormat.maxDigits || this.canOverFlow && modifiedFieldValueLength < (this.props.freeText ? _InputField.MAX_CHARACTERS_FREE_TEXT : this.props.dataEntryFormat.maxOverflowDigits + this.props.dataEntryFormat.maxDigits)) {
           this.modifiedFieldValue.set("".concat(this.modifiedFieldValue.get()).concat(key));
           this.caretRef.instance.style.display = "inline";
@@ -78675,7 +79242,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.onFocusTextInputHandler = this.onFocusTextInput.bind(this);
     }
     onNewValue() {
-      var _a7, _b5, _c, _d, _e, _f;
+      var _a8, _b6, _c, _d, _e, _f;
       if (this.isFocused.get() || this.isValidating.get()) {
         return;
       }
@@ -78684,7 +79251,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
       if (this.readValue.get() !== null) {
         if (this.canOverFlow) {
-          this.overflow(((_b5 = (_a7 = this.readValue.get()) == null ? void 0 : _a7.toString().length) != null ? _b5 : 0) > this.props.dataEntryFormat.maxDigits);
+          this.overflow(((_b6 = (_a8 = this.readValue.get()) == null ? void 0 : _a8.toString().length) != null ? _b6 : 0) > this.props.dataEntryFormat.maxDigits);
         }
         if ((_c = this.props.mandatory) == null ? void 0 : _c.get()) {
           (_d = this.textInputRef.getOrDefault()) == null ? void 0 : _d.classList.remove("mandatory");
@@ -78697,7 +79264,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.updateDisplayElement();
     }
     updateDisplayElement() {
-      var _a7, _b5, _c, _d, _e, _f, _g;
+      var _a8, _b6, _c, _d, _e, _f, _g;
       if (this.modifiedFieldValue.get() == null) {
         if (this.readValue.get() === null) {
           this.populatePlaceholders();
@@ -78709,7 +79276,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         }
       } else {
         const numDigits = this.canOverFlow ? this.props.freeText ? _InputField.MAX_CHARACTERS_FREE_TEXT : this.props.dataEntryFormat.maxDigits + this.props.dataEntryFormat.maxOverflowDigits : this.props.dataEntryFormat.maxDigits;
-        if (((_b5 = (_a7 = this.modifiedFieldValue.get()) == null ? void 0 : _a7.length) != null ? _b5 : 0) < numDigits || !this.isFocused.get()) {
+        if (((_b6 = (_a8 = this.modifiedFieldValue.get()) == null ? void 0 : _a8.length) != null ? _b6 : 0) < numDigits || !this.isFocused.get()) {
           this.textInputRef.instance.innerText = (_c = this.modifiedFieldValue.get()) != null ? _c : "";
           this.caretRef.instance.innerText = "";
         } else {
@@ -78720,22 +79287,22 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     // Called when the input field changes
     onInput() {
-      var _a7, _b5;
-      if (this.canOverFlow && ((_a7 = this.modifiedFieldValue.get()) == null ? void 0 : _a7.length) === this.props.dataEntryFormat.maxDigits) {
+      var _a8, _b6;
+      if (this.canOverFlow && ((_a8 = this.modifiedFieldValue.get()) == null ? void 0 : _a8.length) === this.props.dataEntryFormat.maxDigits) {
         this.overflow(true);
       }
       if (this.props.onInput) {
-        this.props.onInput((_b5 = this.modifiedFieldValue.get()) != null ? _b5 : "");
+        this.props.onInput((_b6 = this.modifiedFieldValue.get()) != null ? _b6 : "");
       }
     }
     overflow(overflow) {
-      var _a7, _b5;
+      var _a8, _b6;
       if (this.topRef.getOrDefault() && this.containerRef.getOrDefault()) {
         if (overflow) {
           this.topRef.instance.classList.add("overflow");
           this.containerRef.instance.classList.add("overflow");
           this.containerRef.instance.style.width = _InputField.calculateWidthForDigits(
-            this.props.freeText ? _InputField.MAX_CHARACTERS_FREE_TEXT : this.props.dataEntryFormat.maxOverflowDigits + this.props.dataEntryFormat.maxDigits + ((_b5 = (_a7 = this.props.dataEntryFormat.unit) == null ? void 0 : _a7.length) != null ? _b5 : 0) + 1
+            this.props.freeText ? _InputField.MAX_CHARACTERS_FREE_TEXT : this.props.dataEntryFormat.maxOverflowDigits + this.props.dataEntryFormat.maxDigits + ((_b6 = (_a8 = this.props.dataEntryFormat.unit) == null ? void 0 : _a8.length) != null ? _b6 : 0) + 1
             // Always a space for one extra character is displayed
           );
           this.isOverFlow = true;
@@ -78759,10 +79326,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     handleBackspace() {
-      var _a7, _b5, _c, _d;
-      if (this.modifiedFieldValue.get() === null && ((_a7 = this.props.canBeCleared) == null ? void 0 : _a7.get())) {
+      var _a8, _b6, _c, _d;
+      if (this.modifiedFieldValue.get() === null && ((_a8 = this.props.canBeCleared) == null ? void 0 : _a8.get())) {
         this.modifiedFieldValue.set("");
-      } else if (((_b5 = this.modifiedFieldValue.get()) == null ? void 0 : _b5.length) === 0) {
+      } else if (((_b6 = this.modifiedFieldValue.get()) == null ? void 0 : _b6.length) === 0) {
       } else {
         this.modifiedFieldValue.set((_d = (_c = this.modifiedFieldValue.get()) == null ? void 0 : _c.slice(0, -1)) != null ? _d : "");
       }
@@ -78776,8 +79343,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     onFocus() {
-      var _a7, _b5, _c;
-      if (!this.isFocused.get() && !this.isValidating.get() && !((_a7 = this.props.disabled) == null ? void 0 : _a7.get()) && !((_b5 = this.props.inactive) == null ? void 0 : _b5.get())) {
+      var _a8, _b6, _c;
+      if (!this.isFocused.get() && !this.isValidating.get() && !((_a8 = this.props.disabled) == null ? void 0 : _a8.get()) && !((_b6 = this.props.inactive) == null ? void 0 : _b6.get())) {
         if (this.props.interactionMode.get() === 0 /* Touchscreen */) {
           Coherent.trigger("FOCUS_INPUT_FIELD", this.guid, "", "", this.readValue.get(), false);
         }
@@ -78798,8 +79365,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     async onBlur(validateAndUpdate = true) {
-      var _a7, _b5, _c, _d;
-      if (!((_a7 = this.props.disabled) == null ? void 0 : _a7.get()) && !((_b5 = this.props.inactive) == null ? void 0 : _b5.get()) && this.isFocused.get()) {
+      var _a8, _b6, _c, _d;
+      if (!((_a8 = this.props.disabled) == null ? void 0 : _a8.get()) && !((_b6 = this.props.inactive) == null ? void 0 : _b6.get()) && this.isFocused.get()) {
         if (this.props.interactionMode.get() === 0 /* Touchscreen */) {
           Coherent.trigger("UNFOCUS_INPUT_FIELD", this.guid);
         }
@@ -78826,11 +79393,11 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     populatePlaceholders() {
-      var _a7, _b5, _c, _d, _e;
+      var _a8, _b6, _c, _d, _e;
       const [formatted, unitLeading, unitTrailing] = this.props.dataEntryFormat.format(null);
       this.leadingUnit.set(unitLeading != null ? unitLeading : "");
       this.trailingUnit.set(unitTrailing != null ? unitTrailing : "");
-      if (((_a7 = this.props.mandatory) == null ? void 0 : _a7.get()) && !((_b5 = this.props.inactive) == null ? void 0 : _b5.get()) && !((_c = this.props.disabled) == null ? void 0 : _c.get())) {
+      if (((_a8 = this.props.mandatory) == null ? void 0 : _a8.get()) && !((_b6 = this.props.inactive) == null ? void 0 : _b6.get()) && !((_c = this.props.disabled) == null ? void 0 : _c.get())) {
         this.textInputRef.instance.innerHTML = (_e = formatted == null ? void 0 : formatted.replace(/-/gi, (_d = this.props.overrideEmptyMandatoryPlaceholder) != null ? _d : "\u25AF")) != null ? _e : "";
       } else {
         this.textInputRef.instance.innerText = formatted != null ? formatted : "";
@@ -78949,7 +79516,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       );
       this.subs.push(
         this.props.inactive.sub((val) => {
-          var _a7;
+          var _a8;
           if (val) {
             this.containerRef.instance.classList.add("inactive");
             this.textInputRef.instance.classList.add("inactive");
@@ -78957,7 +79524,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           } else {
             this.containerRef.instance.classList.remove("inactive");
             this.textInputRef.instance.classList.remove("inactive");
-            if (!((_a7 = this.props.disabled) == null ? void 0 : _a7.get())) {
+            if (!((_a8 = this.props.disabled) == null ? void 0 : _a8.get())) {
               this.textInputRef.instance.tabIndex = -1;
             }
           }
@@ -78966,13 +79533,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       );
       this.subs.push(
         this.props.disabled.sub((val) => {
-          var _a7, _b5, _c;
-          if (!((_a7 = this.props.inactive) == null ? void 0 : _a7.get())) {
+          var _a8, _b6, _c;
+          if (!((_a8 = this.props.inactive) == null ? void 0 : _a8.get())) {
             if (val) {
               this.textInputRef.instance.tabIndex = 0;
               this.containerRef.instance.classList.add("disabled");
               this.textInputRef.instance.classList.add("disabled");
-              if (((_b5 = this.props.mandatory) == null ? void 0 : _b5.get()) && this.readValue.get() === null) {
+              if (((_b6 = this.props.mandatory) == null ? void 0 : _b6.get()) && this.readValue.get() === null) {
                 this.textInputRef.instance.classList.remove("mandatory");
               }
             } else {
@@ -79018,7 +79585,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.trailingUnitRef.instance.addEventListener("click", this.onFocusTextInputHandler);
       }
       this.props.hEventConsumer.handle((key) => {
-        var _a7;
+        var _a8;
         if (!this.isFocused.get()) {
           return;
         }
@@ -79045,7 +79612,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           } else if (val && val.substring(0, 1) === "-") {
             this.modifiedFieldValue.set("+".concat(val.substring(1)));
           } else {
-            this.modifiedFieldValue.set("-".concat((_a7 = this.modifiedFieldValue.get()) != null ? _a7 : ""));
+            this.modifiedFieldValue.set("-".concat((_a8 = this.modifiedFieldValue.get()) != null ? _a8 : ""));
           }
         }
         if (key[1] === "BACKSPACE") {
@@ -79064,10 +79631,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return "".concat(Math.round(digits * 27 / 1.5), "px");
     }
     destroy() {
-      var _a7, _b5, _c, _d, _e, _f, _g, _h;
+      var _a8, _b6, _c, _d, _e, _f, _g, _h;
       this.subs.forEach((x) => x.destroy());
-      (_a7 = this.textInputRef.getOrDefault()) == null ? void 0 : _a7.removeEventListener("keypress", this.onKeyPressHandler);
-      (_b5 = this.textInputRef.getOrDefault()) == null ? void 0 : _b5.removeEventListener("keydown", this.onKeyDownHandler);
+      (_a8 = this.textInputRef.getOrDefault()) == null ? void 0 : _a8.removeEventListener("keypress", this.onKeyPressHandler);
+      (_b6 = this.textInputRef.getOrDefault()) == null ? void 0 : _b6.removeEventListener("keydown", this.onKeyDownHandler);
       if (!this.props.handleFocusBlurExternally) {
         (_c = this.textInputRef.getOrDefault()) == null ? void 0 : _c.removeEventListener("focus", this.onFocusHandler);
         (_d = this.textInputRef.getOrDefault()) == null ? void 0 : _d.removeEventListener("blur", this.onBlur.bind(this, true));
@@ -79079,8 +79646,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       super.destroy();
     }
     render() {
-      var _a7, _b5;
-      return /* @__PURE__ */ FSComponent.buildComponent("div", { ref: this.topRef, class: "mfd-input-field-root ".concat((_a7 = this.props.class) != null ? _a7 : "") }, /* @__PURE__ */ FSComponent.buildComponent("div", { ref: this.containerRef, class: "mfd-input-field-container", style: "".concat((_b5 = this.props.containerStyle) != null ? _b5 : "") }, /* @__PURE__ */ FSComponent.buildComponent(
+      var _a8, _b6;
+      return /* @__PURE__ */ FSComponent.buildComponent("div", { ref: this.topRef, class: "mfd-input-field-root ".concat((_a8 = this.props.class) != null ? _a8 : "") }, /* @__PURE__ */ FSComponent.buildComponent("div", { ref: this.containerRef, class: "mfd-input-field-container", style: "".concat((_b6 = this.props.containerStyle) != null ? _b6 : "") }, /* @__PURE__ */ FSComponent.buildComponent(
         "span",
         {
           ref: this.leadingUnitRef,
@@ -79110,7 +79677,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   var InputField = _InputField;
 
   // .fbw/fbw-a380x/src/systems/instruments/src/MsfsAvionicsCommon/UiWidgets/DropdownMenu.tsx
-  var _a6, _b4;
+  var _a7, _b5;
   var DropdownMenu = class extends DisplayComponent {
     constructor() {
       super(...arguments);
@@ -79124,7 +79691,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.dropdownIsOpened = Subject.create(false);
       this.inputFieldRef = FSComponent.createRef();
       this.inputFieldValue = Subject.create("");
-      this.dropdownArrowFill = ((_a6 = this.props.disabled) != null ? _a6 : Subject.create(false)).map(
+      this.dropdownArrowFill = ((_a7 = this.props.disabled) != null ? _a7 : Subject.create(false)).map(
         (isDisabled) => isDisabled ? "gray" : "white"
       );
       this.freeTextEntered = false;
@@ -79132,15 +79699,15 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.renderedDropdownOptionsIndices = [];
       this.onDropdownOpenedCallback = void 0;
       this.alignTextSub = SubscribableUtils.toSubscribable(
-        (_b4 = this.props.alignLabels) != null ? _b4 : "center",
+        (_b5 = this.props.alignLabels) != null ? _b5 : "center",
         true
       );
       this.onOpenCloseClickHandler = this.onOpenCloseClick.bind(this);
       this.onClickedOutsideHandler = this.onClickedOutside.bind(this);
     }
     onClick(i) {
-      var _a7, _b5;
-      if (!((_a7 = this.props.inactive) == null ? void 0 : _a7.get()) && !((_b5 = this.props.disabled) == null ? void 0 : _b5.get())) {
+      var _a8, _b6;
+      if (!((_a8 = this.props.inactive) == null ? void 0 : _a8.get()) && !((_b6 = this.props.disabled) == null ? void 0 : _b6.get())) {
         this.freeTextEntered = false;
         if (this.props.onModified) {
           this.props.onModified(this.renderedDropdownOptionsIndices[i], "");
@@ -79152,8 +79719,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     onFieldSubmit(text) {
-      var _a7, _b5;
-      if (this.props.onModified && !((_a7 = this.props.inactive) == null ? void 0 : _a7.get()) && !((_b5 = this.props.disabled) == null ? void 0 : _b5.get())) {
+      var _a8, _b6;
+      if (this.props.onModified && !((_a8 = this.props.inactive) == null ? void 0 : _a8.get()) && !((_b6 = this.props.disabled) == null ? void 0 : _b6.get())) {
         if (this.props.freeTextAllowed) {
           this.props.onModified(-1, text);
         }
@@ -79178,7 +79745,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.inputFieldValue.set(label);
     }
     onAfterRender(node) {
-      var _a7;
+      var _a8;
       super.onAfterRender(node);
       if (this.props.inactive === void 0) {
         this.props.inactive = Subject.create(false);
@@ -79192,9 +79759,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.subs.push(
         this.renderedDropdownOptions.sub((_, __, ___, array) => {
           array.forEach((_2, i) => {
-            var _a8;
+            var _a9;
             if (document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) {
-              (_a8 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a8.removeEventListener("click", this.onClick.bind(this, i));
+              (_a9 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a9.removeEventListener("click", this.onClick.bind(this, i));
             }
           });
           while (this.dropdownMenuRef.instance.firstChild) {
@@ -79213,8 +79780,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             FSComponent.render(n, this.dropdownMenuRef.instance);
           }, this);
           array.forEach((_2, i) => {
-            var _a8;
-            (_a8 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a8.addEventListener("click", this.onClick.bind(this, i));
+            var _a9;
+            (_a9 = document.getElementById("".concat(this.props.idPrefix, "_").concat(i))) == null ? void 0 : _a9.addEventListener("click", this.onClick.bind(this, i));
           });
         })
       );
@@ -79236,12 +79803,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         })
       );
       this.dropdownSelectorRef.instance.addEventListener("click", this.onOpenCloseClickHandler);
-      (_a7 = document.getElementById("MFD_CONTENT")) == null ? void 0 : _a7.addEventListener("click", this.onClickedOutsideHandler);
+      (_a8 = document.getElementById("MFD_CONTENT")) == null ? void 0 : _a8.addEventListener("click", this.onClickedOutsideHandler);
       this.subs.push(
         this.dropdownIsOpened.sub((opened) => {
-          var _a8;
+          var _a9;
           this.dropdownMenuRef.instance.style.display = opened ? "block" : "none";
-          (_a8 = this.onDropdownOpenedCallback) == null ? void 0 : _a8.call(this);
+          (_a9 = this.onDropdownOpenedCallback) == null ? void 0 : _a9.call(this);
           this.onDropdownOpenedCallback = void 0;
           if (!this.freeTextEntered) {
             if (opened) {
@@ -79256,10 +79823,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       );
       this.subs.push(
         this.props.inactive.sub((val) => {
-          var _a8, _b5, _c, _d;
+          var _a9, _b6, _c, _d;
           if (val) {
-            (_a8 = this.dropdownSelectorRef.getOrDefault()) == null ? void 0 : _a8.classList.add("inactive");
-            (_b5 = this.dropdownArrowRef.getOrDefault()) == null ? void 0 : _b5.classList.add("inactive");
+            (_a9 = this.dropdownSelectorRef.getOrDefault()) == null ? void 0 : _a9.classList.add("inactive");
+            (_b6 = this.dropdownArrowRef.getOrDefault()) == null ? void 0 : _b6.classList.add("inactive");
           } else {
             (_c = this.dropdownSelectorRef.getOrDefault()) == null ? void 0 : _c.classList.remove("inactive");
             (_d = this.dropdownArrowRef.getOrDefault()) == null ? void 0 : _d.classList.remove("inactive");
@@ -79267,10 +79834,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         }, true),
         this.dropdownArrowFill,
         this.props.disabled.sub((val) => {
-          var _a8, _b5, _c, _d, _e;
-          if (!((_a8 = this.props.inactive) == null ? void 0 : _a8.get())) {
+          var _a9, _b6, _c, _d, _e;
+          if (!((_a9 = this.props.inactive) == null ? void 0 : _a9.get())) {
             if (val) {
-              (_b5 = this.dropdownSelectorRef.getOrDefault()) == null ? void 0 : _b5.classList.add("disabled");
+              (_b6 = this.dropdownSelectorRef.getOrDefault()) == null ? void 0 : _b6.classList.add("disabled");
               (_c = this.dropdownArrowRef.getOrDefault()) == null ? void 0 : _c.classList.add("disabled");
             } else {
               (_d = this.dropdownSelectorRef.getOrDefault()) == null ? void 0 : _d.classList.remove("disabled");
@@ -79281,14 +79848,14 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       );
     }
     onOpenCloseClick() {
-      var _a7, _b5;
-      if (!((_a7 = this.props.inactive) == null ? void 0 : _a7.get()) && !((_b5 = this.props.disabled) == null ? void 0 : _b5.get())) {
+      var _a8, _b6;
+      if (!((_a8 = this.props.inactive) == null ? void 0 : _a8.get()) && !((_b6 = this.props.disabled) == null ? void 0 : _b6.get())) {
         this.dropdownIsOpened.set(!this.dropdownIsOpened.get());
       }
     }
     onClickedOutside(e) {
-      var _a7;
-      if (!((_a7 = this.topRef.getOrDefault()) == null ? void 0 : _a7.contains(e.target)) && this.dropdownIsOpened.get()) {
+      var _a8;
+      if (!((_a8 = this.topRef.getOrDefault()) == null ? void 0 : _a8.contains(e.target)) && this.dropdownIsOpened.get()) {
         if (this.inputFieldValue.get() === "") {
           this.inputFieldValue.set(null);
         }
@@ -79310,15 +79877,15 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       };
     }
     destroy() {
-      var _a7, _b5;
+      var _a8, _b6;
       this.subs.forEach((x) => x.destroy());
-      (_a7 = this.dropdownSelectorRef.getOrDefault()) == null ? void 0 : _a7.removeEventListener("click", this.onOpenCloseClickHandler);
-      (_b5 = document.getElementById("MFD_CONTENT")) == null ? void 0 : _b5.removeEventListener("click", this.onClickedOutsideHandler);
+      (_a8 = this.dropdownSelectorRef.getOrDefault()) == null ? void 0 : _a8.removeEventListener("click", this.onOpenCloseClickHandler);
+      (_b6 = document.getElementById("MFD_CONTENT")) == null ? void 0 : _b6.removeEventListener("click", this.onClickedOutsideHandler);
       this.renderedDropdownOptions.clear();
       super.destroy();
     }
     render() {
-      var _a7;
+      var _a8;
       return /* @__PURE__ */ FSComponent.buildComponent("div", { class: "mfd-dropdown-container", ref: this.topRef, style: this.props.containerStyle }, /* @__PURE__ */ FSComponent.buildComponent("div", { ref: this.dropdownSelectorRef, class: "mfd-dropdown-outer" }, /* @__PURE__ */ FSComponent.buildComponent(
         "div",
         {
@@ -79330,7 +79897,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
           InputField,
           {
             ref: this.inputFieldRef,
-            dataEntryFormat: new DropdownFieldFormat((_a7 = this.props.numberOfDigitsForInputField) != null ? _a7 : 6),
+            dataEntryFormat: new DropdownFieldFormat((_a8 = this.props.numberOfDigitsForInputField) != null ? _a8 : 6),
             value: this.inputFieldValue,
             containerStyle: "border: 2px inset transparent",
             alignText: this.props.alignLabels,
@@ -79370,15 +79937,15 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.onClickHandler = this.onClick.bind(this);
     }
     onClick() {
-      var _a7, _b5;
-      if (!((_b5 = (_a7 = this.props) == null ? void 0 : _a7.disabled) == null ? void 0 : _b5.get()) && this.props.onClick !== void 0) {
+      var _a8, _b6;
+      if (!((_b6 = (_a8 = this.props) == null ? void 0 : _a8.disabled) == null ? void 0 : _b6.get()) && this.props.onClick !== void 0) {
         this.props.onClick();
       }
     }
     updateSvgColor(color) {
-      var _a7;
+      var _a8;
       if (this.svgGroupRef) {
-        (_a7 = this.svgGroupRef.getOrDefault()) == null ? void 0 : _a7.setAttribute("fill", color);
+        (_a8 = this.svgGroupRef.getOrDefault()) == null ? void 0 : _a8.setAttribute("fill", color);
       }
     }
     onAfterRender(node) {
@@ -79398,9 +79965,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.spanRef.instance.addEventListener("click", this.onClickHandler);
     }
     destroy() {
-      var _a7;
+      var _a8;
       this.subs.forEach((x) => x.destroy());
-      (_a7 = this.spanRef.getOrDefault()) == null ? void 0 : _a7.removeEventListener("click", this.onClickHandler);
+      (_a8 = this.spanRef.getOrDefault()) == null ? void 0 : _a8.removeEventListener("click", this.onClickHandler);
       super.destroy();
     }
     render() {
@@ -79645,15 +80212,15 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
   };
   var TopTabNavigator = class extends DisplayComponent {
     constructor(props) {
-      var _a7, _b5;
+      var _a8, _b6;
       super(props);
       this.subs = [];
       this.navigatorBarRef = FSComponent.createRef();
       this.pageTitles = SubscribableUtils.toSubscribable(this.props.pageTitles, true);
-      if (this.pageTitles.get().length !== ((_a7 = this.props.children) == null ? void 0 : _a7.length)) {
+      if (this.pageTitles.get().length !== ((_a8 = this.props.children) == null ? void 0 : _a8.length)) {
         console.error("Number of TopTabNavigator children is not equal to number of elements in pageTitles array.");
       }
-      const nodes = FSComponent.createChildNodes(/* @__PURE__ */ FSComponent.buildComponent(FSComponent.Fragment, null), (_b5 = this.props.children) != null ? _b5 : []);
+      const nodes = FSComponent.createChildNodes(/* @__PURE__ */ FSComponent.buildComponent(FSComponent.Fragment, null), (_b6 = this.props.children) != null ? _b6 : []);
       nodes == null ? void 0 : nodes.forEach((page, index) => {
         if (page.instance instanceof TopTabNavigatorPage) {
           page.instance.setVisibility(index === this.props.selectedPageIndex.get());
@@ -79670,18 +80237,18 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     populateElements(node, selectedTab) {
-      var _a7;
+      var _a8;
       while (this.navigatorBarRef.instance.firstChild) {
         this.navigatorBarRef.instance.removeChild(this.navigatorBarRef.instance.firstChild);
       }
-      const nodes = FSComponent.createChildNodes(node, (_a7 = this.props.children) != null ? _a7 : []);
+      const nodes = FSComponent.createChildNodes(node, (_a8 = this.props.children) != null ? _a8 : []);
       nodes == null ? void 0 : nodes.forEach((page, index) => {
         if (page.instance instanceof TopTabNavigatorPage) {
           page.instance.setVisibility(index === selectedTab);
         }
       });
       this.pageTitles.get().forEach((pageTitle, index) => {
-        var _a8;
+        var _a9;
         FSComponent.render(
           /* @__PURE__ */ FSComponent.buildComponent(
             TopTabElement,
@@ -79693,7 +80260,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               slantedEdgeAngle: this.props.tabBarSlantedEdgeAngle || 30,
               selectedTextColor: this.props.selectedTabTextColor || "white",
               onClick: () => this.onPageChange(index),
-              isHighlighted: this.props.highlightedTab ? ((_a8 = this.props.highlightedTab) == null ? void 0 : _a8.get()) === index : false,
+              isHighlighted: this.props.highlightedTab ? ((_a9 = this.props.highlightedTab) == null ? void 0 : _a9.get()) === index : false,
               smallFont: this.pageTitles.get().length > 2
             }
           ),
@@ -80013,10 +80580,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.hEventConsumer = this.props.bus.getSubscriber().on("kccuKeyEvent");
       this.interactionMode = Subject.create(0 /* Touchscreen */);
       this.handleSelectAirport = async (icao, indexInSearchData) => {
-        var _a7;
+        var _a8;
         const airport = this.store.airports.getArray().find((it) => it.idarpt === icao);
         const prop = ControlPanelUtils.getSearchModeProp(
-          (_a7 = this.store.airportSearchMode.get()) != null ? _a7 : 0 /* Icao */
+          (_a8 = this.store.airportSearchMode.get()) != null ? _a8 : 0 /* Icao */
         );
         if (!airport || typeof airport[prop] !== "string") {
           throw new Error("");
@@ -80032,7 +80599,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.store.isAirportSelectionPending.set(true);
       };
       this.handleSelectMapDataSearchMode = async (newSearchMode) => {
-        var _a7;
+        var _a8;
         const selectedAirport = this.store.selectedAirport.get();
         this.selectedEntityIndex.set(null);
         if (selectedAirport !== null) {
@@ -80054,12 +80621,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
               break;
           }
           const data = await this.amdbClient.getAirportData(selectedAirport.idarpt, [featureType]);
-          this.mapDataFeatures = (_a7 = data[featureType]) == null ? void 0 : _a7.features;
+          this.mapDataFeatures = (_a8 = data[featureType]) == null ? void 0 : _a8.features;
           if (this.mapDataFeatures) {
             const prop = ControlPanelUtils.getMapDataSearchModeProp(newSearchMode);
             const entityData = this.mapDataFeatures.map((f) => {
-              var _a8, _b5;
-              return (_b5 = (_a8 = f.properties[prop]) == null ? void 0 : _a8.toString().trim().substring(0, 6)) != null ? _b5 : "";
+              var _a9, _b6;
+              return (_b6 = (_a9 = f.properties[prop]) == null ? void 0 : _a9.toString().trim().substring(0, 6)) != null ? _b6 : "";
             }).filter((it) => it);
             this.availableEntityList.set([...new Set(entityData)].sort());
           }
@@ -80103,8 +80670,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     loadOansDb() {
-      this.amdbClient.searchForAirports("").then((airports) => {
-        this.store.airports.set(airports);
+      this.amdbClient.searchForAirports("").then((airports2) => {
+        this.store.airports.set(airports2);
         this.navigraphAvailable.set(true);
       }).catch(() => {
         this.store.airports.set([]);
@@ -80128,8 +80695,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.subs.push(
         this.store.airports.sub(
           () => {
-            var _a7;
-            return this.sortAirports((_a7 = this.store.airportSearchMode.get()) != null ? _a7 : 0 /* Icao */);
+            var _a8;
+            return this.sortAirports((_a8 = this.store.airportSearchMode.get()) != null ? _a8 : 0 /* Icao */);
           }
         )
       );
@@ -80210,13 +80777,13 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       this.subs.push(this.sub.on("oans_display_airport").handle((arpt) => this.handleSelectAirport(arpt)));
       this.subs.push(
         this.selectedEntityIndex.sub((val) => {
-          var _a7, _b5, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+          var _a8, _b6, _c, _d, _e, _f, _g, _h, _i, _j, _k;
           const searchMode = this.selectedEntityType.get();
           if (searchMode !== null && this.mapDataFeatures && val !== null) {
             const prop = ControlPanelUtils.getMapDataSearchModeProp(searchMode);
             const idx = this.mapDataFeatures.findIndex((f) => f.properties[prop] === this.availableEntityList.get(val));
             this.selectedEntityString.set(
-              idx !== -1 ? (_c = (_b5 = (_a7 = this.mapDataFeatures[idx]) == null ? void 0 : _a7.properties[prop]) == null ? void 0 : _b5.toString()) != null ? _c : "" : ""
+              idx !== -1 ? (_c = (_b6 = (_a8 = this.mapDataFeatures[idx]) == null ? void 0 : _a8.properties[prop]) == null ? void 0 : _b6.toString()) != null ? _c : "" : ""
             );
             if (idx !== -1 && searchMode === 0 /* Runway */ || searchMode === 2 /* Stand */) {
               const feature2 = this.mapDataFeatures[idx];
@@ -80331,7 +80898,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       }
     }
     autoLoadAirport() {
-      var _a7, _b5;
+      var _a8, _b6;
       if (this.presentPosNotAvailable.get() || this.oansPerformanceModeAndMovedOutOfZoomRange.read() || this.manualAirportSelection === true && this.simTimeVar.get() - this.manualAirportSelectionTime < 600 || this.store.loadedAirport.get() !== this.store.selectedAirport.get() || this.store.airports.length === 0 || this.oansResetPulled.get()) {
         return;
       }
@@ -80342,7 +80909,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         );
         if (sortedAirports.length > 0) {
           const ap = sortedAirports[0];
-          if (ap.idarpt !== ((_a7 = this.store.loadedAirport.get()) == null ? void 0 : _a7.idarpt)) {
+          if (ap.idarpt !== ((_a8 = this.store.loadedAirport.get()) == null ? void 0 : _a8.idarpt)) {
             this.props.bus.getPublisher().pub("oans_display_airport", ap.idarpt, true);
             this.store.loadedAirport.set(ap);
             this.store.isAirportSelectionPending.set(false);
@@ -80351,7 +80918,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         }
       } else {
         const destArpt = this.store.airports.getArray().find((it) => it.idarpt === this.fmsDataStore.destination.get());
-        if (destArpt && destArpt.idarpt !== ((_b5 = this.store.loadedAirport.get()) == null ? void 0 : _b5.idarpt)) {
+        if (destArpt && destArpt.idarpt !== ((_b6 = this.store.loadedAirport.get()) == null ? void 0 : _b6.idarpt)) {
           if (distanceTo(this.presentPos.get(), { lat: destArpt.coordinates.lat, long: destArpt.coordinates.lon }) < 50) {
             this.props.bus.getPublisher().pub("oans_display_airport", destArpt.idarpt, true);
             this.store.loadedAirport.set(destArpt);
@@ -80579,8 +81146,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
             idPrefix: "oanc-search"
           }
         ))), /* @__PURE__ */ FSComponent.buildComponent("div", { id: "ArptSelMiddle", class: "oans-cp-arpt-sel-middle" }, /* @__PURE__ */ FSComponent.buildComponent("div", { class: "oans-cp-arpt-sel-middle-1" }, /* @__PURE__ */ FSComponent.buildComponent("span", { class: "mfd-value" }, this.store.selectedAirport.map((it) => {
-          var _a7, _b5;
-          return (_b5 = (_a7 = it == null ? void 0 : it.name) == null ? void 0 : _a7.substring(0, 18).toUpperCase()) != null ? _b5 : "";
+          var _a8, _b6;
+          return (_b6 = (_a8 = it == null ? void 0 : it.name) == null ? void 0 : _a8.substring(0, 18).toUpperCase()) != null ? _b6 : "";
         })), /* @__PURE__ */ FSComponent.buildComponent("span", { class: "mfd-value" }, this.store.selectedAirport.map((it) => {
           if (!it) {
             return "";
@@ -80823,12 +81390,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** The airport the OANS is showing, or null. */
     airport() {
-      var _a7, _b5, _c;
-      return ((_c = (_b5 = (_a7 = this.oansRef.getOrDefault()) == null ? void 0 : _a7.dataAirportIcao) == null ? void 0 : _b5.get) == null ? void 0 : _c.call(_b5)) || null;
+      var _a8, _b6, _c;
+      return ((_c = (_b6 = (_a8 = this.oansRef.getOrDefault()) == null ? void 0 : _a8.dataAirportIcao) == null ? void 0 : _b6.get) == null ? void 0 : _c.call(_b6)) || null;
     }
     update() {
-      var _a7;
-      (_a7 = this.oansRef.getOrDefault()) == null ? void 0 : _a7.Update();
+      var _a8;
+      (_a8 = this.oansRef.getOrDefault()) == null ? void 0 : _a8.Update();
     }
     /** Put the display in `container`, and wire it up. */
     render(container) {
@@ -80965,8 +81532,8 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         this.placeForMode();
       });
       sub2.on("oansRange").handle((index) => {
-        var _a7;
-        return this.halfRange.set(String(((_a7 = a380EfisZoomRangeSettings[index]) != null ? _a7 : 0) / 2));
+        var _a8;
+        return this.halfRange.set(String(((_a8 = a380EfisZoomRangeSettings[index]) != null ? _a8 : 0) / 2));
       });
       sub2.on("oans_answer_symbols_at_cursor").handle((symbols) => {
         if (symbols.side === this.side) {
@@ -80994,23 +81561,23 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** Where the map's moving containers and the aircraft actually ended up, for the bridge log. */
     reportLayout() {
-      var _a7, _b5, _c;
-      const root = (_a7 = this.rootRef.getOrDefault()) == null ? void 0 : _a7.querySelector(".oanc-container");
+      var _a8, _b6, _c;
+      const root = (_a8 = this.rootRef.getOrDefault()) == null ? void 0 : _a8.querySelector(".oanc-container");
       if (!root) {
         return;
       }
       const moving = Array.from(root.querySelectorAll('[style*="transform"]')).slice(0, 6);
       const transforms = moving.map((el) => window.getComputedStyle(el).transform.replace(/\s/g, "")).join("|");
-      const plane = (_c = (_b5 = root.querySelector(".oanc-airplane")) == null ? void 0 : _b5.closest("svg")) == null ? void 0 : _c.getBoundingClientRect();
+      const plane = (_c = (_b6 = root.querySelector(".oanc-airplane")) == null ? void 0 : _b6.closest("svg")) == null ? void 0 : _c.getBoundingClientRect();
       const where = plane ? "".concat(Math.round(plane.left + plane.width / 2), ",").concat(Math.round(plane.top + plane.height / 2)) : "none";
       reportOnce("layout-aircraft-".concat(where, "-transforms-").concat(transforms));
     }
     /** Every positioned element of the map, with where it really is, sent to the bridge log. */
     dumpLayout() {
-      var _a7, _b5;
-      const root = (_a7 = this.rootRef.getOrDefault()) == null ? void 0 : _a7.querySelector(".oanc-container");
+      var _a8, _b6;
+      const root = (_a8 = this.rootRef.getOrDefault()) == null ? void 0 : _a8.querySelector(".oanc-container");
       const oanc = this.oansRef.getOrDefault();
-      if (!root || !oanc) {
+      if (!root || !oanc || false) {
         return;
       }
       const send = (line) => fetch("http://127.0.0.1:8770/amdb-oans-layout?".concat(encodeURIComponent(line))).catch(() => void 0);
@@ -81019,7 +81586,7 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
         return "".concat(Math.round(r.left), ",").concat(Math.round(r.top), " ").concat(Math.round(r.width), "x").concat(Math.round(r.height));
       };
       send("mode=".concat(this.arcView.get() ? "ARC" : "not-arc", " offset=").concat(oanc.modeAnimationOffsetX.get(), ",").concat(oanc.modeAnimationOffsetY.get(), " pan=").concat(oanc.panOffsetX.get(), ",").concat(oanc.panOffsetY.get()));
-      const plane = (_b5 = root.querySelector(".oanc-airplane")) == null ? void 0 : _b5.closest("svg");
+      const plane = (_b6 = root.querySelector(".oanc-airplane")) == null ? void 0 : _b6.closest("svg");
       if (plane) {
         send("aircraft box=".concat(box(plane), " visibility=").concat(window.getComputedStyle(plane).visibility));
       }
@@ -81030,12 +81597,12 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       });
     }
     openContextMenu(x, y) {
-      var _a7;
+      var _a8;
       reportOnce("menu-opened-at-".concat(Math.round(x), ",").concat(Math.round(y)));
       this.bus.getPublisher().pub("oans_query_symbols_at_cursor", { side: this.side, cursorPosition: [x, y] });
       this.contextMenuAt = { x, y };
       this.contextMenuRef.instance.display(x, y);
-      const menu = (_a7 = this.rootRef.getOrDefault()) == null ? void 0 : _a7.querySelector(".mfd-context-menu");
+      const menu = (_a8 = this.rootRef.getOrDefault()) == null ? void 0 : _a8.querySelector(".mfd-context-menu");
       if (menu) {
         const size = 768;
         const w = menu.offsetWidth;
@@ -81091,6 +81658,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** Call every frame: asks the bridge now and then, and redraws when the airport changes. */
     update(now = Date.now()) {
+      if (false) {
+        return;
+      }
       this.show(this.last);
       if (this.busy || now < this.next) {
         return;
@@ -81127,6 +81697,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
     }
     /** Route a clearance from a position; the bridge keeps it as the current route. */
     static set(icao, lat, lon, clearance) {
+      if (false) {
+        return Promise.resolve({ error: "Taxi routes need AMDB Bridge" });
+      }
       const q = "icao=".concat(encodeURIComponent(icao), "&lat=").concat(lat, "&lon=").concat(lon, "&clearance=").concat(encodeURIComponent(clearance));
       return fetch("".concat(BRIDGE2, "/amdb/taxi-route?").concat(q)).then(
         (r) => r.json(),
@@ -81134,6 +81707,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       );
     }
     static clear() {
+      if (false) {
+        return Promise.resolve(null);
+      }
       return fetch("".concat(BRIDGE2, "/amdb/taxi-route/clear")).then(
         (r) => r.json(),
         () => null
@@ -81175,10 +81751,10 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       return true;
     }
     connectedCallback() {
-      var _a7;
+      var _a8;
       super.connectedCallback();
       const side = this.instrumentIndex === 2 ? "R" : "L";
-      const fcu = new URL(((_a7 = this.getAttribute("Url")) != null ? _a7 : "coui://x").toLowerCase()).searchParams.get("aircraft") === "fbw" ? "fbw" : "fenix";
+      const fcu = new URL(((_a8 = this.getAttribute("Url")) != null ? _a8 : "coui://x").toLowerCase()).searchParams.get("aircraft") === "fbw" ? "fbw" : "fenix";
       const captain = side === "L";
       const braking = captain;
       reportOnce("nd-side-".concat(side, "-").concat(fcu));
@@ -81228,9 +81804,9 @@ window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.s
       );
     }
     onInteractionEvent(args) {
-      var _a7;
+      var _a8;
       super.onInteractionEvent(args);
-      (_a7 = this.fenix) == null ? void 0 : _a7.command(args[0]);
+      (_a8 = this.fenix) == null ? void 0 : _a8.command(args[0]);
     }
     Update() {
       super.Update();

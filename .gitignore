@@ -14,3 +14,7 @@
 # Fenix OANS build: FlyByWire checkout and npm packages are fetched by tools/fenix-oans/build.mjs
 tools/fenix-oans/.fbw/
 tools/fenix-oans/node_modules/
+
+tools/ba787-airport-map/
+docs/superpowers/plans/2026-10-08-ba787-airport-map.md
+docs/superpowers/specs/2026-10-08-ba787-airport-map-design.md

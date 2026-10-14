@@ -436,7 +436,7 @@ fn build_and_write(cfg: &Config, mut p: Prepared, osm_store: Option<Store>, faa_
     let bbox = p.src.bbox().map(|(a, b, c, d)| [a, b, c, d]);
     let mut formats = Vec::new();
     if cfg.formats.geojson {
-        formats.push("geojson".into());
+        formats.push(if cfg.formats.packed { "geojson-packed" } else { "geojson" }.into());
     }
     if cfg.formats.pbf {
         formats.push("pbf".into());
@@ -683,6 +683,7 @@ pub fn run_with_osm_budget(cfg: &Config, icaos: &[String], osm_budget: Option<st
                         let len = e.metadata().map(|x| x.len()).unwrap_or(0);
                         match e.path().extension().and_then(|x| x.to_str()) {
                             Some("geojson") => gj += len,
+                            _ if e.file_name() == crate::output::layers::PACK || e.file_name() == crate::output::layers::GZIP_PACK => gj += len,
                             Some("pbf") => pb += len,
                             _ => {}
                         }
@@ -690,7 +691,8 @@ pub fn run_with_osm_budget(cfg: &Config, icaos: &[String], osm_budget: Option<st
                 }
                 let shown = std::env::current_dir().ok().and_then(|cwd| dir.strip_prefix(&cwd).ok().map(|r| r.to_path_buf())).unwrap_or(dir.clone());
                 let shown = format!("{}{}", shown.display(), std::path::MAIN_SEPARATOR);
-                if gj > 0 { term::file(Some(&icao), &format!("{shown}*.geojson"), &format!("{} layers, {}", cfg.layers.len(), term::human_bytes(gj))); }
+                let gj_name = if cfg.formats.packed { crate::output::layers::PACK.to_string() } else { "*.geojson".to_string() };
+                if gj > 0 { term::file(Some(&icao), &format!("{shown}{gj_name}"), &format!("{} layers, {}", cfg.layers.len(), term::human_bytes(gj))); }
                 if pb > 0 { term::file(Some(&icao), &format!("{shown}*.pbf"), &format!("{} layers, {}", cfg.layers.len(), term::human_bytes(pb))); }
                 term::file(Some(&icao), &format!("{shown}manifest.json"), "sources, counts, warnings");
                 index_file.lock().unwrap().push(IndexAirport {

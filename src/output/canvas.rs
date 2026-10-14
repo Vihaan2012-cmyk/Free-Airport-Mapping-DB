@@ -211,6 +211,128 @@ struct State {
 ///
 /// The page is in points with the origin at the bottom left, the way PDF has it, and the
 /// bitmap has its origin at the top left, so every y is turned over on the way in. Scale
+/// A colour on its night side: its lightness turned over, its hue kept, white paper down
+/// to a dark grey rather than to black.
+fn night(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
+    let (r, g, b) = (r as f32, g as f32, b as f32);
+    let light = 0.299 * r + 0.587 * g + 0.114 * b;
+    let turned = 24.0 + (255.0 - light) * (206.0 / 255.0);
+    let shift = |c: f32| (c - light + turned).round().clamp(0.0, 255.0) as u8;
+    (shift(r), shift(g), shift(b))
+}
+
+/// Opaque pixels, four bytes each, as a PNG that keeps every one of them exactly: a palette
+/// where there are 256 colours or fewer (a map tile is mostly flat sea and land and a few
+/// inks: most of them), three channels where there are more. About a third the size of the
+/// four-channel PNG `png_bytes` writes. Nothing is ever approximated.
+pub fn compact_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
+    compact_png_with(rgba, width, height, false)
+}
+
+/// As `compact_png`, with deflate at its strongest when `best`: about 8% smaller, at four
+/// times the time, for tiles packed once and kept rather than drawn while a run waits.
+pub fn compact_png_with(rgba: &[u8], width: u32, height: u32, best: bool) -> Result<Vec<u8>> {
+    let mut palette: Vec<[u8; 3]> = Vec::new();
+    let mut index: std::collections::HashMap<[u8; 3], u8> = std::collections::HashMap::new();
+    let mut indexed = Vec::with_capacity(rgba.len() / 4);
+    let mut last: Option<([u8; 3], u8)> = None;
+    let mut fits = true;
+    for p in rgba.chunks_exact(4) {
+        let c = [p[0], p[1], p[2]];
+        let i = match last {
+            Some((lc, li)) if lc == c => li,
+            _ => {
+                let i = match index.get(&c) {
+                    Some(&i) => i,
+                    None if palette.len() == 256 => {
+                        fits = false;
+                        break;
+                    }
+                    None => {
+                        let i = palette.len() as u8;
+                        palette.push(c);
+                        index.insert(c, i);
+                        i
+                    }
+                };
+                last = Some((c, i));
+                i
+            }
+        };
+        indexed.push(i);
+    }
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, width, height);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.set_compression(if best { png::Compression::Best } else { png::Compression::Default });
+        if fits {
+            enc.set_color(png::ColorType::Indexed);
+            enc.set_palette(palette.concat());
+            enc.set_filter(png::FilterType::NoFilter);
+            enc.write_header()?.write_image_data(&indexed)?;
+        } else {
+            let rgb: Vec<u8> = rgba.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+            enc.set_color(png::ColorType::Rgb);
+            enc.set_adaptive_filter(png::AdaptiveFilterType::Adaptive);
+            enc.write_header()?.write_image_data(&rgb)?;
+        }
+    }
+    Ok(out)
+}
+
+/// Opaque pixels, four bytes each, as lossless WebP: every pixel kept, and about half the
+/// size of the tightest PNG of them (`compact_png`), for pictures stored by the million and
+/// handed out as PNG (`as_png`). libwebp's middle effort: its most packs no smaller and
+/// takes two hundred times as long.
+pub fn lossless_webp(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
+    let rgb: Vec<u8> = rgba.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+    let mut config = webp::WebPConfig::new().map_err(|_| anyhow!("libwebp would not start"))?;
+    config.lossless = 1;
+    config.quality = 75.0;
+    config.method = 4;
+    config.exact = 1;
+    let out = webp::Encoder::from_rgb(&rgb, width, height).encode_advanced(&config).map_err(|e| anyhow!("WebP: {e:?}"))?;
+    Ok(out.to_vec())
+}
+
+fn is_webp(bytes: &[u8]) -> bool {
+    bytes.len() > 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP"
+}
+
+/// A stored picture, PNG or WebP, as its pixels.
+pub fn decode_picture(bytes: &[u8]) -> Result<tiny_skia::Pixmap> {
+    if !is_webp(bytes) {
+        return Ok(tiny_skia::Pixmap::decode_png(bytes)?);
+    }
+    let img = webp::Decoder::new(bytes).decode().ok_or_else(|| anyhow!("not a WebP picture"))?;
+    let (w, h) = (img.width(), img.height());
+    let rgba: Vec<u8> = if img.is_alpha() { img.to_vec() } else { img.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect() };
+    let size = tiny_skia::IntSize::from_wh(w, h).ok_or_else(|| anyhow!("a WebP picture of no size"))?;
+    tiny_skia::Pixmap::from_vec(rgba, size).ok_or_else(|| anyhow!("a WebP picture of {w} by {h} that does not fit its pixels"))
+}
+
+/// A stored picture as PNG, for a reader that takes only PNG: a PNG as it is, a WebP's pixels
+/// written as one (`compact_png`).
+pub fn as_png(bytes: &[u8]) -> Result<Vec<u8>> {
+    if !is_webp(bytes) {
+        return Ok(bytes.to_vec());
+    }
+    let px = decode_picture(bytes)?;
+    compact_png(px.data(), px.width(), px.height())
+}
+
+/// An opaque picture kept by day, PNG or WebP, turned to its night side as PNG: the enroute
+/// tiles are kept one way and shown either.
+pub fn png_to_night(png: &[u8]) -> Result<Vec<u8>> {
+    let mut pixmap = decode_picture(png)?;
+    for px in pixmap.pixels_mut() {
+        let (r, g, b) = night(px.red(), px.green(), px.blue());
+        *px = tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, 255).unwrap_or(*px);
+    }
+    Ok(pixmap.encode_png()?)
+}
+
 /// is points to pixels: three gives about 216 to the inch, which is what an electronic
 /// flight bag wants of an A4 page.
 pub struct Raster {
@@ -258,6 +380,12 @@ impl Raster {
         Ok(self.pixmap.encode_png()?)
     }
 
+    /// The picture as the smallest PNG it packs to without a pixel changing, for one painted
+    /// opaque all over (see `compact_png`).
+    pub fn png_compact_bytes(&self) -> Result<Vec<u8>> {
+        compact_png(self.pixmap.data(), self.pixmap.width(), self.pixmap.height())
+    }
+
     /// The size of the picture, in pixels.
     pub fn size(&self) -> (u32, u32) {
         (self.pixmap.width(), self.pixmap.height())
@@ -271,11 +399,8 @@ impl Raster {
         for px in self.pixmap.pixels_mut() {
             // The page is painted on opaque white, so no pixel carries a part alpha and
             // the premultiplied values are the colour itself.
-            let (r, g, b) = (px.red() as f32, px.green() as f32, px.blue() as f32);
-            let light = 0.299 * r + 0.587 * g + 0.114 * b;
-            let turned = 24.0 + (255.0 - light) * (206.0 / 255.0);
-            let shift = |c: f32| (c - light + turned).round().clamp(0.0, 255.0) as u8;
-            *px = tiny_skia::PremultipliedColorU8::from_rgba(shift(r), shift(g), shift(b), 255).unwrap_or(*px);
+            let (r, g, b) = night(px.red(), px.green(), px.blue());
+            *px = tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, 255).unwrap_or(*px);
         }
     }
 

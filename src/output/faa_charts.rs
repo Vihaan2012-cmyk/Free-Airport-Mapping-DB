@@ -156,11 +156,12 @@ impl Limiter {
 #[cfg(windows)]
 pub(crate) fn enter_background() {
     use winapi::um::processthreadsapi::{GetCurrentProcess, SetPriorityClass};
-    // PROCESS_MODE_BACKGROUND_BEGIN, which lowers disk and memory priority too, then
-    // IDLE_PRIORITY_CLASS: the other way round, background mode puts the class back to
-    // normal, and that is what Task Manager then shows.
-    let ok = unsafe { SetPriorityClass(GetCurrentProcess(), 0x0010_0000) != 0 && SetPriorityClass(GetCurrentProcess(), 0x0000_0040) != 0 };
-    crate::term::info(if ok { "Running in the background: lowest CPU, disk and memory priority" } else { "Could not lower this process's priority; carrying on" });
+    // IDLE_PRIORITY_CLASS: the CPU only when nothing else wants it. Not background mode
+    // (PROCESS_MODE_BACKGROUND_BEGIN), which also holds the working set to a few tens of
+    // megabytes: a chart run that keeps terrain in memory then spent its time faulting
+    // it back in, a hundred thousand faults a second, at a twentieth of the speed.
+    let ok = unsafe { SetPriorityClass(GetCurrentProcess(), 0x0000_0040) != 0 };
+    crate::term::info(if ok { "Running in the background: lowest CPU priority" } else { "Could not lower this process's priority; carrying on" });
 }
 
 #[cfg(not(windows))]

@@ -156,7 +156,8 @@ enum Cmd {
     /// `status` says which each is. The same as the bridge's `charts`, without its need for
     /// administrator rights.
     TabletCharts {
-        /// on, off or status
+        /// on, off, refresh (name the aircraft in the addresses of flight bags already
+        /// pointed here, and point their enroute map here too) or status
         state: String,
     },
     /// SimBrief-compatible plans on the flight bags that read them (FlyByWire, PMDG,
@@ -217,6 +218,126 @@ enum Cmd {
         /// comes out about half the size.
         #[arg(long)]
         uncompressed_pdf: bool,
+    },
+    /// Charts for every airport a navigation data set has procedures for: each approach,
+    /// departure and arrival, drawn as the CIFP charts are, into <out>/<ICAO>/. From the
+    /// simulator's own navigation data (`--from sim`) or an aircraft's navigation database
+    /// (`--from` a .s3db file). Licensed data, so the charts go in a folder of their own
+    /// rather than beside the built airports, which can be passed on.
+    NavdataCharts {
+        /// Only these airports; every one with procedures when left out.
+        icaos: Vec<String>,
+        /// `sim`, or the path of an aircraft's navigation database.
+        #[arg(long, default_value = "sim")]
+        from: String,
+        /// Built airports: only these are charted.
+        #[arg(long)]
+        airports: PathBuf,
+        /// Where the charts go, a folder an airport: <out>/<ICAO>/.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Or into each built airport's own folder under this name (e.g. charts-2610):
+        /// <airports>/<ICAO>/<subfolder>/, where the bridge's flight bag charts find them.
+        #[arg(long)]
+        subfolder: Option<String>,
+        /// Only airports whose own folder has no charts yet.
+        #[arg(long)]
+        remaining: bool,
+        /// Skip the airports an earlier run of the same data finished.
+        #[arg(long)]
+        resume: bool,
+        /// Airports drawn at once.
+        #[arg(long, default_value_t = 2)]
+        jobs: usize,
+        /// Lowest CPU, disk and memory priority, to leave a simulator undisturbed.
+        #[arg(long)]
+        background: bool,
+        /// Leave off the minimum safe altitude ring, which reads terrain 25 miles round.
+        #[arg(long)]
+        no_msa: bool,
+        /// Chart pages uncompressed: several times bigger each, but a 7z of many charts
+        /// comes out about half the size.
+        #[arg(long)]
+        uncompressed_pdf: bool,
+    },
+    /// Enroute map tiles for the flight bags' enroute map (IFR low and high, VFR, world),
+    /// drawn from an aircraft's navigation database: every tile down to a zoom, into
+    /// <out>/<cycle>/<style>/z/x/y.png. The bridge serves them, and draws any closer zoom the
+    /// first time it is asked for.
+    EnrouteTiles {
+        /// Where the tiles go (e.g. D:\OANS Cache\airports\enroute, beside the airports the
+        /// bridge serves).
+        #[arg(long)]
+        out: PathBuf,
+        /// The navigation database (.s3db) to draw from, or `sim` for the simulator's own
+        /// airways, fixes and navaids (its current cycle; the airspace and MORA still come from
+        /// the newest database). The newest database on the machine when left out.
+        #[arg(long)]
+        from: Option<PathBuf>,
+        /// Styles, comma separated: ifr.lo, ifr.hi, vfr, world. All when left out.
+        #[arg(long, value_delimiter = ',')]
+        styles: Vec<String>,
+        /// Every tile from zoom 0 to this.
+        #[arg(long = "max-zoom", default_value_t = 8)]
+        max_zoom: u8,
+        /// Tiles drawn at once.
+        #[arg(long, default_value_t = 8)]
+        jobs: usize,
+        /// Lowest CPU priority, to leave a simulator undisturbed.
+        #[arg(long)]
+        background: bool,
+        /// Leave tiles already drawn as they are.
+        #[arg(long)]
+        resume: bool,
+        /// Only this tile (z/x/y), in every style, written to --out for a look at it.
+        #[arg(long)]
+        one: Option<String>,
+        /// Draw nothing: pack the tiles already in --out (every cycle) as tightly as new ones
+        /// are, every pixel kept, about a third of the size.
+        #[arg(long)]
+        repack: bool,
+    },
+    /// Pack every built airport's layer files into one gzipped file (`layers.json.gz`):
+    /// about a seventh of the space, and one file an airport instead of forty-five. Each is
+    /// read back before its loose files go; an airport already packed is left alone.
+    PackLayers {
+        /// Built airports.
+        #[arg(long)]
+        airports: PathBuf,
+        /// Airports packed at once.
+        #[arg(long, default_value_t = 16)]
+        jobs: usize,
+        /// Lowest CPU priority, to leave a simulator undisturbed.
+        #[arg(long)]
+        background: bool,
+    },
+    /// Pack every built airport's chart sets (`charts`, `charts-NNNN`) each into one file
+    /// (`<set>.pack`): about two fifths of the space, every chart given back to the byte, and
+    /// read by the bridge as it read the folder.
+    PackCharts {
+        /// Built airports.
+        #[arg(long)]
+        airports: PathBuf,
+        /// Airports packed at once.
+        #[arg(long, default_value_t = 16)]
+        jobs: usize,
+        /// Lowest CPU priority, to leave a simulator undisturbed.
+        #[arg(long)]
+        background: bool,
+    },
+    /// Every built airport's OpenStreetMap obstacles (masts, towers, chimneys, wind
+    /// turbines with a height), read out of downloaded extracts and saved where the charts
+    /// look for them, so drawing charts asks the Overpass servers nothing.
+    OsmObstacles {
+        /// Extracts (.osm.pbf), e.g. Geofabrik's continents.
+        #[arg(long = "pbf", required = true)]
+        pbf: Vec<PathBuf>,
+        /// Built airports.
+        #[arg(long)]
+        airports: PathBuf,
+        /// How far round each airport, as the charts ask.
+        #[arg(long, default_value_t = 46.0)]
+        radius_km: f64,
     },
     /// Every chart the FAA publishes (approaches, departures, arrivals, airport diagrams,
     /// hot spots, takeoff and alternate minimums), downloaded from its d-TPP for one cycle
@@ -687,6 +808,11 @@ pub struct BuildArgs {
     /// Do not query the X-Plane Scenery Gateway.
     #[arg(long = "no-gateway")]
     no_gateway: bool,
+    /// Never read the local X-Plane install, not even the one the installer recorded.
+    /// Its Custom Scenery folder holds whatever was installed there, often payware or
+    /// conversions that may not be passed on, so a build meant for publishing leaves it out.
+    #[arg(long = "no-xplane-install")]
+    no_xplane_install: bool,
     /// OSM source: osmapi (default: direct OpenStreetMap API, Overpass fallback), overpass, both, or off.
     #[arg(long, default_value = "osmapi")]
     osm: String,
@@ -786,6 +912,7 @@ impl BuildArgs {
             xplane_dir: None,
             aptdat_file: None,
             no_gateway: true,
+            no_xplane_install: false,
             osm: "off".into(),
             overpass: None,
             osm_pbf: Vec::new(),
@@ -817,9 +944,10 @@ impl BuildArgs {
 }
 
 pub fn config(a: &BuildArgs) -> Result<Config> {
-    let formats = Formats { geojson: a.format.contains("geojson") || a.format.contains("json"), pbf: a.format.contains("pbf") };
+    let packed = a.format.contains("packed");
+    let formats = Formats { geojson: packed || a.format.contains("geojson") || a.format.contains("json"), pbf: a.format.contains("pbf"), packed };
     if !formats.geojson && !formats.pbf {
-        return Err(anyhow!("--format must include geojson and/or pbf"));
+        return Err(anyhow!("--format must include geojson, packed and/or pbf"));
     }
     let projection = match a.projection.to_ascii_lowercase().as_str() {
         "wgs84" | "4326" | "epsg:4326" | "latlon" => Projection::Wgs84,
@@ -861,7 +989,7 @@ pub fn config(a: &BuildArgs) -> Result<Config> {
         formats,
         projection,
         // Gateway first; a local X-Plane install (given or auto-detected) fills the gaps.
-        xplane_dir: a.xplane_dir.clone().or_else(crate::sources::xplane::local::detect_install),
+        xplane_dir: if a.no_xplane_install { None } else { a.xplane_dir.clone().or_else(crate::sources::xplane::local::detect_install) },
         aptdat_file: a.aptdat_file.clone(),
         use_gateway: !a.no_gateway,
         osm,
@@ -913,6 +1041,7 @@ fn folder_sizes(dir: &Path) -> (u64, u64, u64) {
             let len = e.metadata().map(|m| m.len()).unwrap_or(0);
             match e.path().extension().and_then(|x| x.to_str()) {
                 Some("geojson") => gj += len,
+                _ if e.file_name() == crate::output::layers::PACK || e.file_name() == crate::output::layers::GZIP_PACK => gj += len,
                 Some("pbf") => pb += len,
                 _ => other += len,
             }
@@ -1000,6 +1129,106 @@ fn redraw_charts(airports: &Path, jobs: usize, background: bool) -> Result<()> {
         match failed.load(Ordering::Relaxed) {
             0 => String::new(),
             f => format!(", {f} failed"),
+        }
+    ));
+    Ok(())
+}
+
+/// Pack every built airport's layers (see `Cmd::PackLayers`).
+fn pack_layers(airports: &Path, jobs: usize, background: bool) -> Result<()> {
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    if background {
+        crate::output::faa_charts::enter_background();
+    }
+    let dirs: Vec<PathBuf> = std::fs::read_dir(airports)?.flatten().map(|e| e.path()).filter(|d| d.join("manifest.json").is_file()).collect();
+    term::start(&format!("Packing the layers of {} built airports in {}", dirs.len(), airports.display()));
+    let (packed, before, after, failed, done) = (AtomicUsize::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicUsize::new(0), AtomicUsize::new(0));
+    let t0 = std::time::Instant::now();
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs.max(1)).build()?;
+    pool.install(|| {
+        dirs.par_iter().for_each(|dir| {
+            match crate::output::layers::pack(dir) {
+                Ok(Some((b, a))) => {
+                    packed.fetch_add(1, Ordering::Relaxed);
+                    before.fetch_add(b, Ordering::Relaxed);
+                    after.fetch_add(a, Ordering::Relaxed);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    failed.fetch_add(1, Ordering::Relaxed);
+                    term::warn(&format!("{e:#}"));
+                }
+            }
+            let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+            if n % 2000 == 0 || n == dirs.len() {
+                let secs = t0.elapsed().as_secs_f64();
+                term::info(&format!("{n}/{} airports, about {} left", dirs.len(), term::human_secs(secs / n as f64 * (dirs.len() - n) as f64)));
+            }
+        });
+    });
+    let (b, a) = (before.load(Ordering::Relaxed), after.load(Ordering::Relaxed));
+    term::success(&format!(
+        "{} airports packed in {}: {} of layers to {}{}",
+        packed.load(Ordering::Relaxed),
+        term::human_secs(t0.elapsed().as_secs_f64()),
+        term::human_bytes(b),
+        term::human_bytes(a),
+        match failed.load(Ordering::Relaxed) {
+            0 => String::new(),
+            f => format!("; {f} left as they were"),
+        }
+    ));
+    Ok(())
+}
+
+/// Pack every built airport's chart sets (see `Cmd::PackCharts`).
+fn pack_charts(airports: &Path, jobs: usize, background: bool) -> Result<()> {
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    if background {
+        crate::output::faa_charts::enter_background();
+    }
+    let sets: Vec<(PathBuf, String)> = std::fs::read_dir(airports)?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|d| d.join("manifest.json").is_file())
+        .flat_map(|d| crate::output::chart_pack::set_folders(&d).into_iter().map(move |s| (d.clone(), s)))
+        .collect();
+    term::start(&format!("Packing {} chart sets in {}", sets.len(), airports.display()));
+    let (packed, before, after, failed, done) = (AtomicUsize::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicUsize::new(0), AtomicUsize::new(0));
+    let t0 = std::time::Instant::now();
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs.max(1)).build()?;
+    pool.install(|| {
+        sets.par_iter().for_each(|(dir, set)| {
+            match crate::output::chart_pack::pack_set(dir, set) {
+                Ok(Some((b, a))) => {
+                    packed.fetch_add(1, Ordering::Relaxed);
+                    before.fetch_add(b, Ordering::Relaxed);
+                    after.fetch_add(a, Ordering::Relaxed);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    failed.fetch_add(1, Ordering::Relaxed);
+                    term::warn(&format!("{e:#}"));
+                }
+            }
+            let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+            if n % 1000 == 0 || n == sets.len() {
+                let secs = t0.elapsed().as_secs_f64();
+                term::info(&format!("{n}/{} sets, about {} left", sets.len(), term::human_secs(secs / n as f64 * (sets.len() - n) as f64)));
+            }
+        });
+    });
+    term::success(&format!(
+        "{} chart sets packed in {}: {} to {}{}",
+        packed.load(Ordering::Relaxed),
+        term::human_secs(t0.elapsed().as_secs_f64()),
+        term::human_bytes(before.load(Ordering::Relaxed)),
+        term::human_bytes(after.load(Ordering::Relaxed)),
+        match failed.load(Ordering::Relaxed) {
+            0 => String::new(),
+            f => format!("; {f} left as they were"),
         }
     ));
     Ok(())
@@ -1455,6 +1684,38 @@ pub fn run() -> Result<()> {
             crate::output::canvas::set_uncompressed_pdf(uncompressed_pdf);
             crate::output::cifp_charts::run(&crate::output::cifp_charts::Options { airports, cycle, jobs, only: icaos, background, no_msa })
         }
+        Cmd::NavdataCharts { icaos, from, airports, out, subfolder, remaining, resume, jobs, background, no_msa, uncompressed_pdf } => {
+            crate::output::canvas::set_uncompressed_pdf(uncompressed_pdf);
+            let from = if from.eq_ignore_ascii_case("sim") { crate::output::navdata_charts::From::Simulator } else { crate::output::navdata_charts::From::Database(PathBuf::from(from)) };
+            crate::output::navdata_charts::run(&crate::output::navdata_charts::Options { from, airports, out, subfolder, remaining, resume, only: icaos, jobs, background, no_msa })
+        }
+        Cmd::EnrouteTiles { out, from, styles, max_zoom, jobs, background, resume, one, repack } => match one {
+            _ if repack => crate::output::enroute::repack(&out, jobs, background),
+            Some(zxy) => {
+                let n: Vec<u32> = zxy.split('/').filter_map(|p| p.parse().ok()).collect();
+                let [z, x, y] = n[..] else { return Err(anyhow!("--one takes z/x/y, not {zxy}")) };
+                let source = crate::output::enroute::Source::from_arg(from.as_deref())?;
+                let data = crate::output::enroute::Data::load(&crate::sources::http::Http::new(120, 0), &crate::cache::Cache::for_index(false), source)?;
+                std::fs::create_dir_all(&out)?;
+                let styles = if styles.is_empty() { crate::output::enroute::STYLES.iter().map(|s| s.to_string()).collect() } else { styles };
+                for style in styles {
+                    let t0 = std::time::Instant::now();
+                    let png = crate::output::enroute::tile(&data, &style, z as u8, x, y)?;
+                    let path = out.join(format!("{style}-{z}-{x}-{y}.png"));
+                    std::fs::write(&path, &png)?;
+                    let plain = match crate::output::enroute::plain(&data, &style, z as u8, x, y) {
+                        Some(p) => format!(", plain {p:?}: not kept by a run"),
+                        None => String::new(),
+                    };
+                    crate::term::success(&format!("{} ({} in {}{plain})", path.display(), crate::term::human_bytes(png.len() as u64), crate::term::human_secs(t0.elapsed().as_secs_f64())));
+                }
+                Ok(())
+            }
+            None => crate::output::enroute::run(&crate::output::enroute::Options { out, from, styles, max_zoom, jobs, background, resume }),
+        },
+        Cmd::PackLayers { airports, jobs, background } => pack_layers(&airports, jobs, background),
+        Cmd::PackCharts { airports, jobs, background } => pack_charts(&airports, jobs, background),
+        Cmd::OsmObstacles { pbf, airports, radius_km } => crate::sources::obstacles::save_from_extracts(&pbf, &airports, radius_km, &crate::cache::Cache::for_index(false)).map(|_| ()),
         Cmd::FaaCharts { icaos, out, cycle, jobs, rate, background, airports } => {
             let opts = crate::output::faa_charts::Options { out, cycle, jobs, rate: crate::output::faa_charts::parse_rate(&rate)?, only: icaos, background, airports };
             crate::output::faa_charts::run(&opts).map(|_| ())
@@ -1526,8 +1787,13 @@ pub fn run() -> Result<()> {
                             crate::term::success(&format!("Own charts restored: {}", f.display()));
                         }
                     }
+                    "refresh" => {
+                        for f in patcher::refresh_charts(d, crate::bridge::DEFAULT_PORT)? {
+                            crate::term::success(&format!("Charts and enroute map addresses now name the aircraft: {}", f.display()));
+                        }
+                    }
                     "status" => {}
-                    other => return Err(anyhow!("tablet-charts takes on, off or status, not {other}")),
+                    other => return Err(anyhow!("tablet-charts takes on, off, refresh or status, not {other}")),
                 }
                 for (pkg, f, on) in patcher::scan_charts(d) {
                     println!("  {pkg}  {}: {}", f.file_name().unwrap_or_default().to_string_lossy(), if on { "charts from the bridge" } else { "its own (Navigraph) charts" });

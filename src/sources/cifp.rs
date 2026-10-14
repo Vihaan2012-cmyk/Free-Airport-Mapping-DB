@@ -112,7 +112,7 @@ impl Fixes {
 }
 
 /// The approach type a final approach's route type says.
-fn approach_type(route: char) -> Option<ApproachType> {
+pub(crate) fn approach_type(route: char) -> Option<ApproachType> {
     match route {
         'I' => Some(ApproachType::Ils),
         'L' | 'U' => Some(ApproachType::Localiser),
@@ -127,7 +127,7 @@ fn approach_type(route: char) -> Option<ApproachType> {
 }
 
 /// A departure's or arrival's route type: which part of the procedure it is.
-fn terminal_part(kind: Kind, route: char) -> &'static str {
+pub(crate) fn terminal_part(kind: Kind, route: char) -> &'static str {
     match (kind, route) {
         (Kind::Sid, '1' | '4' | 'F' | 'T') => "runway",
         (Kind::Sid, '3' | '6' | 'S' | 'V') => "enroute",
@@ -193,12 +193,20 @@ fn leg(line: &str, airport: &str, fixes: &Fixes) -> Leg {
 
 /// The runway and suffix an approach identifier names: `I04R` is runway 04R, `H33LZ`
 /// runway 33L with the Z that tells two approaches to it apart, `VDM-A` no runway.
-fn approach_runway(ident: &str) -> (String, Option<char>) {
+pub(crate) fn approach_runway(ident: &str) -> (String, Option<char>) {
     let rest: String = ident.chars().skip(1).collect();
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     if digits.len() != 2 {
-        let letter = ident.rsplit('-').next().filter(|s| s.len() == 1).and_then(|s| s.chars().next());
-        return (letter.map(|c| c.to_string()).unwrap_or_default(), None);
+        // A circling approach. The FAA puts its letter after a dash (VDM-A); data coded the
+        // Jeppesen way after the approach type's three letters (RNVA, VDMB, NDB1), except
+        // where the identifier is a C and the type, with no letter at all (CVOR).
+        let dashed = ident.rsplit('-').next().filter(|s| s.len() == 1).and_then(|s| s.chars().next());
+        let typed = || {
+            let c: Vec<char> = ident.chars().collect();
+            let no_letter = c.first() == Some(&'C') && ["VOR", "NDB", "NDM", "VDM", "DME", "LOC", "GPS", "RNV"].contains(&ident.get(1..).unwrap_or(""));
+            (c.len() == 4 && c[..3].iter().all(char::is_ascii_uppercase) && c[3].is_ascii_alphanumeric() && !no_letter).then(|| c[3])
+        };
+        return (dashed.or_else(typed).map(|c| c.to_string()).unwrap_or_default(), None);
     }
     let after: Vec<char> = rest.chars().skip(2).collect();
     let (side, more) = match after.first() {
@@ -344,8 +352,7 @@ pub fn read(text: &str, cycle: &str) -> (HashMap<String, AirportProcedures>, Nav
 
     // Procedure records, grouped by airport, then procedure, then route and transition,
     // keeping the file's order within each.
-    type RouteKey = (char, String);
-    let mut procs: BTreeMap<(String, char, String), Vec<(RouteKey, Vec<Leg>, Vec<String>)>> = BTreeMap::new();
+    let mut procs: Routes = BTreeMap::new();
     for line in text.lines().filter(|l| l.len() >= 100 && l.starts_with('S') && col(l, 5, 5) == "P") {
         let sub = col(line, 13, 13).chars().next().unwrap_or(' ');
         if !matches!(sub, 'D' | 'E' | 'F') || col(line, 39, 39) != "0" && col(line, 39, 39) != "1" {
@@ -388,6 +395,23 @@ pub fn read(text: &str, cycle: &str) -> (HashMap<String, AirportProcedures>, Nav
         last.2.push(col(line, 40, 43).to_string());
     }
 
+    let out = assemble(procs, &airports, "FAA CIFP");
+    // A localiser's DME is the one of its name at its airport.
+    for ((airport, _), ils) in nav.ils.iter_mut() {
+        ils.dme = nav.dmes.get(&ils.ident).and_then(|all| all.iter().find(|(a, _)| a == airport).or_else(|| all.first())).map(|(_, p)| *p);
+    }
+    (out, nav)
+}
+
+/// Procedure legs as the records give them: by airport, section (`D` departures, `E`
+/// arrivals, `F` approaches) and identifier, then each route and transition in the
+/// records' order, with its legs and their four-letter description codes (the third
+/// letter marks where a missed approach begins).
+pub(crate) type Routes = BTreeMap<(String, char, String), Vec<((char, String), Vec<Leg>, Vec<String>)>>;
+
+/// The procedures out of their legs, for the airports whose reference point and magnetic
+/// variation are known. `source` is what the procedures are said to come from.
+pub(crate) fn assemble(procs: Routes, airports: &HashMap<String, (f64, f64, Option<f64>)>, source: &str) -> HashMap<String, AirportProcedures> {
     let mut out: HashMap<String, AirportProcedures> = HashMap::new();
     for ((airport, sub, ident), routes) in procs {
         let Some(&(lat, lon, var)) = airports.get(&airport) else { continue };
@@ -430,7 +454,7 @@ pub fn read(text: &str, cycle: &str) -> (HashMap<String, AirportProcedures>, Nav
             procedures: Vec::new(),
             magnetic_variation_deg: var,
             frequencies: Vec::new(),
-            source: "FAA CIFP".to_string(),
+            source: source.to_string(),
         });
         a.procedures.push(Procedure { kind, name, approach_type: approach_kind.filter(|_| kind == Kind::Approach), suffix, variant: None, runway, transitions });
     }
@@ -443,11 +467,7 @@ pub fn read(text: &str, cycle: &str) -> (HashMap<String, AirportProcedures>, Nav
             p.variant = Some(*n);
         }
     }
-    // A localiser's DME is the one of its name at its airport.
-    for ((airport, _), ils) in nav.ils.iter_mut() {
-        ils.dme = nav.dmes.get(&ils.ident).and_then(|all| all.iter().find(|(a, _)| a == airport).or_else(|| all.first())).map(|(_, p)| *p);
-    }
-    (out, nav)
+    out
 }
 
 /// What the CIFP says besides its procedures: everything a chart prints beside one.
@@ -658,6 +678,10 @@ SUSAP KBOSK6DBLZZR64RW04R 020NHANTK6PC0E       DF                               
         assert_eq!(approach_runway("R22LZ"), ("22L".to_string(), Some('Z')));
         assert_eq!(approach_runway("R09"), ("09".to_string(), None));
         assert_eq!(approach_runway("VDM-A"), ("A".to_string(), None));
+        assert_eq!(approach_runway("RNVA"), ("A".to_string(), None));
+        assert_eq!(approach_runway("NDB1"), ("1".to_string(), None));
+        assert_eq!(approach_runway("CVOR"), (String::new(), None));
+        assert_eq!(approach_runway("R05-Y"), ("05".to_string(), Some('Y')));
     }
 
     #[test]
