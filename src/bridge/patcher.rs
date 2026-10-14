@@ -408,6 +408,49 @@ pub fn a220_map_installed(community: &Path) -> bool {
 
 const CHARTS_MARK: &str = "/*amdb-charts:";
 
+/// Navigraph's enroute map service, which a flight bag's map names in its tile addresses
+/// (`.../styles/ifr.lo.night/{z}/{x}/{y}@2x.png`): inside a string, so it is swapped for the
+/// bridge's address as it stands, and found again by that address to be put back.
+const ENROUTE_HOST: &str = "https://enroute-bitmap.charts.api-v2.navigraph.com";
+
+/// The same service as PMDG's tablet names it, in a template string with the domain asked
+/// of Navigraph's SDK. It is pointed at `/enroute/app-domain`, which the bridge serves the
+/// same, so that it can be told apart and put back as it was.
+const ENROUTE_TEMPLATE: &str = "https://enroute-bitmap.charts.api-v2.${getDefaultAppDomain()}";
+
+/// The bridge's address for the enroute map, put back to Navigraph's: every
+/// `http://127.0.0.1:<port>[/efb/<package>]/enroute`.
+fn unpoint_enroute(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("http://127.0.0.1:") {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at + "http://127.0.0.1:".len()..];
+        let port_len = tail.bytes().take_while(u8::is_ascii_digit).count();
+        let mut after = &tail[port_len..];
+        if let Some(named) = after.strip_prefix("/efb/") {
+            let pkg_len = named.bytes().take_while(|b| b.is_ascii_alphanumeric() || b"-_.".contains(b)).count();
+            after = &named[pkg_len..];
+        }
+        match after.strip_prefix("/enroute") {
+            Some(left) if port_len > 0 && left.starts_with("/app-domain/") => {
+                out.push_str(ENROUTE_TEMPLATE);
+                rest = &left["/app-domain".len()..];
+            }
+            Some(left) if port_len > 0 && left.starts_with('/') => {
+                out.push_str(ENROUTE_HOST);
+                rest = left;
+            }
+            _ => {
+                out.push_str("http://127.0.0.1:");
+                rest = tail;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The functions the SDK builds its addresses in, and the path on the bridge each is
 /// sent to.
 const CHARTS_ROOTS: [(&str, &str); 3] = [("getIdentityApiRoot", "/identity"), ("getChartsApiRoot", "/v2/charts"), ("getAirportApiRoot", "/v2/airport")];
@@ -486,6 +529,13 @@ fn arrow_body(text: &str, name: &str) -> Option<(usize, usize)> {
 /// Point a flight bag script's charts at the bridge. None when it is not one the SDK
 /// built, or is already pointed there.
 pub fn patch_charts_text(text: &str, port: u16) -> Option<String> {
+    patch_charts_text_for(text, port, "")
+}
+
+/// The same, with the aircraft package named in every address (`/efb/<package>/...`), so
+/// the bridge knows whose flight bag is asking and shows it the charts of that aircraft's
+/// navigation data cycle.
+pub fn patch_charts_text_for(text: &str, port: u16, aircraft: &str) -> Option<String> {
     if text.contains(CHARTS_MARK) {
         return None;
     }
@@ -521,11 +571,14 @@ pub fn patch_charts_text(text: &str, port: u16) -> Option<String> {
     for (s, e, path) in spans {
         let was = base64::engine::general_purpose::STANDARD.encode(&text[s..e]);
         out.push_str(&text[at..s]);
-        out.push_str(&format!("{CHARTS_MARK}{was}*/'http://127.0.0.1:{port}{path}'"));
+        let prefix = if aircraft.is_empty() { String::new() } else { format!("/efb/{aircraft}") };
+        out.push_str(&format!("{CHARTS_MARK}{was}*/'http://127.0.0.1:{port}{prefix}{path}'"));
         at = e;
     }
     out.push_str(&text[at..]);
-    Some(out)
+    // The enroute map's tiles too, where the flight bag has one.
+    let prefix = if aircraft.is_empty() { String::new() } else { format!("/efb/{aircraft}") };
+    Some(out.replace(ENROUTE_HOST, &format!("http://127.0.0.1:{port}{prefix}/enroute")).replace(ENROUTE_TEMPLATE, &format!("http://127.0.0.1:{port}{prefix}/enroute/app-domain")))
 }
 
 /// Put a flight bag script's own addresses back. None when it was not pointed here.
@@ -548,7 +601,7 @@ pub fn unpatch_charts_text(text: &str) -> Option<String> {
         rest = &quoted[close + 1..];
     }
     out.push_str(rest);
-    Some(out)
+    Some(unpoint_enroute(&out))
 }
 
 /// Flight bag scripts in a Community folder: (package, file, pointed at the bridge).
@@ -581,16 +634,45 @@ pub fn scan_charts(community: &Path) -> Vec<(String, PathBuf, bool)> {
 pub fn patch_charts(community: &Path, port: u16) -> Result<Vec<PathBuf>> {
     let mut done = Vec::new();
     for (pkg, path, patched) in scan_charts(community) {
+        let mut text = fs::read_to_string(&path)?;
+        // A flight bag pointed here before its aircraft was named in the address is put
+        // back and pointed here again, named.
         if patched {
-            continue;
+            if text.contains(&format!("/efb/{pkg}/")) && !text.contains(ENROUTE_HOST) && !text.contains(ENROUTE_TEMPLATE) {
+                continue;
+            }
+            let Some(own) = unpatch_charts_text(&text) else { continue };
+            text = own;
         }
-        let text = fs::read_to_string(&path)?;
-        let Some(new_text) = patch_charts_text(&text, port) else {
+        let Some(new_text) = patch_charts_text_for(&text, port, &pkg) else {
             log::warn!("{pkg}: {} is a version of the flight bag this bridge does not know", path.display());
             continue;
         };
         fs::write(&path, new_text).with_context(|| format!("write {}", path.display()))?;
         log::info!("{pkg}: charts now come from the bridge ({})", path.display());
+        done.push(path);
+    }
+    Ok(done)
+}
+
+/// Name the aircraft in the addresses of every flight bag already pointed at the bridge
+/// without it, so each is shown the charts of its own cycle. Flight bags not pointed here
+/// are left alone. Returns the files changed.
+pub fn refresh_charts(community: &Path, port: u16) -> Result<Vec<PathBuf>> {
+    let mut done = Vec::new();
+    for (pkg, path, patched) in scan_charts(community) {
+        if !patched {
+            continue;
+        }
+        let text = fs::read_to_string(&path)?;
+        // Named already, and its enroute map (if it has one) pointed here too.
+        if text.contains(&format!("/efb/{pkg}/")) && !text.contains(ENROUTE_HOST) && !text.contains(ENROUTE_TEMPLATE) {
+            continue;
+        }
+        let Some(own) = unpatch_charts_text(&text) else { continue };
+        let Some(new_text) = patch_charts_text_for(&own, port, &pkg) else { continue };
+        fs::write(&path, new_text).with_context(|| format!("write {}", path.display()))?;
+        log::info!("{pkg}: charts addresses now name the aircraft ({})", path.display());
         done.push(path);
     }
     Ok(done)
@@ -1713,6 +1795,27 @@ bus.on('RequestNavigraphAccessToken',()=>{ return 'tok'; });";
         // Not a flight bag, or one missing a root: left alone.
         assert!(patch_charts_text("var getChartsApiRoot = () => 'x';", 8770).is_none());
         assert!(unpatch_charts_text(a350).is_none());
+        // With the aircraft named, every address carries it, and it still comes back.
+        let named = patch_charts_text_for(pmdg, 8770, "pmdg-aircraft-77w").unwrap();
+        assert!(named.contains("'http://127.0.0.1:8770/efb/pmdg-aircraft-77w/v2/charts'"));
+        assert!(named.contains("'http://127.0.0.1:8770/efb/pmdg-aircraft-77w/identity'"));
+        assert_eq!(unpatch_charts_text(&named).unwrap(), pmdg);
+        let named = patch_charts_text_for(a220, 8770, "synaptic-aircraft-a220").unwrap();
+        assert!(named.contains("'http://127.0.0.1:8770/efb/synaptic-aircraft-a220'"));
+        // A flight bag with an enroute map: its tiles come here too, and go back.
+        let with_map = format!("{a350}var t=['https://enroute-bitmap.charts.api-v2.navigraph.com/styles/ifr.lo.night/{{z}}/{{x}}/{{y}}@2x.png','x'];");
+        let named = patch_charts_text_for(&with_map, 8770, "inibuilds-aircraft-a350").unwrap();
+        assert!(named.contains("'http://127.0.0.1:8770/efb/inibuilds-aircraft-a350/enroute/styles/ifr.lo.night/{z}/{x}/{y}@2x.png'"));
+        assert!(!named.contains("enroute-bitmap"));
+        assert_eq!(unpatch_charts_text(&named).unwrap(), with_map);
+        // PMDG's, the domain asked of the SDK inside a template string: the same, and it
+        // comes back as it was.
+        let templated = format!("{pmdg}return `https://enroute-bitmap.charts.api-v2.${{getDefaultAppDomain()}}/styles/${{s}}.${{t}}/{{z}}/{{x}}/{{y}}@2x.png`;");
+        let named = patch_charts_text_for(&templated, 8770, "pmdg-aircraft-77w").unwrap();
+        assert!(named.contains("`http://127.0.0.1:8770/efb/pmdg-aircraft-77w/enroute/app-domain/styles/${s}.${t}/{z}/{x}/{y}@2x.png`"));
+        assert!(!named.contains("enroute-bitmap"));
+        assert_eq!(unpatch_charts_text(&named).unwrap(), templated);
+        assert_eq!(unpoint_enroute("a http://127.0.0.1:8770/v2/charts b"), "a http://127.0.0.1:8770/v2/charts b");
     }
 
     /// The installed flight bags on this machine, patched and put back in memory without

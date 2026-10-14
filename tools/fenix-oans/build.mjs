@@ -459,16 +459,24 @@ async function buildTarget(target) {
       'process.env.CLIENT_SECRET': '""',
       'process.env.AIRCRAFT_PROJECT_PREFIX': '"a380x"',
       'process.env.AIRCRAFT_VARIANT': '"A380-842"',
+      // Where the airports exported for the web are (`amdb-bridge export-web`), for when the
+      // bridge is not running, as on a console. Empty: the bridge is the only source.
+      AMDB_DATA_URL: JSON.stringify(process.env.AMDB_DATA_URL || ''),
+      // An aircraft that ships without the bridge (AMDB_BRIDGE=0) never asks 127.0.0.1
+      // anything: no taxi routes, no reports, no airport data from it.
+      AMDB_BRIDGE: process.env.AMDB_BRIDGE === '0' ? 'false' : 'true',
+      // The airports packed into the aircraft (`amdb-bridge bundle-web`), as an html_ui path.
+      AMDB_BUNDLE_URL: JSON.stringify(process.env.AMDB_BUNDLE_URL || ''),
     },
     // Errors in a panel gauge are otherwise invisible: report ours, and a successful load,
     // to the bridge, which logs any request it does not recognise.
     banner: {
-      js: [
+      js: process.env.AMDB_BRIDGE === '0' ? '' : [
         `window.addEventListener('error',function(e){if(String(e.filename).indexOf('${tag}')>=0){fetch('http://127.0.0.1:8770/${tag}-error?'+encodeURIComponent(e.message+' @'+e.lineno+':'+e.colno));}});`,
         `window.addEventListener('unhandledrejection',function(e){var r=e.reason,s=r&&r.stack?String(r.stack):'';if(s.indexOf('${tag}')>=0){fetch('http://127.0.0.1:8770/${tag}-error?'+encodeURIComponent(String(r&&r.message||r)+' | '+s.slice(0,300)));}});`,
       ].join('\n'),
     },
-    footer: { js: `fetch('http://127.0.0.1:8770/${tag}-loaded');` },
+    footer: { js: process.env.AMDB_BRIDGE === '0' ? '' : `fetch('http://127.0.0.1:8770/${tag}-loaded');` },
     plugins: [scss, bridgeAmdb, fbwPatches],
     // Absolute paths in FlyByWire's stylesheets are MSFS's own virtual file system, resolved
     // by the simulator at run time (see relinkAssets).

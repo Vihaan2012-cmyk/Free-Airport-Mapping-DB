@@ -55,7 +55,7 @@ struct Feat {
 }
 
 fn load_layer(dir: &Path, name: &str) -> Vec<Feat> {
-    let Ok(text) = std::fs::read_to_string(dir.join(format!("{name}.geojson"))) else { return vec![] };
+    let Some(text) = crate::output::layers::read(dir, name) else { return vec![] };
     let Ok(fc) = serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) else { return vec![] };
     fc.get("features")
         .and_then(Value::as_array)

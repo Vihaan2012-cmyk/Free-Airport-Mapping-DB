@@ -21,7 +21,7 @@ import './fenix.scss';
 /** Tell the bridge log, once per kind, what happened on a display. */
 const reported = new Set<string>();
 export function reportOnce(what: string): void {
-  if (!reported.has(what)) {
+  if (AMDB_BRIDGE && !reported.has(what)) {
     reported.add(what);
     fetch(`http://127.0.0.1:8770/amdb-oans-event?${what}`).catch(() => undefined);
   }
@@ -286,7 +286,7 @@ export class OansDisplay {
   public dumpLayout(): void {
     const root = this.rootRef.getOrDefault()?.querySelector('.oanc-container');
     const oanc = this.oansRef.getOrDefault();
-    if (!root || !oanc) {
+    if (!root || !oanc || !AMDB_BRIDGE) {
       return;
     }
     const send = (line: string) => fetch(`http://127.0.0.1:8770/amdb-oans-layout?${encodeURIComponent(line)}`).catch(() => undefined);

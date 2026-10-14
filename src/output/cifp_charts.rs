@@ -90,49 +90,15 @@ pub fn run(opts: &Options) -> Result<()> {
                 crate::term::warn(&format!("[{}] {e:#}", a.icao));
                 return;
             }
-            let mut wanted: HashSet<String> = HashSet::new();
-            let mut problems = Vec::new();
-            // Each approach on its own page: handed over alone, it is the one drawn.
-            for p in a.procedures.iter().filter(|p| p.kind == Kind::Approach) {
-                let name = format!("{}.pdf", file_name(&p.name));
-                let one = AirportProcedures { procedures: vec![p.clone()], ..a.clone() };
-                match super::charts_bulk::draw(one, None, &http, &cache, &idx, &bulk, false, Some(dir.join(&name))) {
-                    Ok(_) => {
-                        wanted.insert(name);
-                    }
-                    Err(e) => problems.push(format!("{}: {e:#}", p.name)),
-                }
-            }
-            // Departures and arrivals, a file for each page: a chart puts the procedures that
-            // share their routes on one page, named for all of them.
-            for group in super::approach::terminal::groups(a) {
-                let names: Vec<&str> = group.iter().map(|p| p.name.as_str()).collect();
-                let name = format!("{} {}.pdf", if group[0].kind == Kind::Sid { "SID" } else { "STAR" }, file_name(&names.join(" - ")));
-                let out = dir.join(&name);
-                match super::approach::terminal::with_terminal_from(a.clone(), names[0], |t| super::approach::terminal::write(t, &out)) {
-                    Ok(()) => {
-                        wanted.insert(name);
-                    }
-                    Err(e) => problems.push(format!("{}: {e:#}", names.join(" - "))),
-                }
-            }
-            // The folder is ours: what an earlier cycle had and this one does not, goes.
-            if let Ok(rd) = std::fs::read_dir(&dir) {
-                for e in rd.flatten() {
-                    let n = e.file_name().to_string_lossy().to_string();
-                    if n.to_ascii_lowercase().ends_with(".pdf") && !wanted.contains(&n) {
-                        let _ = std::fs::remove_file(e.path());
-                    }
-                }
-            }
+            let (drawn_here, problems) = draw_airport(a, &dir, &http, &cache, &idx, &bulk);
             let note = format!(
                 "Drawn by amdbgen from the FAA's CIFP, cycle {cycle}{in_force}.\r\nThe procedures are the FAA's; the minima are worked out from terrain and obstacles, not the published ones.\r\nNOT FOR REAL-WORLD NAVIGATION.\r\n"
             );
             let _ = std::fs::write(dir.join("cycle.txt"), note);
-            drawn.fetch_add(wanted.len(), Ordering::Relaxed);
+            drawn.fetch_add(drawn_here, Ordering::Relaxed);
             failed.fetch_add(problems.len(), Ordering::Relaxed);
             let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-            crate::term::info(&format!("[{n}/{total}] {}: {} charts{}", a.icao, wanted.len(), if problems.is_empty() { String::new() } else { format!(", {} could not be drawn ({})", problems.len(), problems.first().cloned().unwrap_or_default()) }));
+            crate::term::info(&format!("[{n}/{total}] {}: {} charts{}", a.icao, drawn_here, if problems.is_empty() { String::new() } else { format!(", {} could not be drawn ({})", problems.len(), problems.first().cloned().unwrap_or_default()) }));
         });
     });
     crate::term::success(&format!(
@@ -142,4 +108,57 @@ pub fn run(opts: &Options) -> Result<()> {
         failed.load(Ordering::Relaxed)
     ));
     Ok(())
+}
+
+/// One airport's charts into `dir`: each approach on its own page, and the departures and
+/// arrivals a file for each page. PDFs already there that this set does not have (from an
+/// earlier cycle) are removed. Returns how many were drawn and what could not be.
+pub(crate) fn draw_airport(
+    a: &AirportProcedures,
+    dir: &std::path::Path,
+    http: &crate::sources::http::Http,
+    cache: &crate::cache::Cache,
+    idx: &crate::sources::index::AirportIndex,
+    bulk: &super::charts_bulk::Options,
+) -> (usize, Vec<String>) {
+    let mut wanted: HashSet<String> = HashSet::new();
+    let mut problems = Vec::new();
+    // Each approach on its own page: handed over alone, it is the one drawn.
+    for p in a.procedures.iter().filter(|p| p.kind == Kind::Approach) {
+        // Two approaches can carry the same name; the second is numbered, not drawn over
+        // the first.
+        let base = file_name(&p.name);
+        let name = (1..).map(|n| if n == 1 { format!("{base}.pdf") } else { format!("{base} ({n}).pdf") }).find(|n| !wanted.contains(n)).unwrap_or_default();
+        let one = AirportProcedures { procedures: vec![p.clone()], ..a.clone() };
+        match super::charts_bulk::draw(one, None, http, cache, idx, bulk, false, Some(dir.join(&name))) {
+            Ok(_) => {
+                wanted.insert(name);
+            }
+            Err(e) => problems.push(format!("{}: {e:#}", p.name)),
+        }
+    }
+    // Departures and arrivals, a file for each page: a chart puts the procedures that
+    // share their routes on one page, named for all of them.
+    for group in super::approach::terminal::groups(a) {
+        let names: Vec<&str> = group.iter().map(|p| p.name.as_str()).collect();
+        let name = format!("{} {}.pdf", if group[0].kind == Kind::Sid { "SID" } else { "STAR" }, file_name(&names.join(" - ")));
+        let out = dir.join(&name);
+        match super::approach::terminal::with_terminal_from(a.clone(), names[0], |t| super::approach::terminal::write(t, &out)) {
+            Ok(()) => {
+                wanted.insert(name);
+            }
+            Err(e) => problems.push(format!("{}: {e:#}", names.join(" - "))),
+        }
+    }
+    // The folder is ours: what an earlier cycle had and this one does not, goes.
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().to_string();
+            if n.to_ascii_lowercase().ends_with(".pdf") && !wanted.contains(&n) {
+                let _ = std::fs::remove_file(e.path());
+                let _ = std::fs::remove_file(e.path().with_extension("geo.json"));
+            }
+        }
+    }
+    (wanted.len(), problems)
 }

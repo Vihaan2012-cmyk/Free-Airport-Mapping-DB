@@ -9,6 +9,7 @@
     "@sentry/integrations": "6.19.7",
     "@sentry/tracing": "6.19.7",
     "@turf/turf": "7.2.0",
+    "fflate": "0.8.2",
     "json5": "2.2.3",
     "msfs-geo": "0.1.0-alpha5",
     "navigraph": "1.4.3",

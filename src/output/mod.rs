@@ -2,12 +2,16 @@
 
 pub mod geobuf;
 pub mod geojson;
+pub mod layers;
+pub mod chart_pack;
 pub mod manifest;
 pub mod approach;
 pub mod canvas;
 pub mod charts_bulk;
 pub mod cifp_charts;
+pub mod enroute;
 pub mod faa_charts;
+pub mod navdata_charts;
 pub mod chart;
 pub mod preview;
 pub mod routemap;
@@ -155,6 +159,8 @@ impl Projection {
 pub struct Formats {
     pub geojson: bool,
     pub pbf: bool,
+    /// The GeoJSON layers in one gzipped file an airport (`layers::PACK`), not a file each.
+    pub packed: bool,
 }
 
 /// Write every layer for one airport. Features are in the local frame; `frame`
@@ -170,6 +176,7 @@ pub fn write_airport(
 ) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("mkdir {}", dir.display()))?;
     let _ = ALL_LAYERS;
+    let mut pack: Vec<(String, String)> = Vec::new();
     for layer in layers {
         let feats = features.get(layer).map(Vec::as_slice).unwrap_or(&[]);
         let projected: Vec<AmdbFeature> = feats
@@ -185,12 +192,25 @@ pub fn write_airport(
             .collect();
         if formats.geojson {
             let text = geojson::feature_collection_string(icao, *layer, &projected, projection, frame);
-            std::fs::write(dir.join(format!("{}.geojson", layer.name())), text)?;
+            if formats.packed {
+                pack.push((layer.name().to_string(), text));
+            } else {
+                std::fs::write(dir.join(format!("{}.geojson", layer.name())), text)?;
+            }
         }
         if formats.pbf {
             let bytes = geobuf::encode(&projected, projection);
             std::fs::write(dir.join(format!("{}.pbf", layer.name())), bytes)?;
         }
+    }
+    // One form or the other, never both: a pack left beside new loose files would be read
+    // in their place, and loose files beside a new pack would only take room.
+    if formats.geojson && formats.packed {
+        layers::write_pack(dir, &pack)?;
+        layers::remove_loose(dir);
+    } else if formats.geojson {
+        let _ = std::fs::remove_file(dir.join(layers::PACK));
+        let _ = std::fs::remove_file(dir.join(layers::GZIP_PACK));
     }
     Ok(())
 }

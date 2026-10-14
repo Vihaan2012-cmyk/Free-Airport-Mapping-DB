@@ -38,6 +38,10 @@ export class TaxiRouteFeed {
 
   /** Call every frame: asks the bridge now and then, and redraws when the airport changes. */
   public update(now = Date.now()): void {
+    // Taxi routes are worked out by the bridge: without it there are none.
+    if (!AMDB_BRIDGE) {
+      return;
+    }
     this.show(this.last);
     if (this.busy || now < this.next) {
       return;
@@ -79,6 +83,9 @@ export class TaxiRouteFeed {
 
   /** Route a clearance from a position; the bridge keeps it as the current route. */
   public static set(icao: string, lat: number, lon: number, clearance: string): Promise<TaxiRoute | { error: string }> {
+    if (!AMDB_BRIDGE) {
+      return Promise.resolve({ error: 'Taxi routes need AMDB Bridge' });
+    }
     const q = `icao=${encodeURIComponent(icao)}&lat=${lat}&lon=${lon}&clearance=${encodeURIComponent(clearance)}`;
     return fetch(`${BRIDGE}/amdb/taxi-route?${q}`).then(
       (r) => r.json(),
@@ -87,6 +94,9 @@ export class TaxiRouteFeed {
   }
 
   public static clear(): Promise<unknown> {
+    if (!AMDB_BRIDGE) {
+      return Promise.resolve(null);
+    }
     return fetch(`${BRIDGE}/amdb/taxi-route/clear`).then(
       (r) => r.json(),
       () => null,

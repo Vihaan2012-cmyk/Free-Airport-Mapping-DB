@@ -313,3 +313,63 @@ mod tests {
         assert!(e - w > e2 - w2);
     }
 }
+
+/// Every built airport's OpenStreetMap obstacles, read out of downloaded extracts and saved
+/// where `around` keeps what Overpass answers, so drawing charts asks the servers nothing.
+/// A run over the world asked them about thousands of airports, a query each, and the
+/// public servers answer that with timeouts and refusals: charts waited minutes an airport.
+/// An airport the extracts have nothing tall near is saved with nothing, which is the
+/// answer Overpass would give.
+pub fn save_from_extracts(pbfs: &[std::path::PathBuf], airports: &std::path::Path, radius_km: f64, cache: &Cache) -> Result<usize> {
+    use rayon::prelude::*;
+    let started = std::time::Instant::now();
+    let dirs: Vec<std::path::PathBuf> = std::fs::read_dir(airports)?.flatten().map(|e| e.path()).collect();
+    let places: Vec<(String, f64, f64)> = dirs
+        .par_iter()
+        .filter_map(|d| {
+            let text = std::fs::read_to_string(d.join("manifest.json")).ok()?;
+            let m: crate::output::manifest::Manifest = serde_json::from_str(&text).ok()?;
+            Some((d.file_name()?.to_string_lossy().to_uppercase(), m.arp[0], m.arp[1]))
+        })
+        .collect();
+    crate::term::info(&format!("{} built airports", places.len()));
+
+    // Every extract's, once each: the continents' files overlap at their edges.
+    let mut all: std::collections::HashMap<(&'static str, i64), crate::sources::osm::extract::Obstacle> = std::collections::HashMap::new();
+    for pbf in pbfs {
+        for o in crate::sources::osm::extract::obstacles(pbf, &|m| crate::term::info(m))? {
+            all.insert((o.kind, o.id), o);
+        }
+    }
+    let all: Vec<crate::sources::osm::extract::Obstacle> = all.into_values().collect();
+    let mut cells: std::collections::HashMap<(i32, i32), Vec<usize>> = std::collections::HashMap::new();
+    for (i, o) in all.iter().enumerate() {
+        cells.entry((o.lat.floor() as i32, o.lon.floor() as i32)).or_default().push(i);
+    }
+    crate::term::info(&format!("{} obstacles with a height in {} extracts", all.len(), pbfs.len()));
+
+    places.par_iter().try_for_each(|(icao, lat, lon)| -> Result<()> {
+        let (s, w, n, e) = bbox(*lat, *lon, radius_km);
+        let mut elements = Vec::new();
+        for la in s.floor() as i32..=n.floor() as i32 {
+            for lo in w.floor() as i32..=e.floor() as i32 {
+                for &i in cells.get(&(la, lo)).into_iter().flatten() {
+                    let o = &all[i];
+                    if o.lat >= s && o.lat <= n && o.lon >= w && o.lon <= e {
+                        elements.push(serde_json::json!({"type": o.kind, "id": o.id, "lat": o.lat, "lon": o.lon, "tags": o.tags}));
+                    }
+                }
+            }
+        }
+        // The name `around` gives the airport's query, for the same radius.
+        let key = format!("obstacles/osm/{}.json", format!("{icao}-{radius_km:.0}km").to_uppercase());
+        let Some(path) = cache.path(&key) else { return Ok(()) };
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&path, serde_json::json!({ "elements": elements }).to_string())?;
+        Ok(())
+    })?;
+    crate::term::success(&format!("Obstacles saved for {} airports in {}", places.len(), crate::term::human_secs(started.elapsed().as_secs_f64())));
+    Ok(places.len())
+}

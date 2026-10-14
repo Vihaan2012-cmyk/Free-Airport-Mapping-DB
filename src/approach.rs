@@ -286,7 +286,7 @@ pub struct Threshold {
 
 /// Every landing threshold our own build of an airport knows.
 pub fn thresholds(dir: &Path) -> Vec<Threshold> {
-    let Ok(text) = std::fs::read_to_string(dir.join("runwaythreshold.geojson")) else { return Vec::new() };
+    let Some(text) = crate::output::layers::read(dir, "runwaythreshold") else { return Vec::new() };
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return Vec::new() };
     let mut out = Vec::new();
     for f in v["features"].as_array().into_iter().flatten() {
@@ -454,7 +454,11 @@ pub fn prepare_from(procedures: AirportProcedures, http: &Http, cache: &Cache, i
     if let (false, Some(ft)) = (opts.quiet, surveyed) {
         crate::term::info(&format!("{icao}: touchdown zone {ft:.0} ft for RW{runway}, surveyed (FAA NASR)"));
     }
-    let tdze_ft = match (surveyed, threshold) {
+    // Next best, the threshold's elevation as the navigation data publishes it: surveyed,
+    // where the terrain model is a surface model with trees and buildings in it, and it
+    // needs none of the model's finest tiles, a few megabytes an airport to download.
+    let published = crate::sources::navdata::runway(&icao, &runway).and_then(|r| r.threshold_elevation_ft).filter(|ft| ft.is_finite() && *ft > -1500.0 && *ft < 16000.0);
+    let tdze_ft = match (surveyed.or(published), threshold) {
         (Some(ft), _) => ft,
         (None, Some((lat, lon, bearing))) => {
             // At the model's own resolution: a touchdown zone is only 900 m long.

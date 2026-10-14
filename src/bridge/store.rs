@@ -88,6 +88,41 @@ fn built_before_current_data(dir: &std::path::Path) -> Option<String> {
     (version.as_slice() < CURRENT_DATA_FROM.as_slice()).then_some(generator)
 }
 
+/// What an airport's folder holds that other runs drew, not the airport build: the charts
+/// (`charts`, and `charts-<cycle>` from navigation databases) and the airport diagram.
+fn drawn_beside(name: &str) -> bool {
+    name == "charts" || name == "charts.pack" || name.starts_with("charts-") || name == "chart.pdf" || name == "chart.geo.json"
+}
+
+/// Move an airport's folder out of the way of building it again, to
+/// `<airports>/.rebuilding/<ICAO>`: no listing takes that for an airport. None when it
+/// could not be moved, and then it is built over where it is.
+fn set_aside(out: &std::path::Path, icao: &str) -> Option<std::path::PathBuf> {
+    let aside = out.join(".rebuilding").join(icao);
+    let _ = std::fs::remove_dir_all(&aside);
+    std::fs::create_dir_all(aside.parent()?).ok()?;
+    std::fs::rename(out.join(icao), &aside).ok()?;
+    Some(aside)
+}
+
+/// After building an airport again: its charts and diagram go back into the new folder
+/// (where the build drew none of its own) and the rest of the old one is dropped. When the
+/// build failed, the old folder is put back as it was.
+fn bring_back(aside: &std::path::Path, dir: &std::path::Path, built: bool) {
+    if !built || !dir.join("manifest.json").is_file() {
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::rename(aside, dir);
+        return;
+    }
+    for e in std::fs::read_dir(aside).into_iter().flatten().flatten() {
+        let name = e.file_name();
+        if drawn_beside(&name.to_string_lossy()) && !dir.join(&name).exists() {
+            let _ = std::fs::rename(e.path(), dir.join(&name));
+        }
+    }
+    let _ = std::fs::remove_dir_all(aside);
+}
+
 pub(crate) fn project_to_local(frame: &LocalFrame, g: &Geometry<f64>) -> Geometry<f64> {
     let f = |c: &Coord<f64>| frame.forward(c.x, c.y);
     let ls = |l: &LineString<f64>| LineString(l.0.iter().map(f).collect());
@@ -173,26 +208,19 @@ impl Store {
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
         }
+        let mut aside = None;
         if let Some(old) = built_before_current_data(&dir) {
             crate::term::start(&format!("[{icao}] Built by {old}, before the current airport data: building it again"));
-            let _ = std::fs::remove_dir_all(&dir);
-        }
-        if osm_worth_retrying(&dir) {
+            aside = set_aside(&self.out, &icao);
+        } else if osm_worth_retrying(&dir) {
             crate::term::start(&format!("[{icao}] Built without OpenStreetMap last time: building it again with it"));
-            let _ = std::fs::remove_dir_all(&dir);
+            aside = set_aside(&self.out, &icao);
         }
-        if !dir.join("manifest.json").is_file() {
-            crate::term::start(&format!("[{icao}] First request for {icao}: building it now"));
-            // An aircraft is waiting on this: OpenStreetMap gets a fixed time (see
-            // OSM_BUDGET), and the airport is marked to have it added later if it runs out.
-            let summary = pipeline::run_with_osm_budget(&self.cfg, &[icao.clone()], Some(OSM_BUDGET))?;
-            if let Some((_, e)) = summary.failed.first() {
-                return Err(anyhow!("{icao}: build failed: {e}"));
-            }
-            if pipeline::take_osm_missing(&icao) {
-                let _ = std::fs::write(dir.join(OSM_PENDING), "OpenStreetMap did not answer in time; it is asked again when the airport is next loaded\n");
-            }
+        let built = self.build_if_missing(&icao, &dir);
+        if let Some(old) = aside {
+            bring_back(&old, &dir, built.is_ok());
         }
+        built?;
         let data = Arc::new(self.load_dir(&icao)?);
         match &self.retention {
             Retention::KeepAll => {}
@@ -210,6 +238,23 @@ impl Store {
         Ok(data)
     }
 
+    /// Build an airport not built yet, for an aircraft waiting on it.
+    fn build_if_missing(&self, icao: &str, dir: &std::path::Path) -> Result<()> {
+        if !dir.join("manifest.json").is_file() {
+            crate::term::start(&format!("[{icao}] First request for {icao}: building it now"));
+            // An aircraft is waiting on this: OpenStreetMap gets a fixed time (see
+            // OSM_BUDGET), and the airport is marked to have it added later if it runs out.
+            let summary = pipeline::run_with_osm_budget(&self.cfg, &[icao.to_string()], Some(OSM_BUDGET))?;
+            if let Some((_, e)) = summary.failed.first() {
+                return Err(anyhow!("{icao}: build failed: {e}"));
+            }
+            if pipeline::take_osm_missing(icao) {
+                let _ = std::fs::write(dir.join(OSM_PENDING), "OpenStreetMap did not answer in time; it is asked again when the airport is next loaded\n");
+            }
+        }
+        Ok(())
+    }
+
     fn load_dir(&self, icao: &str) -> Result<AirportData> {
         let dir = self.out.join(icao);
         let manifest: Manifest = serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).context("manifest")?)?;
@@ -221,8 +266,7 @@ impl Store {
         let mut layers = BTreeMap::new();
         let (mut raw_edges, mut raw_nodes) = (Vec::new(), Vec::new());
         for l in ALL_LAYERS {
-            let p = dir.join(format!("{}.geojson", l.name()));
-            let Ok(text) = std::fs::read_to_string(&p) else { continue };
+            let Some(text) = crate::output::layers::read(&dir, l.name()) else { continue };
             let (_, feats) = crate::output::geojson::parse_feature_collection(&text, *l)?;
             let mut kept = Vec::with_capacity(feats.len());
             for (i, mut f) in feats.into_iter().enumerate() {
@@ -267,6 +311,31 @@ impl Store {
             .collect();
         rows.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         rows.into_iter().take(limit).map(|(_, r)| r).collect()
+    }
+
+    /// An airport already built, read from its folder: never built, and not kept in memory.
+    /// The airport index the store was opened with: OurAirports, and whatever else its
+    /// settings load.
+    pub(crate) fn index(&self) -> &AirportIndex {
+        &self.index
+    }
+
+    pub fn load_built(&self, icao: &str) -> Result<AirportData> {
+        self.load_dir(&icao.to_uppercase())
+    }
+
+    /// Every airport `nearest` chooses among, as search rows with their kind, and where each is.
+    pub fn nearest_candidates(&self) -> Vec<(f64, f64, Value)> {
+        self.index
+            .by_icao
+            .values()
+            .filter(|e| matches!(e.kind.as_deref(), Some("large_airport") | Some("medium_airport") | Some("small_airport")) || self.out.join(&e.icao).join("manifest.json").is_file())
+            .map(|e| {
+                let mut row = super::compat::search_row(&e.icao, e.iata.as_deref(), e.name.as_deref().unwrap_or(""), e.lat, e.lon, e.elevation_ft);
+                row["kind"] = Value::from(e.kind.clone().unwrap_or_default());
+                (e.lat, e.lon, row)
+            })
+            .collect()
     }
 
     pub fn loaded_count(&self) -> usize {
@@ -317,5 +386,43 @@ mod data_version_tests {
         assert_eq!(with("amdbgen 1.10.2"), None);
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(built_before_current_data(&dir), None, "nothing built yet is not an old build");
+    }
+
+    /// Building an airport again keeps the charts drawn into its folder by other runs, and
+    /// a build that fails leaves the old folder as it was.
+    #[test]
+    fn building_again_keeps_the_charts() {
+        let out = std::env::temp_dir().join(format!("amdb-store-rebuild-{}", std::process::id()));
+        let old = |out: &std::path::Path| {
+            let dir = out.join("EGLL");
+            std::fs::create_dir_all(dir.join("charts-2610")).unwrap();
+            std::fs::write(dir.join("charts-2610").join("ILS RWY 27L.pdf"), "plate").unwrap();
+            std::fs::write(dir.join("chart.pdf"), "old diagram").unwrap();
+            std::fs::write(dir.join("runwayelement.geojson"), "old").unwrap();
+            std::fs::write(dir.join("manifest.json"), "old").unwrap();
+        };
+        let dir = out.join("EGLL");
+
+        old(&out);
+        let aside = set_aside(&out, "EGLL").unwrap();
+        assert!(!dir.exists());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("runwayelement.geojson"), "new").unwrap();
+        std::fs::write(dir.join("manifest.json"), "new").unwrap();
+        bring_back(&aside, &dir, true);
+        assert_eq!(std::fs::read_to_string(dir.join("charts-2610").join("ILS RWY 27L.pdf")).unwrap(), "plate");
+        assert_eq!(std::fs::read_to_string(dir.join("chart.pdf")).unwrap(), "old diagram");
+        assert_eq!(std::fs::read_to_string(dir.join("runwayelement.geojson")).unwrap(), "new");
+        assert!(!aside.exists());
+
+        // A failed build: the old airport comes back whole.
+        let _ = std::fs::remove_dir_all(&out);
+        old(&out);
+        let aside = set_aside(&out, "EGLL").unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        bring_back(&aside, &dir, false);
+        assert_eq!(std::fs::read_to_string(dir.join("manifest.json")).unwrap(), "old");
+        assert!(dir.join("charts-2610").join("ILS RWY 27L.pdf").is_file());
+        let _ = std::fs::remove_dir_all(&out);
     }
 }

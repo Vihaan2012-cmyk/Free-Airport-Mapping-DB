@@ -1086,7 +1086,13 @@ fn draw_routing(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, top:
 fn draw_footer(c: &mut dyn Canvas, f: Name, t: &Terminal) {
     let pw = t.page.0;
     line(c, MARGIN, MARGIN + 17.0, pw - MARGIN, MARGIN + 17.0, 0.6, RULE);
-    let from = if t.airport.source.contains("CIFP") { "the FAA's coded procedures (CIFP)" } else { "the simulator's navigation data" };
+    let from = if t.airport.source.contains("CIFP") {
+        "the FAA's coded procedures (CIFP)"
+    } else if t.airport.source.contains(" database ") {
+        "an aircraft's navigation database"
+    } else {
+        "the simulator's navigation data"
+    };
     text(c, f, 6.2, MARGIN, MARGIN + 9.0, &format!("NOT FOR REAL-WORLD NAVIGATION. Drawn from {from}: fly the published chart."), 0.25);
     let printed = chrono::Utc::now().format("%d %b %Y").to_string().to_uppercase();
     text(
@@ -1233,7 +1239,7 @@ fn draw_map(c: &mut dyn Canvas, f: Name, b: Name, t: &Terminal, x: f32, y: f32, 
     let mut highest_ft = 0.0f64;
     let mut has_water = false;
     if let Some(patch) = &t.patch {
-        draw_terrain(c, patch, &v, t.field_elev_ft.max(WATER_NEEDS_FIELD_FT));
+        draw_terrain(c, &[patch], &v, t.field_elev_ft.max(WATER_NEEDS_FIELD_FT));
         for h in &patch.heights {
             if h.is_finite() {
                 highest_ft = highest_ft.max(*h as f64 / 0.3048);
@@ -1537,8 +1543,13 @@ pub fn with_terminal_from<R>(found: AirportProcedures, name: &str, f: impl FnOnc
     let (mut airport_name, mut airport_iata, mut airport_place, mut field_elev_ft) = (None, None, None, 0.0);
     let mut nearby: Vec<(String, String, String, f64, f64)> = Vec::new();
     {
-        let mut idx = crate::sources::index::AirportIndex::default();
-        if idx.load_ourairports_online(&http, &cache).is_ok() {
+        // Read once a run: a page a departure means thousands of pages a run.
+        static INDEX: std::sync::OnceLock<Option<crate::sources::index::AirportIndex>> = std::sync::OnceLock::new();
+        let index = INDEX.get_or_init(|| {
+            let mut idx = crate::sources::index::AirportIndex::default();
+            idx.load_ourairports_online(&http, &cache).ok().map(|_| idx)
+        });
+        if let Some(idx) = index {
             let cos = found.lat.to_radians().cos().max(0.05);
             for (code, e) in &idx.by_icao {
                 if code == &icao || !matches!(e.kind.as_deref(), Some("large_airport") | Some("medium_airport")) {
@@ -1628,7 +1639,9 @@ pub fn with_terminal_from<R>(found: AirportProcedures, name: &str, f: impl FnOnc
     let deg = reach / 60.0 * 1.3;
     let mora = crate::sources::navdata::grid_mora(found.lat - deg, found.lat + deg, found.lon - deg / cos, found.lon + deg / cos);
     let radius_km = (reach * 1.852 * 1.35).clamp(20.0, 330.0);
-    let step_m = (radius_km * 1000.0 / 260.0).max(90.0);
+    // No finer than the model's 120 m copy: a page tens of miles across shades its ground
+    // at a quarter of a millimetre, and the 60 m copy is four times the download.
+    let step_m = (radius_km * 1000.0 / 260.0).max(125.0);
     // The model has no tile over the open sea at all, so a square with nothing in it is
     // sea, which is what a departure over the water has to show.
     let patch = crate::sources::copernicus::patch(&http, &cache, found.lat, found.lon, radius_km, step_m).ok().map(|mut p| {
@@ -1678,9 +1691,8 @@ fn reciprocal(runway: &str) -> Option<String> {
 
 /// Write a departure or arrival chart as a PDF.
 pub fn write(t: &Terminal, out: &FsPath) -> Result<()> {
-    write_page_sized(out, t.page, |c, f, b| {
-        let _ = draw(c, t, f, b);
-    })
+    let v = write_page_sized(out, t.page, |c, f, b| draw(c, t, f, b))?;
+    save_georef(out, t.page, &v)
 }
 
 /// The same as a picture, by day and by night.

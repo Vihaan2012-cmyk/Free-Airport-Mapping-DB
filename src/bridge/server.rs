@@ -112,7 +112,10 @@ fn handle_charts(store: &Store, req: Request, path: &str) -> Option<Request> {
             // chart on it come back blank. A patched bag asks on the bridge's own port,
             // which the header keeps, and is served plainly as before.
             let scheme = if host.contains(':') { "http" } else { "https" };
-            match super::charts::index_json(icao, &format!("{scheme}://{host}")) {
+            // A patched flight bag names its aircraft in the address it was given
+            // (`/efb/<package>/v2/charts/...`): the chart set follows that aircraft's cycle.
+            let aircraft = path.find("/efb/").map(|at| path[at + "/efb/".len()..].split('/').next().unwrap_or("").to_string()).filter(|a| !a.is_empty());
+            match super::charts::index_json(icao, &format!("{scheme}://{host}"), aircraft.as_deref()) {
                 Ok(v) => respond_json(req, 200, v.to_string()),
                 Err(e) => error(req, 404, e),
             }
@@ -352,7 +355,7 @@ fn derived_props(geom: &Geometry<f64>, decimals: i32) -> Vec<(&'static str, Valu
 }
 
 /// One layer as a FeatureCollection in the requested projection.
-fn layer_collection(ap: &AirportData, layer: Layer, wgs84: bool, precision: Option<f64>) -> Value {
+pub(crate) fn layer_collection(ap: &AirportData, layer: Layer, wgs84: bool, precision: Option<f64>) -> Value {
     let decimals = if wgs84 { 7 } else { 2 };
     let feats = ap.layers.get(&layer).map(Vec::as_slice).unwrap_or(&[]);
     let named_building = largest_named(feats, "ident", short_building_name);
@@ -383,13 +386,78 @@ fn layer_collection(ap: &AirportData, layer: Layer, wgs84: bool, precision: Opti
             }
             let mut geom = if wgs84 { ap.frame.to_wgs84(&f.geom) } else { f.geom.clone() };
             geom = snap_geometry(&geom, precision);
+            let geometry = without_degenerate_rings(geometry_to_json(&geom, decimals))?;
             for (k, v) in derived_props(&geom, decimals) {
                 props.insert(k.to_string(), v);
             }
-            Some(json!({"type":"Feature","geometry": geometry_to_json(&geom, decimals),"properties": Value::Object(props)}))
+            Some(json!({"type":"Feature","geometry": geometry,"properties": Value::Object(props)}))
         })
         .collect();
     json!({"type":"FeatureCollection","features": arr})
+}
+
+fn on_segment(start: (f64, f64), end: (f64, f64), p: (f64, f64)) -> bool {
+    let (dxc, dyc) = (p.0 - start.0, p.1 - start.1);
+    let (dxl, dyl) = (end.0 - start.0, end.1 - start.1);
+    if dxc * dyl - dyc * dxl != 0.0 {
+        return false;
+    }
+    if dxl.abs() >= dyl.abs() {
+        if dxl > 0.0 { start.0 <= p.0 && p.0 <= end.0 } else { end.0 <= p.0 && p.0 <= start.0 }
+    } else if dyl > 0.0 {
+        start.1 <= p.1 && p.1 <= end.1
+    } else {
+        end.1 <= p.1 && p.1 <= start.1
+    }
+}
+
+/// A ring as Turf's `cleanCoords` sees it once repeated and collinear points are gone:
+/// FlyByWire's OANS runs every polygon through it and throws on a closed ring left with
+/// fewer than 4 points, which fails the whole airport. Rounding to the response's
+/// precision is what turns a sliver into such a ring.
+fn ring_survives_turf(ring: &Value) -> bool {
+    let Some(raw) = ring.as_array() else { return false };
+    let pts: Vec<(f64, f64)> = raw.iter().filter_map(|c| Some((c.get(0)?.as_f64()?, c.get(1)?.as_f64()?))).collect();
+    if pts.len() < 2 || (pts.len() == 2 && pts[0] != pts[1]) {
+        return true;
+    }
+    let mut kept = vec![pts[0]];
+    for &p in &pts[1..pts.len() - 1] {
+        if Some(&p) == kept.last() {
+            continue;
+        }
+        kept.push(p);
+        let n = kept.len();
+        if n > 2 && on_segment(kept[n - 3], kept[n - 1], kept[n - 2]) {
+            kept.remove(n - 2);
+        }
+    }
+    kept.push(pts[pts.len() - 1]);
+    !(pts.first() == pts.last() && kept.len() < 4)
+}
+
+fn polygon_without_degenerate_rings(rings: &[Value]) -> Option<Value> {
+    let (outer, holes) = rings.split_first()?;
+    if !ring_survives_turf(outer) {
+        return None;
+    }
+    Some(Value::Array(std::iter::once(outer.clone()).chain(holes.iter().filter(|h| ring_survives_turf(h)).cloned()).collect()))
+}
+
+/// The geometry without the rings Turf rejects: a degenerate hole is dropped, a
+/// degenerate outline drops its polygon, and a feature left with no polygon is dropped.
+fn without_degenerate_rings(geometry: Value) -> Option<Value> {
+    match geometry.get("type").and_then(Value::as_str) {
+        Some("Polygon") => {
+            let rings = polygon_without_degenerate_rings(geometry.get("coordinates")?.as_array()?)?;
+            Some(json!({"type":"Polygon","coordinates": rings}))
+        }
+        Some("MultiPolygon") => {
+            let polys: Vec<Value> = geometry.get("coordinates")?.as_array()?.iter().filter_map(|p| polygon_without_degenerate_rings(p.as_array()?)).collect();
+            (!polys.is_empty()).then(|| json!({"type":"MultiPolygon","coordinates": polys}))
+        }
+        _ => Some(geometry),
+    }
 }
 
 /// `A13 (2)` -> `A13`. The generator keeps repeated stand names unique that way (the
@@ -570,6 +638,19 @@ fn handle(store: Arc<Store>, req: Request) {
     let path = path.to_string();
     let Some(req) = super::planner::handle(req, &path, &params, |r, s, b| respond_json(r, s, b), |r, s, t, b| respond_bytes(r, s, t, b)) else { return };
     let Some(req) = handle_simbrief(req, &path, &params) else { return };
+    // The flight bags' enroute map, in place of Navigraph's enroute service.
+    if let Some(at) = path.find("/enroute/") {
+        let aircraft = path.find("/efb/").map(|p| path[p + "/efb/".len()..].split('/').next().unwrap_or("").to_string()).filter(|a| !a.is_empty());
+        let rest = path[at + "/enroute/".len()..].to_string();
+        match super::charts::enroute_root().ok_or_else(|| anyhow::anyhow!("the bridge has not said where its cache is")).and_then(|root| super::enroute::tile(&root, &rest, aircraft.as_deref())) {
+            Ok(png) => respond_bytes(req, 200, "image/png", png),
+            Err(e) => {
+                log::warn!("enroute {rest}: {e:#}");
+                respond_json(req, 404, json!({ "error": format!("{e:#}") }).to_string());
+            }
+        }
+        return;
+    }
     let Some(req) = handle_charts(&store, req, &path) else { return };
     let Some(req) = handle_taxi(&store, req, &path, &params) else { return };
     // `/v1/...`, or a bare `/v1` with no trailing slash, which some clients probe with
@@ -750,6 +831,20 @@ pub fn start(store: Arc<Store>, listen: Listen) -> Result<ServerHandle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sliver_that_rounds_to_a_line_is_not_served_as_a_polygon() {
+        let sliver = json!({"type":"Polygon","coordinates":[[[41.6,-998.72],[24.3,-1027.9],[24.3,-1027.9],[41.6,-998.72]]]});
+        assert_eq!(without_degenerate_rings(sliver), None);
+        let flat = json!({"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,0.0],[2.0,0.0],[0.0,0.0]]]});
+        assert_eq!(without_degenerate_rings(flat), None);
+        let square = json!({"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]],[[0.2,0.2],[0.3,0.2],[0.3,0.2],[0.2,0.2]]]});
+        assert_eq!(without_degenerate_rings(square), Some(json!({"type":"Polygon","coordinates":[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,1.0],[0.0,0.0]]]})));
+        let multi = json!({"type":"MultiPolygon","coordinates":[[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,0.0]]],[[[5.0,5.0],[6.0,6.0],[6.0,6.0],[5.0,5.0]]]]});
+        assert_eq!(without_degenerate_rings(multi), Some(json!({"type":"MultiPolygon","coordinates":[[[[0.0,0.0],[1.0,0.0],[1.0,1.0],[0.0,0.0]]]]})));
+        let line = json!({"type":"LineString","coordinates":[[0.0,0.0],[0.0,0.0]]});
+        assert_eq!(without_degenerate_rings(line.clone()), Some(line));
+    }
 
     #[test]
     fn stand_names_lose_only_the_uniqueness_suffix() {

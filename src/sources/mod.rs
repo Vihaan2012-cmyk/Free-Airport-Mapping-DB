@@ -2,6 +2,7 @@
 
 pub mod copernicus;
 pub mod cifp;
+pub mod dfd;
 pub mod dtpp;
 pub mod faa;
 pub mod faa_amdb;

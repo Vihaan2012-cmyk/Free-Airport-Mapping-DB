@@ -88,7 +88,7 @@ pub fn section_records(d: &[u8], section: u32) -> Vec<Record> {
 
 /// The 32-bit packed form used for idents (airports, waypoints, runways).
 pub fn ident(v: u32) -> String {
-    ident_shifted(v, 5)
+    ident_shifted(v as u64, 5)
 }
 
 /// The same packing as [`ident`], as FS2024 writes it: one more tag bit before the characters
@@ -98,10 +98,23 @@ pub fn ident(v: u32) -> String {
 /// matched between the two simulators by position; six bits decodes three thousand three
 /// hundred and sixty-six of them and no other shift decodes a single one.
 pub fn ident_2024(v: u32) -> String {
-    ident_shifted(v, 6)
+    ident_shifted(v as u64, 6)
 }
 
-fn ident_shifted(mut v: u32, shift: u32) -> String {
+/// An ident FS2024 keeps in eight bytes at `at`: the packing of [`ident_2024`] across
+/// sixty-four bits. A five-letter name late in the alphabet packs past thirty-two of them
+/// (WIZAD is `0x1_12d562c5`), and reading four bytes loses its first letter.
+pub fn ident_2024_wide(d: &[u8], at: usize) -> String {
+    ident_shifted(u32le(d, at) as u64 | (u32le(d, at + 4) as u64) << 32, 6)
+}
+
+/// The ICAO region in a region-and-airport word: its two letters in the low eleven bits,
+/// packed as an ident's are, the airport's ident above them. `0x272` is EG, `0x348` K2.
+pub fn region(v: u32) -> String {
+    ident_shifted((v & 0x7ff) as u64, 0)
+}
+
+fn ident_shifted(mut v: u64, shift: u32) -> String {
     const CH: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     if v == 0 {
         return String::new();

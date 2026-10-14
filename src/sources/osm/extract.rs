@@ -609,6 +609,128 @@ pub fn fill_cache(pbf: &Path, targets: &[Target], cache: &Cache, log: &dyn Fn(&s
     Ok(stats)
 }
 
+// ---- obstacles ------------------------------------------------------------------------------
+
+/// The tall structures `obstacles::osm` asks Overpass for.
+const OBSTACLE_MAN_MADE: [&str; 11] = ["mast", "tower", "communications_tower", "chimney", "water_tower", "cooling_tower", "storage_tank", "silo", "windmill", "crane", "antenna"];
+const HEIGHT_KEYS: [&str; 4] = ["height", "building:height", "tower:height", "man_made:height"];
+/// The tags an obstacle is read by: what it is, how tall, whether it is lit.
+const OBSTACLE_KEYS: [&str; 8] = ["man_made", "building", "generator:source", "height", "building:height", "tower:height", "man_made:height", "lit"];
+
+/// A tall structure with a height tagged: one without is no use to a chart, which needs
+/// to know how high it reaches.
+fn obstacle(tags: &[(&str, &str)]) -> bool {
+    let tall = tag(tags, "man_made").is_some_and(|m| OBSTACLE_MAN_MADE.contains(&m))
+        || tag(tags, "building").is_some_and(|b| b == "tower" || b == "skyscraper")
+        || tag(tags, "generator:source") == Some("wind");
+    tall && HEIGHT_KEYS.iter().any(|k| tag(tags, k).is_some())
+}
+
+/// A tall structure out of an extract: a node, or a way placed at its first node.
+pub struct Obstacle {
+    /// `node` or `way`, as Overpass names them.
+    pub kind: &'static str,
+    pub id: i64,
+    pub lat: f64,
+    pub lon: f64,
+    pub tags: Tags,
+}
+
+fn obstacle_tags(tags: &[(&str, &str)]) -> Tags {
+    tags.iter().filter(|(k, _)| OBSTACLE_KEYS.contains(k)).map(|(k, v)| (k.to_string(), v.to_string())).collect()
+}
+
+/// Every tall structure with a height in the file. The nodes and ways tagged so in one
+/// read, which stops where the relations begin; then, for the ways, where their first
+/// node is, from the node blocks that hold those nodes only. A way is a chimney or a tower
+/// block a few metres across: its first corner is where it stands, to a chart.
+pub fn obstacles(pbf: &Path, log: &dyn Fn(&str)) -> Result<Vec<Obstacle>> {
+    let t0 = std::time::Instant::now();
+    let mut out: Vec<Obstacle> = Vec::new();
+    let mut ways: Vec<(i64, i64, Tags)> = Vec::new();
+    let mut node_blocks = BlockIndex::default();
+    blocks(pbf, |batch| {
+        type Part = (Vec<Obstacle>, Vec<(i64, i64, Tags)>, Option<(u64, i64, i64)>);
+        let parts: Vec<Part> = batch
+            .par_iter()
+            .map(|blk| {
+                let (mut found, mut kept) = (Vec::new(), Vec::new());
+                match kind(&blk.data) {
+                    Some(Kind::Nodes) => {
+                        let (mut lo, mut hi) = (i64::MAX, i64::MIN);
+                        let mut take = |id: i64, lat: i32, lon: i32, t: Vec<(&str, &str)>| {
+                            lo = lo.min(id);
+                            hi = hi.max(id);
+                            if !t.is_empty() && obstacle(&t) {
+                                found.push(Obstacle { kind: "node", id, lat: deg(lat), lon: deg(lon), tags: obstacle_tags(&t) });
+                            }
+                        };
+                        for g in blk.data.groups() {
+                            for n in g.dense_nodes() {
+                                take(n.id(), n.decimicro_lat(), n.decimicro_lon(), n.tags().collect());
+                            }
+                            for n in g.nodes() {
+                                take(n.id(), n.decimicro_lat(), n.decimicro_lon(), n.tags().collect());
+                            }
+                        }
+                        (found, kept, Some((blk.offset, lo, hi)))
+                    }
+                    Some(Kind::Ways) => {
+                        for w in blk.data.groups().flat_map(|g| g.ways()) {
+                            let t: Vec<(&str, &str)> = w.tags().collect();
+                            if !t.is_empty() && obstacle(&t) {
+                                if let Some(first) = w.refs().next() {
+                                    kept.push((w.id(), first, obstacle_tags(&t)));
+                                }
+                            }
+                        }
+                        (found, kept, None)
+                    }
+                    _ => (found, kept, None),
+                }
+            })
+            .collect();
+        for (found, kept, at) in parts {
+            out.extend(found);
+            ways.extend(kept);
+            if let Some(at) = at {
+                node_blocks.0.push(at);
+            }
+        }
+        // Nothing wanted is in a relation, and they come last.
+        Ok(!batch.iter().any(|b| kind(&b.data) == Some(Kind::Relations)))
+    })?;
+    log(&format!("{}: {} nodes and {} ways with a height, in {}", pbf.display(), out.len(), ways.len(), crate::term::human_secs(t0.elapsed().as_secs_f64())));
+
+    let mut firsts: Vec<i64> = ways.iter().map(|w| w.1).collect();
+    firsts.sort_unstable();
+    firsts.dedup();
+    let mut at_node: HashMap<i64, (i32, i32)> = HashMap::with_capacity(firsts.len());
+    if !firsts.is_empty() {
+        blocks_at(pbf, &node_blocks.holding(&firsts), |batch| {
+            let found: Vec<(i64, i32, i32)> = batch
+                .par_iter()
+                .flat_map_iter(|blk| {
+                    let mut v = Vec::new();
+                    for g in blk.data.groups() {
+                        v.extend(g.dense_nodes().filter(|n| firsts.binary_search(&n.id()).is_ok()).map(|n| (n.id(), n.decimicro_lat(), n.decimicro_lon())));
+                        v.extend(g.nodes().filter(|n| firsts.binary_search(&n.id()).is_ok()).map(|n| (n.id(), n.decimicro_lat(), n.decimicro_lon())));
+                    }
+                    v
+                })
+                .collect();
+            at_node.extend(found.into_iter().map(|(id, lat, lon)| (id, (lat, lon))));
+        })?;
+    }
+    for (id, first, tags) in ways {
+        if let Some(&(lat, lon)) = at_node.get(&first) {
+            out.push(Obstacle { kind: "way", id, lat: deg(lat), lon: deg(lon), tags });
+        }
+    }
+    log(&format!("{}: {} obstacles in {}", pbf.display(), out.len(), crate::term::human_secs(t0.elapsed().as_secs_f64())));
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -638,6 +760,16 @@ mod tests {
         assert_eq!(g.boxes_at(-17.8, 179.95).collect::<Vec<_>>(), vec![1]);
         assert_eq!(g.boxes_at(-17.8, -179.95).collect::<Vec<_>>(), vec![1]);
         assert!(!g.in_any(0.0, 0.0));
+    }
+
+    #[test]
+    fn obstacles_are_tall_structures_with_a_height() {
+        assert!(obstacle(&[("man_made", "mast"), ("height", "120")]));
+        assert!(obstacle(&[("generator:source", "wind"), ("height", "150 m")]));
+        assert!(obstacle(&[("building", "skyscraper"), ("building:height", "200")]));
+        assert!(!obstacle(&[("man_made", "mast")]), "no height: nothing a chart can use");
+        assert!(!obstacle(&[("building", "yes"), ("height", "12")]));
+        assert_eq!(obstacle_tags(&[("man_made", "mast"), ("height", "120"), ("operator", "x")]).len(), 2);
     }
 
     #[test]

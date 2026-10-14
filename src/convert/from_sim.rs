@@ -86,6 +86,10 @@ struct RouteEntry {
     name: String,
     prev: Option<String>,
     next: Option<String>,
+    /// The regions of those two fixes, which an airway across a border needs to find the
+    /// one on the far side.
+    prev_region: Option<String>,
+    next_region: Option<String>,
     /// The minimum altitude of the leg on to `next`, feet.
     min_ft: Option<f64>,
     level: AirwayLevel,
@@ -98,6 +102,9 @@ struct RouteEntry {
 const ENTRY_LEN_2020: usize = 33;
 const ENTRY_LEN_2024: usize = 49;
 const WAYPOINT_HEADER: usize = 28;
+/// FS2024's waypoint header is eight bytes longer: its ident takes eight bytes, not four,
+/// and four more follow the region.
+const WAYPOINT_HEADER_2024: usize = 36;
 const REC_WAYPOINT_2024: u16 = 0x108;
 
 /// Whether a string is a name an airway really has: a letter, then letters and digits. Real
@@ -108,11 +115,17 @@ fn is_airway_name(s: &str) -> bool {
     (2..=7).contains(&n) && s.starts_with(|c: char| c.is_ascii_uppercase()) && s.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
+/// An entry is its type byte and its name (eight bytes), then the fixes either side of this
+/// one on the airway, each as ident, region and the minimum altitude of the leg to it:
+/// `(ident, region, altitude)` offsets of the first, then of the second. FS2024 writes the
+/// idents in eight bytes and four more after each region, which was found by matching its
+/// entries to FS2020's for the same fixes (DVR's: WIZAD in EG, VABIK in EB).
 fn route_entries(d: &[u8]) -> Vec<RouteEntry> {
     let mut out = Vec::new();
     let is_2024 = u16::from_le_bytes([d[0], d[1]]) == REC_WAYPOINT_2024;
-    let (stride, name_at, alt_at) = if is_2024 { (ENTRY_LEN_2024, 9, 33) } else { (ENTRY_LEN_2020, 1, 0x1d) };
-    let mut at = WAYPOINT_HEADER;
+    let (header, stride, first, second) = if is_2024 { (WAYPOINT_HEADER_2024, ENTRY_LEN_2024, (9, 17, 25), (29, 37, 45)) } else { (WAYPOINT_HEADER, ENTRY_LEN_2020, (9, 13, 17), (21, 25, 29)) };
+    let (name_at, alt_at) = (1, second.2);
+    let mut at = header;
     while at + stride <= d.len() {
         let e = &d[at..at + stride];
         let name: String = e[name_at..(name_at + 8).min(stride)].iter().take_while(|&&b| b != 0).map(|&b| b as char).collect();
@@ -123,12 +136,10 @@ fn route_entries(d: &[u8]) -> Vec<RouteEntry> {
         }
         {
             let fix = |off: usize| -> Option<String> {
-                if off + 4 > stride {
-                    return None;
-                }
-                let id = bgl::ident(bgl::u32le(e, off));
+                let id = if is_2024 { bgl::ident_2024_wide(e, off) } else { bgl::ident(bgl::u32le(e, off)) };
                 (!id.is_empty() && is_airway_name(&id)).then_some(id)
             };
+            let region = |off: usize| Some(bgl::region(bgl::u32le(e, off))).filter(|r| r.len() == 2);
             let metres = |off: usize| -> Option<f64> {
                 if off + 4 > stride {
                     return None;
@@ -138,16 +149,15 @@ fn route_entries(d: &[u8]) -> Vec<RouteEntry> {
             };
             out.push(RouteEntry {
                 name,
-                // FS2020 names the fix before and after; where FS2024 keeps them has not been
-                // established, so under it an airway's fixes are put in order by geography
-                // instead — see `assemble_airways`.
-                prev: if is_2024 { None } else { fix(0x09) },
-                next: if is_2024 { None } else { fix(0x15) },
+                prev: fix(first.0),
+                next: fix(second.0),
+                prev_region: region(first.1),
+                next_region: region(second.1),
                 min_ft: metres(alt_at),
                 // The type byte distinguishes the low-level network from the upper one; a
                 // value this has not been seen to carry is taken as serving both rather than
                 // as excluding a route from a search that would otherwise find it.
-                level: match e[if is_2024 { 8 } else { 0 }] {
+                level: match e[0] {
                     1 => AirwayLevel::Low,
                     2 => AirwayLevel::High,
                     _ => AirwayLevel::Both,
@@ -200,6 +210,16 @@ pub fn read_from(cycle: &str, which: Simulator) -> Result<NavSet> {
 /// As [`read_from`], with the airport index — the runways and the real names — left out where
 /// `enrich` is false, for a caller with no network and no cached copy of it.
 pub fn read_with(cycle: &str, which: Simulator, enrich: bool) -> Result<NavSet> {
+    read_parts(cycle, which, enrich, true)
+}
+
+/// The airports, beacons, fixes and airways alone, without the procedures, runways and
+/// localisers: what the enroute map is drawn from, in about half the time.
+pub fn read_enroute(cycle: &str, which: Simulator) -> Result<NavSet> {
+    read_parts(cycle, which, false, false)
+}
+
+fn read_parts(cycle: &str, which: Simulator, enrich: bool, with_procedures: bool) -> Result<NavSet> {
     // Every file's bytes, then all of them read at once. Three and a half thousand files
     // each parsed independently is exactly what a thread pool is for, and reading them one
     // after another was the difference between a quarter of a minute and a quarter of an hour.
@@ -287,9 +307,14 @@ pub fn read_with(cycle: &str, which: Simulator, enrich: bool) -> Result<NavSet> 
     let t = std::time::Instant::now();
     // The fixes are already in hand from the simulator's own waypoint records, so the
     // per-airport database lookups a chart needs are not paid for here.
-    procedures::set_database_enrichment(false);
-    let procedures = read_procedures(&blobs);
-    procedures::set_database_enrichment(true);
+    let procedures = if with_procedures {
+        procedures::set_database_enrichment(false);
+        let read = read_procedures(&blobs);
+        procedures::set_database_enrichment(true);
+        read
+    } else {
+        Vec::new()
+    };
     drop(blobs);
     let legs: usize = procedures.iter().map(|p| p.legs.len()).sum();
     say(5, "procedures", format!("{} with {legs} legs", procedures.len()), t);
@@ -671,12 +696,12 @@ fn read_beacons(d: &[u8], out: &mut Vec<NavaidRec>, ils: &mut Vec<LooseIls>) {
 
 fn read_fixes(d: &[u8], out: &mut Vec<Fix>) {
     for rec in bgl::section_records(d, 0x22) {
-        if rec.end - rec.start < WAYPOINT_HEADER {
+        let is_2024 = rec.id == REC_WAYPOINT_2024;
+        if rec.end - rec.start < if is_2024 { WAYPOINT_HEADER_2024 } else { WAYPOINT_HEADER } {
             continue;
         }
         let r = &d[rec.start..rec.end];
-        let unpack = if rec.id == REC_WAYPOINT_2024 { bgl::ident_2024 } else { bgl::ident };
-        let ident = unpack(bgl::u32le(r, 0x14));
+        let ident = if is_2024 { bgl::ident_2024_wide(r, 0x14) } else { bgl::ident(bgl::u32le(r, 0x14)) };
         if ident.is_empty() {
             continue;
         }
@@ -685,8 +710,8 @@ fn read_fixes(d: &[u8], out: &mut Vec<Fix>) {
         if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
             continue;
         }
-        let region = unpack(bgl::u32le(r, 0x18));
-        out.push(Fix { ident, region: region.chars().take(2).collect(), lat, lon, routes: route_entries(r) });
+        let region = bgl::region(bgl::u32le(r, if is_2024 { 0x1c } else { 0x18 }));
+        out.push(Fix { ident, region, lat, lon, routes: route_entries(r) });
     }
 }
 
@@ -724,7 +749,7 @@ fn assemble_airways(fixes: &[Fix]) -> Vec<AirwayRec> {
             let here: Key = (f.ident.as_str(), f.region.as_str());
             seen.entry(here).or_insert(false);
             if let Some(next) = &e.next {
-                let there: Key = (next.as_str(), region);
+                let there: Key = (next.as_str(), e.next_region.as_deref().unwrap_or(region));
                 forward.insert(here, (there, e.min_ft, e.level));
                 seen.insert(there, true);
             }
@@ -981,7 +1006,7 @@ mod tests {
             region: "EG".to_string(),
             lat: 51.0,
             lon: 0.0,
-            routes: vec![RouteEntry { name: "L620".to_string(), prev: prev.map(str::to_string), next: next.map(str::to_string), min_ft: min, level: AirwayLevel::Both }],
+            routes: vec![RouteEntry { name: "L620".to_string(), prev: prev.map(str::to_string), next: next.map(str::to_string), prev_region: None, next_region: None, min_ft: min, level: AirwayLevel::Both }],
         };
         let fixes = vec![fix("A", None, Some("B"), Some(4500.0)), fix("B", Some("A"), Some("C"), Some(5500.0)), fix("C", Some("B"), None, None)];
         let airways = assemble_airways(&fixes);

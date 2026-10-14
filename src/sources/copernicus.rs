@@ -14,10 +14,54 @@ use crate::sources::http::Http;
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use std::io::Read;
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 const BASE: &str = "https://copernicus-dem-30m.s3.amazonaws.com";
 /// Enough for the header and the tile index of a GLO-30 file.
 const HEADER_BYTES: u64 = 256 * 1024;
+/// What is asked for first: a GLO-30 header and its tile index take about 1.3 KB, and the
+/// whole quarter megabyte, a square at a time, was most of what a chart run downloaded.
+const FIRST_BYTES: u64 = 16 * 1024;
+
+/// How far into the file the header and its tile index reach, or None when the chain of
+/// image directories leaves `d` before it ends.
+fn header_extent(d: &[u8]) -> Option<usize> {
+    if d.len() < 8 || !(&d[0..2] == b"II" || &d[0..2] == b"MM") {
+        return None;
+    }
+    let r = Reader { d, little: &d[0..2] == b"II" };
+    let mut end = 8;
+    let mut at = r.u32(4) as usize;
+    for _ in 0..16 {
+        if at == 0 {
+            return Some(end);
+        }
+        if at + 2 > d.len() {
+            return None;
+        }
+        let n = r.u16(at) as usize;
+        let after = at + 2 + n * 12;
+        if after + 4 > d.len() {
+            return None;
+        }
+        end = end.max(after + 4);
+        for i in 0..n {
+            let e = at + 2 + i * 12;
+            let size = match r.u16(e + 2) {
+                1 | 2 | 6 | 7 => 1,
+                3 | 8 => 2,
+                4 | 9 | 11 => 4,
+                5 | 10 | 12 | 16 | 17 => 8,
+                _ => 1,
+            } * r.u32(e + 4) as usize;
+            if size > 4 {
+                end = end.max(r.u32(e + 8) as usize + size);
+            }
+        }
+        at = r.u32(after) as usize;
+    }
+    Some(end)
+}
 
 /// The file covering a whole degree of latitude and longitude.
 fn tile_name(lat_deg: i32, lon_deg: i32) -> String {
@@ -380,10 +424,99 @@ impl Source {
     }
 }
 
-fn open(http: &Http, cache: &Cache, lat_deg: i32, lon_deg: i32) -> Result<Source> {
+/// What a one-degree square has: the file's header, or nothing where the model has no
+/// file at all, which is the open sea.
+enum Square {
+    Land(Arc<Source>),
+    Sea,
+}
+
+/// Every square opened so far in this run, so a header is read and parsed once rather
+/// than once a chart.
+fn squares() -> &'static Mutex<HashMap<(i32, i32), Arc<Square>>> {
+    static SQUARES: OnceLock<Mutex<HashMap<(i32, i32), Arc<Square>>>> = OnceLock::new();
+    SQUARES.get_or_init(Default::default)
+}
+
+/// Downloads at once in a run. On a slow line a few finish while many, sharing it, each
+/// run past the timeout, are tried again and fail again.
+const DOWNLOADS_AT_ONCE: usize = 8;
+
+/// Part of a file, through the run's own client: a tile is megabytes, and the callers'
+/// two-minute limit is short for one on a slow line.
+fn fetch_range(url: &str, start: u64, len: u64) -> Result<Vec<u8>> {
+    static GATE: OnceLock<(Mutex<usize>, Condvar)> = OnceLock::new();
+    static HTTP: OnceLock<Http> = OnceLock::new();
+    let (busy, freed) = GATE.get_or_init(|| (Mutex::new(0), Condvar::new()));
+    {
+        let mut n = busy.lock().unwrap();
+        while *n >= DOWNLOADS_AT_ONCE {
+            n = freed.wait(n).unwrap();
+        }
+        *n += 1;
+    }
+    let got = HTTP.get_or_init(|| Http::new(600, 0)).get_range(url, start, len);
+    *busy.lock().unwrap() -= 1;
+    freed.notify_one();
+    got
+}
+
+thread_local! {
+    /// Squares and tiles this thread could not read, since it last asked.
+    static MISSED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many squares and tiles this thread failed to read since it last asked: a chart
+/// drawn meanwhile has ground missing from it, and should be drawn again.
+pub fn take_missed() -> usize {
+    MISSED.with(|m| m.replace(0))
+}
+
+fn missed() {
+    MISSED.with(|m| m.set(m.get() + 1));
+}
+
+/// A square's header, read once a run. A square the model has no file for is remembered
+/// as sea on disk too: asked again, the server only says the same, and a chart round an
+/// island used to ask it about every square of sea on the page.
+fn square(_http: &Http, cache: &Cache, lat_deg: i32, lon_deg: i32) -> Arc<Square> {
+    if let Some(s) = squares().lock().unwrap().get(&(lat_deg, lon_deg)) {
+        return s.clone();
+    }
+    let name = tile_name(lat_deg, lon_deg);
+    let found = match open(cache, lat_deg, lon_deg) {
+        Ok(Some(src)) => Square::Land(Arc::new(src)),
+        Ok(None) => Square::Sea,
+        Err(e) => {
+            // Not remembered: a server that failed to answer may answer next time.
+            log::warn!("Copernicus DEM {name}: {e:#}");
+            missed();
+            return Arc::new(Square::Sea);
+        }
+    };
+    let found = Arc::new(found);
+    squares().lock().unwrap().insert((lat_deg, lon_deg), found.clone());
+    found
+}
+
+/// The file's header, or None where the model has no file (the server says 404, or 403
+/// as S3 does for a name it has never had).
+fn open(cache: &Cache, lat_deg: i32, lon_deg: i32) -> Result<Option<Source>> {
     let name = tile_name(lat_deg, lon_deg);
     let url = format!("{BASE}/{name}/{name}.tif");
-    let head = cache.get_or_fetch_bytes(&format!("copernicus/{name}.header"), || http.get_range(&url, 0, HEADER_BYTES))?;
+    let head = cache.get_or_fetch_bytes(&format!("copernicus/{name}.header"), || {
+        let first = match fetch_range(&url, 0, FIRST_BYTES) {
+            Err(e) if format!("{e:#}").contains("HTTP 404") || format!("{e:#}").contains("HTTP 403") => return Ok(Vec::new()),
+            other => other?,
+        };
+        match header_extent(&first) {
+            Some(end) if end <= first.len() => Ok(first),
+            _ => fetch_range(&url, 0, HEADER_BYTES),
+        }
+    })?;
+    if head.is_empty() {
+        return Ok(None);
+    }
     let levels = parse_layouts(&head).with_context(|| format!("read the header of {name}"))?;
     let layout = &levels[0];
     if layout.tile_w == 0 || layout.tile_offsets.is_empty() {
@@ -392,19 +525,64 @@ fn open(http: &Http, cache: &Cache, lat_deg: i32, lon_deg: i32) -> Result<Source
     if layout.bits != 32 || layout.sample_format != 3 {
         return Err(anyhow!("{name}: heights are not 32-bit floats"));
     }
-    Ok(Source { url, levels })
+    Ok(Some(Source { url, levels }))
 }
 
-fn tile(http: &Http, cache: &Cache, src: &Source, l: &Layout, name: &str, level: usize, index: usize) -> Result<Vec<f32>> {
+/// Tiles decoded in this run, shared between the threads drawing charts, up to a size:
+/// the charts of one airport, and of its neighbours, read the same tiles over and over,
+/// and inflating one from disk costs more than drawing a page.
+struct Decoded {
+    tiles: HashMap<(i32, i32, usize, usize), Arc<Vec<f32>>>,
+    order: std::collections::VecDeque<(i32, i32, usize, usize)>,
+    bytes: usize,
+}
+
+const DECODED_LIMIT: usize = 2 << 30;
+
+fn decoded() -> &'static Mutex<Decoded> {
+    static DECODED: OnceLock<Mutex<Decoded>> = OnceLock::new();
+    DECODED.get_or_init(|| Mutex::new(Decoded { tiles: HashMap::new(), order: Default::default(), bytes: 0 }))
+}
+
+/// A decoded tile, from memory when this run has read it before.
+fn shared_tile(cache: &Cache, src: &Source, l: &Layout, name: &str, key: (i32, i32, usize, usize)) -> Result<Arc<Vec<f32>>> {
+    if let Some(t) = decoded().lock().unwrap().tiles.get(&key) {
+        return Ok(t.clone());
+    }
+    let t = Arc::new(tile(cache, src, l, name, key.2, key.3)?);
+    let mut d = decoded().lock().unwrap();
+    if d.tiles.insert(key, t.clone()).is_none() {
+        d.order.push_back(key);
+        d.bytes += t.len() * 4;
+        // The oldest go first: the run moves on from an airport and does not come back.
+        while d.bytes > DECODED_LIMIT {
+            let Some(old) = d.order.pop_front() else {
+                break;
+            };
+            if let Some(gone) = d.tiles.remove(&old) {
+                d.bytes -= gone.len() * 4;
+            }
+        }
+    }
+    Ok(t)
+}
+
+fn tile(cache: &Cache, src: &Source, l: &Layout, name: &str, level: usize, index: usize) -> Result<Vec<f32>> {
     let (off, len) = (l.tile_offsets[index], l.tile_bytes[index]);
     let key = if level == 0 { format!("copernicus/{name}/{index}.tile") } else { format!("copernicus/{name}/L{level}-{index}.tile") };
-    let raw = cache.get_or_fetch_bytes(&key, || http.get_range(&src.url, off, len))?;
+    let raw = cache.get_or_fetch_bytes(&key, || fetch_range(&src.url, off, len))?;
     let mut bytes = match l.compression {
         1 => raw,
         8 | 32946 => inflate(&raw)?,
         other => return Err(anyhow!("tile compression {other} is not supported")),
     };
     Ok(heights_from(&mut bytes, l.tile_w as usize, l.tile_h as usize, l.predictor))
+}
+
+/// Whether the square a point is in has been read before (its header is on disk), so
+/// the terrain round it needs little or nothing downloaded.
+pub fn has_square(cache: &Cache, lat: f64, lon: f64) -> bool {
+    cache.path(&format!("copernicus/{}.header", tile_name(lat.floor() as i32, lon.floor() as i32))).is_some_and(|p| p.is_file())
 }
 
 /// Terrain heights around a point. `radius_km` is half the width of the square patch,
@@ -445,33 +623,37 @@ pub fn cell(http: &Http, cache: &Cache, lat_deg: i32, lon_deg: i32, step_m: f64)
 /// corner, opening (and caching) whichever one-degree source tile and decimated level
 /// each sample falls in.
 fn sample(http: &Http, cache: &Cache, west: f64, north: f64, step_lat: f64, step_lon: f64, width: usize, height: usize) -> Patch {
+    // The model does not change: what is on disk is kept for good, whatever the cache
+    // passed in keeps other things for. A day's limit had every tile of a run a week old
+    // fetched again.
+    let mut forever = cache.clone();
+    forever.max_age = None;
+    let cache = &forever;
     let mut heights = vec![f32::NAN; width * height];
     // The file, and which of its copies answers this spacing: both settled once per
-    // one-degree square rather than once per sample.
-    let mut sources: HashMap<(i32, i32), Option<(String, Source, usize)>> = HashMap::new();
-    let mut tiles: HashMap<(i32, i32, usize, usize), Vec<f32>> = HashMap::new();
+    // one-degree square rather than once per sample, and the tiles kept here as well as
+    // in the run's shared store, which is locked to be read.
+    let mut sources: HashMap<(i32, i32), Option<(String, Arc<Source>, usize)>> = HashMap::new();
+    let mut tiles: HashMap<(i32, i32, usize, usize), Arc<Vec<f32>>> = HashMap::new();
+    let mut failed: std::collections::HashSet<(i32, i32, usize, usize)> = std::collections::HashSet::new();
 
     for row in 0..height {
         let plat = north - row as f64 * step_lat;
         for col in 0..width {
             let plon = west + col as f64 * step_lon;
             let key = (plat.floor() as i32, plon.floor() as i32);
-            let entry = sources.entry(key).or_insert_with(|| {
-                let name = tile_name(key.0, key.1);
-                match open(http, cache, key.0, key.1) {
-                    Ok(s) => {
-                        // The smallest copy of the ground still about the spacing asked
-                        // for: a chart wants a quarter of a mile, not thirty metres.
-                        let level = s.levels.iter().position(|c| std::ptr::eq(c, s.level_for(step_lat))).unwrap_or(0);
-                        Some((name, s, level))
-                    }
-                    Err(e) => {
-                        log::warn!("Copernicus DEM {name}: {e:#}");
-                        None
-                    }
+            let entry = sources.entry(key).or_insert_with(|| match &*square(http, cache, key.0, key.1) {
+                Square::Land(s) => {
+                    // The smallest copy of the ground still about the spacing asked for: a
+                    // chart wants a quarter of a mile, not thirty metres.
+                    let level = s.levels.iter().position(|c| std::ptr::eq(c, s.level_for(step_lat))).unwrap_or(0);
+                    Some((tile_name(key.0, key.1), s.clone(), level))
                 }
+                Square::Sea => None,
             });
-            let Some((name, src, level)) = entry else { continue };
+            let Some((name, src, level)) = entry else {
+                continue;
+            };
             let level = *level;
             let l = &src.levels[level];
             // Pixel in the file, then which tile holds it.
@@ -486,12 +668,19 @@ fn sample(http: &Http, cache: &Cache, west: f64, north: f64, step_lat: f64, step
             if index >= l.tile_offsets.len() {
                 continue;
             }
+            // A tile that could not be read is not asked for again for every sample in it:
+            // each ask is a download tried four times.
+            if failed.contains(&(key.0, key.1, level, index)) {
+                continue;
+            }
             let data = match tiles.entry((key.0, key.1, level, index)) {
                 std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
-                std::collections::hash_map::Entry::Vacant(v) => match tile(http, cache, src, l, name, level, index) {
+                std::collections::hash_map::Entry::Vacant(v) => match shared_tile(cache, src, l, name, (key.0, key.1, level, index)) {
                     Ok(t) => v.insert(t),
                     Err(e) => {
                         log::warn!("Copernicus DEM {name} tile {index}: {e:#}");
+                        missed();
+                        failed.insert((key.0, key.1, level, index));
                         continue;
                     }
                 },
@@ -509,6 +698,23 @@ fn sample(http: &Http, cache: &Cache, west: f64, north: f64, step_lat: f64, step
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_header_says_how_far_it_reaches() {
+        // Little-endian TIFF, one directory at 8 with one entry: 4 longs at offset 26.
+        let mut d = vec![0u8; 64];
+        d[0..4].copy_from_slice(b"II* ");
+        d[4..8].copy_from_slice(&8u32.to_le_bytes());
+        d[8..10].copy_from_slice(&1u16.to_le_bytes());
+        d[10..12].copy_from_slice(&324u16.to_le_bytes());
+        d[12..14].copy_from_slice(&4u16.to_le_bytes());
+        d[14..18].copy_from_slice(&4u32.to_le_bytes());
+        d[18..22].copy_from_slice(&26u32.to_le_bytes());
+        assert_eq!(header_extent(&d), Some(42));
+        assert_eq!(header_extent(&d[..20]), None, "the directory runs past what was read");
+        d[22..26].copy_from_slice(&1000u32.to_le_bytes());
+        assert_eq!(header_extent(&d), None, "a next directory beyond what was read");
+    }
 
     #[test]
     fn tiles_are_named_by_their_corner() {

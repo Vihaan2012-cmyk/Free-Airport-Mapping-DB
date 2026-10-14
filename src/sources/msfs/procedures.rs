@@ -928,30 +928,35 @@ pub fn from_bytes(data: &[u8], label: &str) -> Vec<AirportProcedures> {
 }
 
 pub fn find_many(icaos: &[String]) -> Result<std::collections::HashMap<String, AirportProcedures>> {
+    use rayon::prelude::*;
     let wanted: std::collections::HashSet<String> = icaos.iter().map(|i| i.to_uppercase()).collect();
-    let mut out = std::collections::HashMap::new();
-    for dir in super::nav_dirs() {
-        for file in walk_nax(&dir) {
-            if out.len() == wanted.len() {
-                return Ok(out);
-            }
-            let Ok(data) = std::fs::read(&file) else { continue };
+    // Every file on its own thread: reading an airport's procedures means placing its
+    // fixes, and for a whole run that is most of the time.
+    let files: Vec<std::path::PathBuf> = super::nav_dirs().iter().flat_map(|d| walk_nax(d)).collect();
+    let per_file: Vec<Vec<AirportProcedures>> = files
+        .par_iter()
+        .map(|file| {
+            let Ok(data) = std::fs::read(file) else {
+                return Vec::new();
+            };
             let here: Vec<Record> = bgl::section_records(&data, bgl::SECTION_AIRPORT)
                 .into_iter()
                 .filter(|rec| is_airport(rec.id) && rec.end - rec.start >= 0x44)
                 .filter(|rec| airport_header(&data, rec).map(|(i, _)| wanted.contains(&i)).unwrap_or(false))
                 .collect();
             if here.is_empty() {
-                continue;
+                return Vec::new();
             }
             // The waypoint table is only worth building for a file that holds one of them.
             let fixes = waypoints(&data);
-            for rec in here {
-                if let Some(a) = airport(&data, &rec, &file, &fixes) {
-                    out.insert(a.icao.clone(), a);
-                }
-            }
-        }
+            here.iter().filter_map(|rec| airport(&data, rec, file, &fixes)).collect()
+        })
+        .collect();
+    // In the files' order, so an airport in two of them is the later one's, as it was when
+    // they were read one after another.
+    let mut out = std::collections::HashMap::new();
+    for a in per_file.into_iter().flatten() {
+        out.insert(a.icao.clone(), a);
     }
     Ok(out)
 }
@@ -964,22 +969,24 @@ pub fn find_many(icaos: &[String]) -> Result<std::collections::HashMap<String, A
 /// Only the header of each airport record is read here (the four bytes at `+0x28`), not
 /// its procedures, so this is a fraction of the cost of reading every airport in full.
 pub fn all_icaos() -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for dir in super::nav_dirs() {
-        for file in walk_nax(&dir) {
-            let Ok(data) = std::fs::read(&file) else { continue };
-            for rec in bgl::section_records(&data, bgl::SECTION_AIRPORT) {
-                if !is_airport(rec.id) || rec.end - rec.start < 0x44 {
-                    continue;
-                }
-                let icao = airport_header(&data, &rec).map(|(i, _)| i).unwrap_or_default();
-                if !icao.is_empty() && !out.contains(&icao) {
-                    out.push(icao);
-                }
-            }
-        }
-    }
-    out
+    use rayon::prelude::*;
+    let files: Vec<std::path::PathBuf> = super::nav_dirs().iter().flat_map(|d| walk_nax(d)).collect();
+    let per_file: Vec<Vec<String>> = files
+        .par_iter()
+        .map(|file| {
+            let Ok(data) = std::fs::read(file) else {
+                return Vec::new();
+            };
+            bgl::section_records(&data, bgl::SECTION_AIRPORT)
+                .into_iter()
+                .filter(|rec| is_airport(rec.id) && rec.end - rec.start >= 0x44)
+                .filter_map(|rec| airport_header(&data, &rec).map(|(i, _)| i))
+                .filter(|icao| !icao.is_empty())
+                .collect()
+        })
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    per_file.into_iter().flatten().filter(|icao| seen.insert(icao.clone())).collect()
 }
 
 pub fn find(icao: &str) -> Result<Option<AirportProcedures>> {
