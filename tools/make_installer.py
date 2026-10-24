@@ -139,6 +139,7 @@ def main():
     print(f"Built {a3} ({os.path.getsize(a3) / 1e6:.1f} MB)")
     t = os.path.join(ROOT, "dist", f"AMDB-Airport-Map-Setup-{toolbar}.exe")
     print(f"Built {t} ({os.path.getsize(t) / 1e6:.1f} MB)")
+    final_target(v, toolbar)
     return 0
 
 NAVDATA_README = "AMDB Navdata {v}\n\nThe navigation-data converter on its own.\n\n  AMDB Navdata.exe   a window: tick the aeroplane, press Convert\n  amdb-navdata.exe   the same converter on the command line\n\nIt reads the navigation data Microsoft Flight Simulator already has on this computer\nand writes it into the database an add-on aircraft reads, so the aeroplane flies on\ncurrent data instead of whatever AIRAC cycle it shipped with.\n\nNothing is downloaded and nothing licensed is redistributed: the data is the\nsimulator's own, and it stays on this machine. The aircraft's database is never\noverwritten without a backup being kept beside it first.\n\n  See what would be written, touching nothing:\n    amdb-navdata --to dfd --from-sim --cycle 2609 --dry-run\n\n  Write a Navigraph-layout database (iniBuilds A350, Synaptic A220, PMDG 737 and 777):\n    amdb-navdata --to dfd --from-sim --cycle 2609 --out navdata.db3\n\n  Replace the Fenix A320's own, keeping a backup beside it:\n    amdb-navdata --to fenix --from-sim --cycle 2609 --in-place\n\n  amdb-navdata --help  for the rest.\n\nThe window reads FS2024. FS2020 gives more procedures, and the command line will\nread it: add --sim fs2020.\n\nThis is the same converter as `amdbgen navdata`, which the full AMDB Bridge installer\nstill carries. Take this one if the converter is all you want.\n\nNOT FOR REAL-WORLD NAVIGATION.\n"
@@ -157,6 +158,52 @@ def build_list_zip(v):
         z.write(exe, "AMDB Build List/AMDB Build List.exe")
         z.writestr("AMDB Build List/README.txt", BUILD_LIST_README.replace(chr(10), chr(13) + chr(10)))
     return out
+
+
+def final_target(bridge_version, toolbar_version):
+    """Collect the main installer and optional Community map package for handoff."""
+    out_dir = os.path.join(ROOT, "finalTarget")
+    os.makedirs(out_dir, exist_ok=True)
+    names = [
+        f"AMDB-Bridge-Setup-{bridge_version}.exe",
+        f"AMDB-Airport-Map-Setup-{toolbar_version}.exe",
+        f"AMDB-Airport-Map-Community-{toolbar_version}.zip",
+    ]
+    for pattern in ("AMDB-Bridge-Setup-*.exe", "AMDB-Airport-Map-Setup-*.exe", "AMDB-Airport-Map-Community-*.zip"):
+        for old in glob.glob(os.path.join(out_dir, pattern)):
+            os.remove(old)
+
+    for name in names[:2]:
+        src = os.path.join(ROOT, "dist", name)
+        if not os.path.isfile(src):
+            raise FileNotFoundError(f"installer output not found: {src}")
+        shutil.copy2(src, os.path.join(out_dir, name))
+
+    package = os.path.join(ROOT, "packages", "msfs-amdb-oans-toolbar")
+    zip_path = os.path.join(out_dir, names[2])
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        for folder, _, files in os.walk(package):
+            for filename in files:
+                src = os.path.join(folder, filename)
+                rel = os.path.relpath(src, package)
+                archive.write(src, os.path.join("amdb-oans-toolbar", rel))
+
+    readme = f"""AMDB Bridge {bridge_version} and Airport Map {toolbar_version}
+
+1. Run AMDB-Bridge-Setup-{bridge_version}.exe. The installer includes the aircraft map options and adds AMDB Bridge to the Microsoft Flight Simulator startup configuration by default.
+2. Run AMDB-Airport-Map-Setup-{toolbar_version}.exe if you want the in-simulator Airport Map toolbar panel. It installs the package into detected Community folders.
+3. Alternatively, extract AMDB-Airport-Map-Community-{toolbar_version}.zip into a Community folder. It creates the amdb-oans-toolbar package folder there. Keep AMDB Bridge running for map data and taxi routing.
+
+The separate Community ZIP is optional when using the Airport Map installer. The main Bridge installer already includes the A220, A320, and A330 integration choices.
+
+The Bridge installer restores normal Navigraph sign-in on upgrade and removes the retired Fenix EFB sign-in redirect.
+"""
+    with open(os.path.join(out_dir, "README.txt"), "w", encoding="utf-8", newline="\r\n") as f:
+        f.write(readme)
+    print(f"Collected install files in {out_dir}")
+    for name in names:
+        path = os.path.join(out_dir, name)
+        print(f"  {name} ({os.path.getsize(path) / 1e6:.1f} MB)")
 
 
 def navdata_zip(v):

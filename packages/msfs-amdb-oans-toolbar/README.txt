@@ -22,6 +22,11 @@ The bar under the map:
 Click the map for the context menu (flags, crosses, map data), drag to pan.
 Resize the window as you like: the map fills the largest square it can.
 
+This toolbar package is optional. To have the standalone browser map follow the aircraft
+without opening this window, install the matching in-aircraft OANS package (for example,
+`amdb-bridge a320-oans on` for the Fenix A320). The browser's Follow aircraft button can be
+turned off to pan.
+
 Airport maps and routes come from a bridge running on this computer while you
 fly: AMDB Bridge, or the "A320 OANS" program. This package does not include one;
 its installer asks where yours is. Download either from

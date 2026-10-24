@@ -14,15 +14,13 @@ use std::time::Instant;
 pub struct Options {
     /// Redirect the Navigraph AMDB host here (needs administrator rights).
     pub navigraph_redirect: bool,
-    /// Redirect the Fenix A320 tablet's Navigraph hosts here (needs administrator rights).
-    pub fenix_charts: bool,
     /// Install the X-Plane moving map when X-Plane 12 is found.
     pub xplane: bool,
 }
 
 impl Options {
     pub fn from_settings(s: &Settings) -> Options {
-        Options { navigraph_redirect: s.navigraph_redirect, fenix_charts: s.fenix_charts, xplane: s.xplane }
+        Options { navigraph_redirect: s.navigraph_redirect, xplane: s.xplane }
     }
 }
 
@@ -30,8 +28,6 @@ pub struct Running {
     handle: ServerHandle,
     /// Serving the A350 and A380X through the Navigraph address.
     pub redirected: bool,
-    /// Serving the Fenix A320's tablet through Navigraph's sign-in and charts addresses.
-    pub fenix_charts: bool,
     pub http_port: u16,
     pub started: Instant,
 }
@@ -53,27 +49,24 @@ pub fn elevated() -> bool {
     hosts::writable()
 }
 
-/// A redirect left in the hosts file (by `amdb-bridge serve` that did not stop cleanly, a
-/// crash, a killed process) for an option that is off: the A350/A380X map host, or the
-/// Fenix tablet's. While it is there, programs that use those Navigraph addresses reach
-/// nothing, so it is removed when possible, keeping the other option's hosts.
+/// Remove a stale A350/A380X redirect or the retired machine-wide Fenix sign-in redirect.
 pub fn clear_stale_redirect(settings: &Settings) -> Option<String> {
     let a350 = hosts::is_installed(super::NAVIGRAPH_AMDB_DOMAIN);
-    let fenix = super::NAVIGRAPH_EFB_DOMAINS.iter().any(|d| hosts::is_installed(d));
+    let legacy_fenix = super::LEGACY_FENIX_NAVIGRAPH_DOMAINS.iter().any(|d| hosts::is_installed(d));
     let stale_a350 = a350 && !settings.navigraph_redirect;
-    let stale_fenix = fenix && !settings.fenix_charts;
+    let stale_fenix = legacy_fenix;
     if !stale_a350 && !stale_fenix {
         return None;
     }
     if hosts::writable() {
-        return Some(match desktop::setup_redirects(a350 && !stale_a350, fenix && !stale_fenix) {
+        return Some(match desktop::setup_redirects(a350 && !stale_a350) {
             Ok(_) => "Removed a Navigraph redirect left behind by an earlier run".to_string(),
             Err(e) => format!("A Navigraph redirect was left behind by an earlier run and could not be removed: {e:#}"),
         });
     }
-    let which = if stale_a350 { "A350/A380X" } else { "Fenix A320 tablet charts" };
+    let which = if stale_a350 { "A350/A380X" } else { "retired Fenix sign-in" };
     Some(format!(
-        "A Navigraph redirect was left behind by an earlier run, so programs using those Navigraph addresses cannot reach them. Tick and untick the {which} option to remove it."
+        "A Navigraph redirect was left behind by an earlier run. Run the updated installer and allow it to restore the hosts file; the {which} redirect needs administrator permission to remove."
     ))
 }
 
@@ -113,21 +106,14 @@ pub fn start(settings: &Settings, opts: &Options) -> Result<Running> {
     if opts.navigraph_redirect && !desktop::navigraph_ready() && hosts::writable() {
         desktop::setup_navigraph(true)?;
     }
-    if opts.fenix_charts && !desktop::fenix_charts_ready() && hosts::writable() {
-        desktop::setup_fenix_charts(true)?;
-    }
     let redirected = opts.navigraph_redirect && desktop::navigraph_ready();
-    let fenix_charts = opts.fenix_charts && desktop::fenix_charts_ready();
     if opts.navigraph_redirect && !redirected {
         crate::term::warn("A350/A380X support is not set up on this computer; untick and tick its option to set it up");
     }
-    if opts.fenix_charts && !fenix_charts {
-        crate::term::warn("The Fenix A320's tablet charts are not set up on this computer; untick and tick their option to set them up");
-    }
-    if redirected || fenix_charts {
+    if redirected {
         port_free(super::DEFAULT_HTTPS_PORT)?;
-        // One certificate for every Navigraph name, whichever of them point here.
-        let m = tls::ensure_for(domain, &super::navigraph_domains(true))?;
+        // The local certificate covers only the A350/A380X map host.
+        let m = tls::ensure_for(domain, &super::navigraph_domains())?;
         https = Some((super::DEFAULT_HTTPS_PORT, m.cert_pem, m.key_pem));
     }
     if redirected {
@@ -137,12 +123,9 @@ pub fn start(settings: &Settings, opts: &Options) -> Result<Running> {
     }
     crate::term::info(&format!("Storage: {}", describe_storage(settings)));
     let store = Arc::new(make_store(&DataArgs::default(), settings)?);
-    let handle = server::start(store, Listen { http_port: Some(http_port), https })?;
+    let handle = server::start(store, Listen { http_port: Some(http_port), http_host: "127.0.0.1".to_string(), https })?;
     if redirected {
         crate::term::success("Serving the iniBuilds A350 and FlyByWire A380X too");
-    }
-    if fenix_charts {
-        crate::term::success("Serving the Fenix A320's tablet charts too");
     }
     if opts.xplane {
         if let Some(root) = crate::sources::xplane::local::detect_install() {
@@ -167,5 +150,5 @@ pub fn start(settings: &Settings, opts: &Options) -> Result<Running> {
         }
     }
     crate::term::success("Ready: load your aircraft");
-    Ok(Running { handle, redirected, fenix_charts, http_port, started: Instant::now() })
+    Ok(Running { handle, redirected, http_port, started: Instant::now() })
 }

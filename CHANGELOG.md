@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.12 (2026-10-24)
+
+- Removed the Fenix tablet chart sign-in interception. Navigraph sign-in now stays with
+  Navigraph for the Fenix EFB and other apps.
+- The installer removes the previous machine-wide sign-in redirect during upgrade,
+  while preserving the separate A350/A380X map setup.
+
 ## 1.2.11 (2026-10-14) · A330 OANS 1.0.1 · A320 OANS 1.0.9
 
 **A much smaller airport cache: update the bridge before using a cache built by this

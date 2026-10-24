@@ -45,21 +45,10 @@ pub const NAVIGRAPH_AMDB_HOST: &str = "https://amdb.api.navigraph.com";
 pub const NAVIGRAPH_AMDB_DOMAIN: &str = "amdb.api.navigraph.com";
 pub const DEFAULT_HTTPS_PORT: u16 = 443;
 
-/// The hosts the Fenix A320's flight bag calls, on top of the map's.
-///
-/// It is the one flight bag that cannot be patched: its web app is served out of an
-/// encrypted bundle by its own local gateway and exists nowhere on disk, so the addresses
-/// it calls cannot be rewritten the way every other bag's are. They are redirected
-/// instead. Read out of the app itself rather than guessed: the sign-in is the OAuth
-/// device flow, the charts are the same v2 API this bridge already answers, and the cycle
-/// is a single call of its own.
-pub const NAVIGRAPH_EFB_DOMAINS: [&str; 3] = ["identity.api.navigraph.com", "api.navigraph.com", "charts.api.navigraph.com"];
+/// Old hosts-file entries from the removed Fenix EFB sign-in interception.
+pub const LEGACY_FENIX_NAVIGRAPH_DOMAINS: [&str; 3] = ["identity.api.navigraph.com", "api.navigraph.com", "charts.api.navigraph.com"];
 
-/// Every host the redirect covers: the map's alone, or the flight bag's as well.
-pub fn navigraph_domains(with_efb: bool) -> Vec<&'static str> {
-    let mut v = vec![NAVIGRAPH_AMDB_DOMAIN];
-    if with_efb {
-        v.extend(NAVIGRAPH_EFB_DOMAINS);
-    }
-    v
+/// Host served by the A350/A380X map redirect.
+pub fn navigraph_domains() -> [&'static str; 1] {
+    [NAVIGRAPH_AMDB_DOMAIN]
 }

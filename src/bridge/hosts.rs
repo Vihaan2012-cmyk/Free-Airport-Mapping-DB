@@ -1,4 +1,4 @@
-//! Windows hosts-file redirect for the Navigraph AMDB host, added while the bridge
+//! Hosts-file redirect for the Navigraph AMDB host, added while the bridge
 //! runs and removed when it stops. Every line we write carries a marker so cleanup
 //! never touches anything else.
 
@@ -69,11 +69,6 @@ pub fn install(domain: &str) -> Result<()> {
 }
 
 /// The same for several hosts at once, written as one block.
-///
-/// The map lives on one host; the Fenix A320's flight bag wants three more -- the
-/// sign-in, the charts API and the chart cycle -- and they have to go in together or the
-/// next `install` strips the ones before it, since cleanup keys on the marker rather than
-/// on the name.
 pub fn install_all(domains: &[&str]) -> Result<()> {
     let original = read()?;
     let nl = eol(&original);

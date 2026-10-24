@@ -32,6 +32,53 @@ fn respond_json(req: Request, status: u16, body: String) {
     respond_bytes(req, status, "application/json; charset=utf-8", body.into_bytes());
 }
 
+/// Latest position reported by an MSFS panel. The standalone browser cannot read
+/// simulator variables itself, so an in-sim gauge publishes this small live sample.
+static AIRCRAFT_POSITION: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+
+fn aircraft_position(req: Request) {
+    match *req.method() {
+        Method::Get => {
+            let current = AIRCRAFT_POSITION.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let fresh = current.filter(|v| v.get("updated_ms").and_then(Value::as_i64).is_some_and(|t| chrono::Utc::now().timestamp_millis() - t <= 2500));
+            respond_json(req, 200, fresh.unwrap_or(Value::Null).to_string());
+        }
+        Method::Post => {
+            let mut req = req;
+            let mut body = String::new();
+            if let Err(e) = req.as_reader().read_to_string(&mut body) {
+                respond_json(req, 400, json!({"error": format!("could not read position: {e}")}).to_string());
+                return;
+            }
+            let parsed = serde_json::from_str::<Value>(&body);
+            let Ok(v) = parsed else {
+                respond_json(req, 400, json!({"error":"expected JSON position"}).to_string());
+                return;
+            };
+            let num = |key: &str| v.get(key).and_then(Value::as_f64);
+            let (Some(lat), Some(lon), Some(heading)) = (num("lat"), num("lon"), num("heading")) else {
+                respond_json(req, 400, json!({"error":"lat, lon and heading are required"}).to_string());
+                return;
+            };
+            if !lat.is_finite() || !lon.is_finite() || !heading.is_finite() || lat.abs() > 90.0 || lon.abs() > 180.0 {
+                respond_json(req, 400, json!({"error":"position is outside valid coordinates"}).to_string());
+                return;
+            }
+            let value = json!({
+                "lat": lat,
+                "lon": lon,
+                "heading": heading.rem_euclid(360.0),
+                "ground_speed": num("ground_speed").unwrap_or(0.0),
+                "on_ground": v.get("on_ground").and_then(Value::as_bool).unwrap_or(false),
+                "updated_ms": chrono::Utc::now().timestamp_millis(),
+            });
+            *AIRCRAFT_POSITION.lock().unwrap_or_else(|e| e.into_inner()) = Some(value);
+            respond_json(req, 200, "{\"ok\":true}".to_string());
+        }
+        _ => respond_bytes(req, 405, "text/plain; charset=utf-8", b"GET or POST only".to_vec()),
+    }
+}
+
 /// Any answer, with the CORS headers every panel browser needs.
 fn respond_bytes(req: Request, status: u16, content_type: &str, body: Vec<u8>) {
     let asked = req.headers().iter().find(|h| h.field.equiv("Access-Control-Request-Headers")).map(|h| h.value.as_str().to_string()).filter(|s| !s.trim().is_empty());
@@ -69,9 +116,9 @@ fn handle_charts(store: &Store, req: Request, path: &str) -> Option<Request> {
         respond_json(req, 200, cycle_json().to_string());
         return None;
     }
-    // The sign-in, under `/identity/...` for a patched flight bag and bare for one reached
-    // by redirecting its host, which cannot be given a prefix.
-    let identity = path.find("/identity/").map(|p| p + "/identity/".len()).or_else(|| path.find("/connect/").map(|p| p + 1));
+    // Only patched aircraft use this local sign-in endpoint. Do not answer a bare
+    // /connect request: that used to accept traffic from the retired global Fenix redirect.
+    let identity = path.find("/identity/").map(|p| p + "/identity/".len());
     if let Some(p) = identity {
         let what = path[p..].trim_matches('/').to_string();
         let port = req.headers().iter().find(|h| h.field.equiv("Host")).and_then(|h| h.value.as_str().rsplit_once(':').and_then(|(_, p)| p.parse().ok())).unwrap_or(super::DEFAULT_PORT);
@@ -630,6 +677,46 @@ fn handle(store: Arc<Store>, req: Request) {
         respond_json(req, 204, String::new());
         return;
     }
+    if path == "/amdb/aircraft-position" {
+        aircraft_position(req);
+        return;
+    }
+    if path == "/map" || path.starts_with("/map/") {
+        if *req.method() != Method::Get {
+            respond_bytes(req, 405, "text/plain; charset=utf-8", b"GET only".to_vec());
+            return;
+        }
+        let icao = params.get("icao").and_then(Value::as_str)
+            .or_else(|| path.strip_prefix("/map/").filter(|s| !s.is_empty()))
+            .or_else(|| params.get("departure").and_then(Value::as_str))
+            .or_else(|| params.get("arrival").and_then(Value::as_str))
+            .unwrap_or("").to_ascii_uppercase();
+        if icao.is_empty() {
+            let html = r#"<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>AMDB Airport Map</title><style>body{background:#050505;color:#eee;font:16px Consolas,monospace;display:grid;place-items:center;height:90vh}form{display:flex;gap:8px;flex-wrap:wrap}label{color:#8a949c;font-size:12px}input,button{font:inherit;padding:12px;background:#101418;color:white;border:1px solid #2a3540}input{width:7em}small{color:#8a949c}</style><main><h1>AMDB Airport Map</h1><form><label>DEPARTURE <input name="departure" maxlength="4" placeholder="ICAO"></label><label>ARRIVAL <input name="arrival" maxlength="4" placeholder="ICAO"></label><label>MAP AIRPORT <input name="icao" maxlength="4" placeholder="ICAO"></label><label><input id="auto" type="checkbox" checked> AUTO LOAD AT AIRCRAFT</label><button>Load map</button></form><p><small id="status">Waiting for MSFS aircraft position. Open the Airport Map toolbar panel in the simulator to enable live tracking and spawn-airport loading.</small></p></main><script>const f=document.querySelector('form'),status=document.querySelector('#status');f.addEventListener('submit',e=>{e.preventDefault();if(!f.icao.value.trim())f.icao.value=f.departure.value.trim()||f.arrival.value.trim();if(!f.icao.value.trim()&&f.auto.checked)return;const u=new URL('/map',location.origin);for(const n of ['icao','departure','arrival'])if(f[n].value.trim())u.searchParams.set(n,f[n].value.trim().toUpperCase());u.searchParams.set('auto',f.auto.checked?'1':'0');location.assign(u)});let busy=false;async function locate(){if(!f.auto.checked||busy)return;try{const r=await fetch('/amdb/aircraft-position',{cache:'no-store'}),p=await r.json();if(!p){status.textContent='No MSFS position yet. Open the Airport Map toolbar panel in the simulator.';return}status.textContent='MSFS LIVE · locating nearest airport…';const q=new URLSearchParams({lat:p.lat,lon:p.lon,radius_km:25,limit:1}),n=await fetch('/v1/nearest?'+q,{cache:'no-store'}),rows=await n.json(),a=rows[0];if(a&&a.distance_nm<=15){busy=true;const u=new URL('/map',location.origin);u.searchParams.set('icao',a.idarpt);for(const k of ['departure','arrival'])if(f[k].value.trim())u.searchParams.set(k,f[k].value.trim().toUpperCase());u.searchParams.set('auto','1');location.replace(u)}else status.textContent='MSFS LIVE · no airport within 15 NM; enter an airport manually.'}catch{status.textContent='Bridge connection lost.'}}setInterval(locate,1500);locate()</script>"#;
+            respond_bytes(req, 200, "text/html; charset=utf-8", html.as_bytes().to_vec());
+            return;
+        }
+        if icao.len() != 4 || !icao.chars().all(|c| c.is_ascii_alphanumeric()) {
+            respond_bytes(req, 400, "text/plain; charset=utf-8", b"Enter a four-character ICAO airport code.".to_vec());
+            return;
+        }
+        match store.airport(&icao) {
+            Ok(ap) => {
+                let mut collections = Map::new();
+                for name in crate::output::preview::Preview::viewer_layers() {
+                    if let Some(layer) = crate::model::ALL_LAYERS.iter().find(|l| l.name() == *name) {
+                        collections.insert((*name).to_string(), layer_collection(&ap, *layer, true, None));
+                    }
+                }
+                match crate::output::preview::render_viewer(&ap.manifest, &collections) {
+                    Ok(html) => respond_bytes(req, 200, "text/html; charset=utf-8", html.into_bytes()),
+                    Err(e) => respond_bytes(req, 500, "text/plain; charset=utf-8", format!("Could not render airport map: {e:#}").into_bytes()),
+                }
+            }
+            Err(e) => respond_bytes(req, 404, "text/plain; charset=utf-8", format!("Could not load {icao}: {e:#}").into_bytes()),
+        }
+        return;
+    }
     if let Some(p) = path.find("/xp/") {
         let rest = path[p + 4..].trim_matches('/').to_string();
         handle_xp(store, req, &rest, &params);
@@ -747,6 +834,8 @@ fn handle(store: Arc<Store>, req: Request) {
 /// tools and patched bundles. Both bind to loopback only.
 pub struct Listen {
     pub http_port: Option<u16>,
+    /// HTTP bind host. LAN access is opt-in; HTTPS redirection remains loopback-only.
+    pub http_host: String,
     /// (port, certificate PEM, private key PEM)
     pub https: Option<(u16, Vec<u8>, Vec<u8>)>,
 }
@@ -804,9 +893,9 @@ pub fn start(store: Arc<Store>, listen: Listen) -> Result<ServerHandle> {
         servers.push(Arc::new(server));
     }
     if let Some(port) = listen.http_port {
-        let addr = format!("127.0.0.1:{port}");
+        let addr = format!("{}:{port}", listen.http_host);
         let server = Server::http(&addr).map_err(|e| bind_error(&addr, e))?;
-        crate::term::info(&format!("Also on http://{addr}/v1/ for local tools"));
+        crate::term::info(&format!("HTTP (API and browser map): http://{addr}/map"));
         servers.push(Arc::new(server));
     }
     if servers.is_empty() {

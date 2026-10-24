@@ -51,7 +51,7 @@ Name: "a220map"; Description: "Install the airport moving map for the Synaptic A
 Name: "a320oans"; Description: "Add the A320 OANS airport moving map to the Fenix A320's captain navigation display"; GroupDescription: "Simulators:"
 Name: "a330oans"; Description: "Add the A330 OANS airport moving map to the Headwind A330's navigation displays"; GroupDescription: "Simulators:"
 Name: "a350"; Description: "Set up the iniBuilds A350 and FlyByWire A380X airport maps (Windows asks for administrator permission)"; GroupDescription: "Simulators:"
-Name: "fenixcharts"; Description: "Show AMDB Bridge's charts on the Fenix A320's tablet (Windows asks for administrator permission; while on, Navigraph sign-in on this computer goes to AMDB Bridge)"; GroupDescription: "Simulators:"; Flags: unchecked
+Name: "simstartup"; Description: "Start AMDB Bridge automatically when Microsoft Flight Simulator starts"; GroupDescription: "Starting up:"
 Name: "startup"; Description: "Open AMDB Bridge in the notification area when Windows starts"; GroupDescription: "Starting up:"; Flags: unchecked
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
@@ -80,7 +80,7 @@ Filename: "{app}\{#AppExe}"; Parameters: "--update-a320-oans"; StatusMsg: "Updat
 Filename: "{app}\{#AppExe}"; Parameters: "--install-a330-oans"; StatusMsg: "Adding the A330 OANS to the Headwind A330..."; Tasks: a330oans; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Parameters: "--update-a330-oans"; StatusMsg: "Updating the A330 OANS..."; Tasks: not a330oans; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Parameters: "--setup-navigraph on"; StatusMsg: "Setting up the A350 and A380X..."; Tasks: a350; Flags: runhidden waituntilterminated
-Filename: "{app}\{#AppExe}"; Parameters: "--setup-fenix-charts on"; StatusMsg: "Setting up the Fenix A320's tablet charts..."; Tasks: fenixcharts; Flags: runhidden waituntilterminated
+Filename: "{app}\amdb-bridge.exe"; Parameters: "autostart"; Tasks: simstartup; StatusMsg: "Adding AMDB Bridge to Microsoft Flight Simulator startup..."; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Parameters: "--run-at-login on"; Tasks: startup; Flags: runhidden waituntilterminated
 Filename: "{app}\{#AppExe}"; Description: "Open AMDB Bridge now"; Flags: postinstall nowait skipifsilent
 
@@ -99,9 +99,55 @@ begin
     Exec(Exe, '--quit', '', SW_HIDE, ewWaitUntilTerminated, Code);
 end;
 
+function HasLegacyFenixRedirect(): Boolean;
+var
+  Lines: TStringList;
+  I: Integer;
+  Line: String;
+  Text: String;
+begin
+  Result := False;
+  Lines := TStringList.Create;
+  try
+    if LoadStringFromFile(ExpandConstant('{win}\System32\drivers\etc\hosts'), Text) then
+    begin
+      Lines.Text := Text;
+      for I := 0 to Lines.Count - 1 do
+      begin
+        Line := Lowercase(Lines[I]);
+        if (Pos('# amdb-bridge', Line) > 0) and
+           ((Pos('identity.api.navigraph.com', Line) > 0) or
+            (Pos('api.navigraph.com', Line) > 0) or
+            (Pos('charts.api.navigraph.com', Line) > 0)) then
+        begin
+          Result := True;
+          Exit;
+        end;
+      end;
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Code: Integer;
 begin
   QuitRunningCopy(ExpandConstant('{app}\{#AppExe}'));
+  if FileExists(ExpandConstant('{app}\{#AppExe}')) and HasLegacyFenixRedirect() then
+  begin
+    if not Exec(ExpandConstant('{app}\{#AppExe}'), '--setup-fenix-charts off', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    begin
+      Result := 'Could not run the one-time cleanup for the old Fenix sign-in redirect.';
+      Exit;
+    end;
+    if Code <> 0 then
+    begin
+      Result := 'Could not remove the old Fenix sign-in redirect. Allow the administrator prompt and try again.';
+      Exit;
+    end;
+  end;
   Result := '';
 end;
 

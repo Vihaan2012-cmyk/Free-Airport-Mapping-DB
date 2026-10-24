@@ -12,6 +12,10 @@ drag to pan. The same actions are bindable as H:AMDB_OANS_TOGGLE,
 H:AMDB_OANS_RANGE_DEC and H:AMDB_OANS_RANGE_INC, and for the first officer's
 side H:AMDB_OANS_FO_TOGGLE, H:AMDB_OANS_FO_RANGE_DEC and H:AMDB_OANS_FO_RANGE_INC.
 
+The aircraft OANS instrument also sends live position to the AMDB Bridge for its
+standalone browser map, whether or not the separate toolbar map window is open. Keep
+AMDB Bridge running, then open http://127.0.0.1:8770/map in a browser to follow the aircraft.
+
 The airport shown follows the aircraft: on the ground, or below 5,000 ft above
 it, the nearest airport within 20 NM (the departure, then the destination on
 approach). Pick another on the MAP DATA page.

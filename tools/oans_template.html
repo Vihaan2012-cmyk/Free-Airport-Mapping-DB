@@ -1,63 +1,88 @@
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover>
 <title>OANS Preview</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=B612+Mono:wght@400;700&display=swap">
 <style>
-  /* Single-theme by design: an avionics display is always a black ground. */
-  :root {
-    --ground: #050505;
-    --rwy: #f2f2f2;
-    --twy: #6a6a6a;
-    --apron: #4f4f4f;
-    --shoulder: #2a2a2a;
-    --road: #3a3a3a;
-    --bldg: #2f6fd6;
-    --terminal: #33c9d9;
-    --water: #16344f;
-    --line: #9c9c9c;
-    --label: #f2e11c;
-    --white: #ffffff;
-    --green: #43d15a;
-    --magenta: #ff5ce0;
-    --cyan: #33c9d9;
-    --panel: #101418;
-    --panel-border: #2a3540;
-    --muted: #8a949c;
+  :root { color-scheme:dark; --ground:#10151d; --rwy:#e8edf3; --twy:#667382; --apron:#46515e; --shoulder:#2d3743; --road:#3c4855; --bldg:#3977c5; --terminal:#38aab4; --water:#183d5a; --line:#aeb8c4; --label:#f1c75b; --white:#f3f6fa; --green:#62cf91; --magenta:#e879c9; --cyan:#55c4d0; --panel:#202833; --panel-border:#394554; --muted:#a8b3c0; --surface-shadow:0 8px 28px #0004; }
+  :root[data-theme="light"] { color-scheme:light; --ground:#e9eef4; --rwy:#d2d9e2; --twy:#8793a1; --apron:#bdc7d2; --shoulder:#aab5c1; --road:#9aa7b5; --bldg:#5f91ce; --terminal:#40aab3; --water:#a8c8df; --line:#68788a; --label:#8b6200; --white:#202b38; --green:#167044; --magenta:#a42f83; --cyan:#087f8c; --panel:#ffffff; --panel-border:#d8e0e9; --muted:#657386; --surface-shadow:0 8px 28px #26364a20; }
+  html,body { height:100%; } body { margin:0; background:var(--ground); color:var(--white); font-family:Inter,ui-sans-serif,system-ui,"Segoe UI",sans-serif; overflow:hidden; transition:background .18s,color .18s; }
+  #wrap { position:relative;width:100%;height:100vh;height:100dvh;min-height:100svh;overflow:hidden;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);box-sizing:border-box; } #wrap:fullscreen,#wrap.pseudo-fullscreen { width:100vw;height:100vh;height:100dvh;min-height:0;background:var(--ground); } #wrap.pseudo-fullscreen { position:fixed;inset:0;z-index:9999; } canvas { display:block;width:100%;height:100%;touch-action:none;cursor:grab; } canvas.dragging { cursor:grabbing; }
+  .hud { position:absolute;pointer-events:none;font-size:12px;letter-spacing:.02em;text-transform:uppercase; } .hud.tl { left:16px;top:14px;display:grid;grid-template-columns:auto auto;column-gap:12px;row-gap:4px;padding:12px 14px;background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--panel-border);border-radius:12px;box-shadow:var(--surface-shadow); } .hud.tr { right:16px;top:14px;text-align:right; } .hud.bl { left:16px;bottom:16px;color:var(--cyan);padding:9px 12px;background:color-mix(in srgb,var(--panel) 92%,transparent);border:1px solid var(--panel-border);border-radius:10px;box-shadow:var(--surface-shadow); } .hud .k { color:var(--muted);font-weight:600; } .hud .v { color:var(--white);font-weight:650; } .hud .m { color:var(--magenta); } .hud .c { color:var(--cyan); } .hud .y { color:var(--label); }
+  .ctl { position:absolute;right:16px;bottom:16px;display:flex;gap:7px;align-items:center;flex-wrap:wrap;justify-content:flex-end; } button,select,input { font:inherit; } .ctl button,.ctl label,#airport-form input,#airport-form button,#route-panel button,#route-panel select,#route-panel input,#settings-toggle,#route-toggle,#theme-toggle,#fullscreen-toggle,#settings-panel button,#settings-panel select { font-size:12px;background:var(--panel);color:var(--white);border:1px solid var(--panel-border);padding:9px 12px;border-radius:9px;box-shadow:var(--surface-shadow); } button { cursor:pointer; } button:hover { filter:brightness(1.08); } button:focus-visible,input:focus-visible,select:focus-visible { outline:2px solid var(--cyan);outline-offset:2px; }
+  #airport-form { position:absolute;z-index:2;left:50%;top:14px;transform:translateX(-50%);display:flex;gap:6px;padding:7px;background:color-mix(in srgb,var(--panel) 94%,transparent);border:1px solid var(--panel-border);border-radius:12px;box-shadow:var(--surface-shadow); } #airport-form input,#airport-form button { box-shadow:none;padding:7px 9px; } #airport-form input { width:64px; } #airport-form .airport-field { display:flex;gap:5px;align-items:center;color:var(--muted);font-size:10px;font-weight:650; } #airport-form .auto-field { display:flex;align-items:center;gap:4px;color:var(--muted);font-size:10px;white-space:nowrap; }
+  #h-feed { color:var(--muted);margin-top:3px;font-size:10px; }
+  #route-toggle,#settings-toggle,#theme-toggle,#fullscreen-toggle { position:absolute;z-index:2;right:16px;min-width:98px; } #route-toggle { top:14px; } #settings-toggle { top:58px; } #theme-toggle { top:102px; } #fullscreen-toggle { top:146px; }
+  #settings-panel,#route-panel { position:absolute;z-index:5;top:0;height:100%;box-sizing:border-box;overflow:auto;background:var(--panel);border-color:var(--panel-border);box-shadow:var(--surface-shadow);transition:transform .18s ease; } #settings-panel { right:0;width:min(310px,92vw);border-left:1px solid var(--panel-border);transform:translateX(105%); } #settings-panel.open { transform:translateX(0); } #route-panel { left:0;width:min(340px,92vw);padding-bottom:18px;border-right:1px solid var(--panel-border);transform:translateX(-105%);display:flex;flex-direction:column; } #route-panel.open { transform:translateX(0); }
+  #settings-panel header,#route-panel header { position:sticky;top:0;padding:16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--panel-border);background:var(--panel); } #settings-panel h2,#route-panel h2 { margin:0;font-size:15px;font-weight:650; } #settings-panel section,#route-panel section { padding:14px;display:grid;gap:10px;border-bottom:1px solid var(--panel-border); } #settings-panel label { display:flex;justify-content:space-between;align-items:center;gap:10px;color:var(--muted);font-size:12px; } #settings-panel label input[type="range"] { width:120px; } #settings-panel label select { min-width:75px; } #settings-panel .setting-note { color:var(--muted);font-size:11px;line-height:1.5; } #route-panel label { display:grid;gap:5px;color:var(--muted);font-size:11px;text-transform:uppercase; } #route-panel input { text-transform:uppercase; } #route-panel .route-actions { display:flex;gap:7px; } #route-panel button[aria-pressed="true"],.ctl button[aria-pressed="true"] { background:var(--cyan);color:#10202a;border-color:var(--cyan); } #route-panel .route-note,#route-status { padding:10px 12px;color:var(--muted);font-size:11px;line-height:1.5; } #route-status { color:var(--cyan); }
+  .ctl label { display:inline-flex;gap:6px;align-items:center; } .legend { position:absolute;left:16px;top:150px;background:var(--panel);border:1px solid var(--panel-border);border-radius:10px;padding:10px 12px;font-size:11px;line-height:1.8;color:var(--muted);display:none;box-shadow:var(--surface-shadow); } .legend.show { display:block; } .legend i { display:inline-block;width:14px;height:9px;margin-right:8px;vertical-align:middle; }
+  @media(max-width:760px) {
+    .hud.tl { top:calc(10px + env(safe-area-inset-top));left:calc(10px + env(safe-area-inset-left));padding:8px 10px;gap:3px 8px;font-size:10px; }
+    .hud.tr { display:none; }
+    #route-toggle,#settings-toggle,#theme-toggle,#fullscreen-toggle { right:calc(10px + env(safe-area-inset-right));width:58px;min-width:0;height:34px;padding:4px 5px;font-size:9px;line-height:1.1;text-align:center; }
+    #route-toggle { top:calc(10px + env(safe-area-inset-top)); } #settings-toggle { top:calc(10px + env(safe-area-inset-top));right:calc(74px + env(safe-area-inset-right)); } #theme-toggle { top:calc(50px + env(safe-area-inset-top)); } #fullscreen-toggle { top:calc(50px + env(safe-area-inset-top));right:calc(74px + env(safe-area-inset-right)); }
+    #airport-form { left:10px;right:10px;top:calc(104px + env(safe-area-inset-top));transform:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;padding:6px; }
+    #airport-form .airport-field { min-width:0;justify-content:space-between;font-size:9px; } #airport-form input { box-sizing:border-box;width:48px;min-width:0;padding:6px 4px;font-size:11px; } #airport-form .auto-field { justify-content:center;font-size:9px; } #airport-form button { padding:6px 8px;font-size:10px; }
+    .ctl { left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));gap:5px;justify-content:center; } .ctl button { padding:7px 8px;font-size:10px; } #ranges { display:flex;gap:4px; } #ranges button { padding:7px 6px;font-size:9px; }
+    .hud.bl { left:10px;bottom:calc(58px + env(safe-area-inset-bottom));padding:6px 8px;font-size:9px; } .legend { top:calc(164px + env(safe-area-inset-top));left:10px; }
   }
-  html, body { height: 100%; }
-  body { margin: 0; background: var(--ground); color: var(--white); font-family: "B612 Mono", Consolas, "Courier New", monospace; overflow: hidden; }
-  #wrap { position: relative; width: 100vw; height: 100vh; padding-inline: 0; }
-  canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
-  canvas.dragging { cursor: grabbing; }
-  .hud { position: absolute; pointer-events: none; font-size: clamp(12px, 1.6vw, 18px); letter-spacing: 0.02em; text-transform: uppercase; }
-  .hud.tl { left: 12px; top: 8px; display: grid; grid-template-columns: auto auto; column-gap: 12px; row-gap: 2px; }
-  .hud.tr { right: 12px; top: 8px; text-align: right; }
-  .hud.bl { left: 12px; bottom: 10px; color: var(--cyan); }
-  .hud .k { color: var(--white); }
-  .hud .v { color: var(--green); }
-  .hud .m { color: var(--magenta); }
-  .hud .c { color: var(--cyan); }
-  .hud .y { color: var(--label); }
-  .ctl { position: absolute; right: 12px; bottom: 10px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
-  .ctl button, .ctl label { font: inherit; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; background: var(--panel); color: var(--white); border: 1px solid var(--panel-border); padding: 6px 9px; border-radius: 2px; cursor: pointer; }
-  .ctl button[aria-pressed="true"] { background: var(--cyan); color: #000; border-color: var(--cyan); }
-  .ctl button:focus-visible, .ctl input:focus-visible { outline: 2px solid var(--label); outline-offset: 1px; }
-  .ctl label { display: inline-flex; gap: 6px; align-items: center; }
-  .legend { position: absolute; left: 12px; top: 96px; background: rgba(16,20,24,0.85); border: 1px solid var(--panel-border); padding: 8px 10px; font-size: 11px; line-height: 1.7; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); display: none; }
-  .legend.show { display: block; }
-  .legend i { display: inline-block; width: 14px; height: 9px; margin-right: 8px; vertical-align: middle; }
-  @media (max-width: 600px) { .hud.tl { font-size: 11px; } .legend { top: 120px; } }
-  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  @media(max-width:380px) { .hud.tl { column-gap:6px;font-size:9px; } #airport-form { left:6px;right:6px;gap:3px; } #airport-form .airport-field { gap:2px;font-size:8px; } #airport-form input { width:42px;font-size:10px; } .ctl button { padding:6px 5px; } #ranges button { padding:6px 4px;font-size:8px; } }
+  @media(max-height:520px) and (orientation:landscape) {
+    #airport-form { top:calc(8px + env(safe-area-inset-top));left:50%;right:auto;transform:translateX(-50%);display:flex;flex-wrap:nowrap;gap:3px;padding:4px; }
+    #airport-form .airport-field { font-size:8px; } #airport-form input { width:42px;padding:5px 4px;font-size:10px; } #airport-form button { padding:5px 7px;font-size:10px; }
+    #route-toggle,#settings-toggle,#theme-toggle,#fullscreen-toggle { right:calc(8px + env(safe-area-inset-right));width:68px;min-width:68px;height:30px;padding:4px;font-size:9px; } #route-toggle { top:calc(8px + env(safe-area-inset-top)); } #settings-toggle { top:calc(44px + env(safe-area-inset-top));right:calc(80px + env(safe-area-inset-right)); } #theme-toggle { top:calc(44px + env(safe-area-inset-top)); } #fullscreen-toggle { top:calc(80px + env(safe-area-inset-top)); }
+    .hud.tl { top:calc(8px + env(safe-area-inset-top));left:calc(8px + env(safe-area-inset-left));padding:6px 8px;font-size:9px; } .hud.tr { display:none; } .ctl { left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom));gap:4px; } .ctl button { padding:5px 7px;font-size:9px; } #ranges { display:flex;gap:3px; } #ranges button { padding:5px 5px;font-size:8px; } .hud.bl { left:8px;bottom:calc(44px + env(safe-area-inset-bottom));padding:4px 7px;font-size:8px; } .legend { top:auto;bottom:48px;left:8px; }
+  }
+  @media(prefers-reduced-motion:reduce) { * { transition:none!important; } }
 </style>
 
 <div id="wrap">
   <canvas id="map" aria-label="Airport moving map"></canvas>
+  <form id="airport-form" action="/map" method="get">
+    <label class="airport-field">DEP <input name="departure" maxlength="4" pattern="[A-Za-z0-9]{4}" placeholder="ICAO" aria-label="Departure airport"></label>
+    <label class="airport-field">ARR <input name="arrival" maxlength="4" pattern="[A-Za-z0-9]{4}" placeholder="ICAO" aria-label="Arrival airport"></label>
+    <label class="airport-field">MAP <input name="icao" maxlength="4" pattern="[A-Za-z0-9]{4}" placeholder="ICAO" aria-label="Airport map ICAO"></label>
+    <label class="auto-field"><input type="checkbox" id="auto-airport"> AUTO</label>
+    <button type="submit">Load</button>
+  </form>
+  <button id="route-toggle" type="button">Route</button>
+  <button id="settings-toggle" type="button">Settings</button>
+  <button id="theme-toggle" type="button" aria-label="Switch to light mode">Light mode</button>
+  <button id="fullscreen-toggle" type="button" aria-label="Enter fullscreen">Fullscreen</button>
+  <aside id="settings-panel" aria-label="Map display settings">
+    <header><h2>Map settings</h2><button id="settings-close" type="button">Close</button></header>
+    <section>
+      <label><span>Taxi / guidance lines</span><input type="checkbox" id="c-lines" checked></label>
+      <label><span>Stand labels</span><input type="checkbox" id="c-stands" checked></label>
+      <label><span>Buildings</span><input type="checkbox" id="c-bldg"></label>
+      <label><span>Runway marks</span><input type="checkbox" id="c-mark"></label>
+      <label><span>Automatic zoom detail</span><input type="checkbox" id="auto-detail" checked></label>
+      <label><span>Detail threshold</span><select id="detail-threshold"><option value="0.2">0.2 NM</option><option value="0.5" selected>0.5 NM</option><option value="1">1 NM</option></select></label>
+      <label><span>Map label size</span><input id="label-scale" type="range" min="90" max="160" step="5" value="125"></label>
+      <label><span>Stand label size</span><input id="stand-label-scale" type="range" min="60" max="110" step="5" value="80"></label>
+      <div class="setting-note">With automatic detail on, stand labels show at or inside the threshold; buildings show outside it when enabled. Turn automatic detail off to control both layers manually.</div>
+    </section>
+  </aside>
+  <aside id="route-panel" aria-label="Taxi route and runway highlights">
+    <header><h2>Taxi route &amp; runways</h2><button id="route-close" type="button">Close</button></header>
+    <section>
+      <label>Takeoff runway on this map<select id="takeoff-runway"><option value="">None</option></select></label>
+      <label>Landing runway on this map<select id="landing-runway"><option value="">None</option></select></label>
+    </section>
+    <section>
+      <label>Taxi clearance<input id="taxi-clearance" placeholder="A B C RWY 09" autocomplete="off"></label>
+      <div class="route-actions"><button id="draw-taxi-route" type="button" aria-pressed="false">Draw on map</button><button id="undo-taxiway" type="button">Undo click</button></div>
+      <div class="route-actions"><button id="apply-taxi-route" type="button">Apply route</button><button id="clear-taxi-route" type="button">Clear</button></div>
+      <div class="route-note">Choose a runway, select Draw on map, then click taxiways in order. Their names are added automatically and the route updates after each click. Drag the map to pan; a drag will not add a taxiway. You can edit the clearance directly. The aircraft's live position starts the route.</div>
+      <div id="route-status">Runways shown are for the airport currently loaded on the map.</div>
+    </section>
+  </aside>
   <div class="hud tl">
     <span class="k">ARPT</span><span class="v" id="h-icao"></span>
     <span class="k">RWY</span><span class="v" id="h-rwy"></span>
     <span class="k">ELEV</span><span class="v" id="h-elev"></span>
     <span class="k">FEAT</span><span class="v" id="h-feat"></span>
   </div>
-  <div class="hud tr"><div id="h-name"></div><div class="c" id="h-src"></div></div>
-  <div class="hud bl" id="h-range"></div>
+  <div class="hud tr"><div id="h-name"></div></div>
+  <div class="hud bl"><div id="h-range"></div><div id="h-feed">WAITING FOR MSFS FEED</div></div>
   <div class="legend" id="legend">
     <div><i style="background:var(--rwy)"></i>Runway</div>
     <div><i style="background:var(--twy)"></i>Taxiway</div>
@@ -70,11 +95,9 @@
     <div><i style="background:var(--label)"></i>Labels</div>
   </div>
   <div class="ctl">
+    <button type="button" id="b-follow" aria-pressed="true">Follow aircraft</button>
     <button type="button" id="b-legend">Legend</button>
-    <label><input type="checkbox" id="c-lines" checked> Lines</label>
-    <label><input type="checkbox" id="c-stands" checked> Stands</label>
-    <label><input type="checkbox" id="c-bldg" checked> Bldg</label>
-    <label><input type="checkbox" id="c-mark"> RWY marks</label>
+    <button type="button" id="settings-open">Settings</button>
     <span id="ranges"></span>
   </div>
 </div>
@@ -83,10 +106,48 @@
 const DATA = /*__DATA__*/null;
 (function () {
   const cv = document.getElementById('map');
+  const wrap = document.getElementById('wrap');
   const ctx = cv.getContext('2d');
+  const themeKey = 'amdb-map-theme-v1';
+  const root = document.documentElement;
+  try { root.dataset.theme = localStorage.getItem(themeKey) || 'dark'; } catch { root.dataset.theme = 'dark'; }
+  const themeButton = document.getElementById('theme-toggle');
+  function syncThemeButton() { const light = root.dataset.theme === 'light'; themeButton.textContent = light ? 'Dark mode' : 'Light mode'; themeButton.setAttribute('aria-label', light ? 'Switch to dark mode' : 'Switch to light mode'); }
+  syncThemeButton();
   const css = getComputedStyle(document.documentElement);
   const C = (n) => css.getPropertyValue(n).trim();
   const man = DATA.manifest, L = DATA.layers;
+  const params = new URLSearchParams(location.search);
+  const settingsKey = 'amdb-map-settings-v1';
+  let savedSettings = {};
+  try { savedSettings = JSON.parse(localStorage.getItem(settingsKey) || '{}') || {}; } catch {}
+  for (const id of ['c-lines', 'c-stands', 'c-bldg', 'c-mark', 'auto-detail', 'detail-threshold', 'label-scale', 'stand-label-scale']) {
+    const el = document.getElementById(id);
+    if (savedSettings[id] !== undefined) {
+      if (el.type === 'checkbox') el.checked = !!savedSettings[id];
+      else el.value = savedSettings[id];
+    }
+  }
+  document.querySelector('[name="icao"]').value = man.icao;
+  document.querySelector('[name="departure"]').value = params.get('departure') || '';
+  document.querySelector('[name="arrival"]').value = params.get('arrival') || '';
+  const autoAirport = document.getElementById('auto-airport');
+  autoAirport.checked = params.get('auto') !== '0';
+  document.getElementById('airport-form').addEventListener('submit', event => {
+    event.preventDefault();
+    const mapField = document.querySelector('[name="icao"]');
+    if (!mapField.value.trim()) mapField.value = document.querySelector('[name="departure"]').value.trim() || document.querySelector('[name="arrival"]').value.trim();
+    if (!mapField.value.trim()) { mapField.focus(); return; }
+    const url = new URL('/map', location.origin);
+    url.searchParams.set('icao', mapField.value.trim().toUpperCase());
+    for (const name of ['departure', 'arrival']) {
+      const value = document.querySelector(`[name="${name}"]`).value.trim().toUpperCase();
+      if (value) url.searchParams.set(name, value);
+    }
+    url.searchParams.set('auto', autoAirport.checked ? '1' : '0');
+    location.assign(url);
+  });
+  themeButton.addEventListener('click', () => { root.dataset.theme = root.dataset.theme === 'light' ? 'dark' : 'light'; try { localStorage.setItem(themeKey, root.dataset.theme); } catch {} syncThemeButton(); draw(); });
   const lat0 = man.arp[0], lon0 = man.arp[1];
   const kLat = 111195, kLon = 111195 * Math.cos(lat0 * Math.PI / 180);
   const NM = 1852;
@@ -107,6 +168,14 @@ const DATA = /*__DATA__*/null;
 
   // View state.
   let cx = 0, cy = 0, rangeNm = 2, W = 0, H = 0, dpr = 1;
+  let aircraft = null, followAircraft = true;
+  let taxiRoute = null;
+  let takeoffRunway = '';
+  let landingRunway = '';
+  let drawnTaxiways = [];
+  let drawTaxiRoute = false;
+  let nearestCheckAt = 0;
+  let airportRedirecting = false;
   const RANGES = [0.2, 0.5, 1, 2, 5];
   const scale = () => (Math.min(W, H) * 0.42) / (rangeNm * NM); // px per metre
   const S = (p) => [W / 2 + (p[0] - cx) * scale(), H / 2 - (p[1] - cy) * scale()];
@@ -170,13 +239,18 @@ const DATA = /*__DATA__*/null;
   }
 
   function draw() {
+    if (aircraft && followAircraft) { cx = aircraft.p[0]; cy = aircraft.p[1]; }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = C('--ground'); ctx.fillRect(0, 0, W, H);
     const sc = scale();
+    const autoDetail = document.getElementById('auto-detail').checked;
+    const detailThreshold = Number(document.getElementById('detail-threshold').value);
     const showLines = document.getElementById('c-lines').checked;
-    const showStands = document.getElementById('c-stands').checked;
-    const showBldg = document.getElementById('c-bldg').checked;
+    const showStands = document.getElementById('c-stands').checked && (!autoDetail || rangeNm <= detailThreshold);
+    const showBldg = document.getElementById('c-bldg').checked && (!autoDetail || rangeNm > detailThreshold);
     const showMarks = document.getElementById('c-mark').checked;
+    const labelScale = Number(document.getElementById('label-scale').value) / 100;
+    const standLabelScale = Number(document.getElementById('stand-label-scale').value) / 100;
 
     fillLayer('water', C('--water'));
     fillLayer('serviceroad', C('--road'));
@@ -190,6 +264,9 @@ const DATA = /*__DATA__*/null;
     fillLayer('stopway', '#8a8a8a');
     fillLayer('runwaydisplacedarea', '#d0d0d0');
     fillLayer('runwayelement', C('--rwy'));
+    const runwayEnds = (id) => String(id || '').toUpperCase().split(/[/.\-]/).map(x => x.trim());
+    if (takeoffRunway) fillLayer('runwayelement', 'rgba(67,209,90,0.52)', f => runwayEnds(f.p.idrwy).includes(takeoffRunway));
+    if (landingRunway) fillLayer('runwayelement', 'rgba(51,201,217,0.48)', f => runwayEnds(f.p.idrwy).includes(landingRunway));
     fillLayer('constructionarea', 'rgba(255,92,224,0.25)');
     if (showMarks) fillLayer('runwaymarking', '#3a3a3a');
     if (showBldg) {
@@ -207,8 +284,18 @@ const DATA = /*__DATA__*/null;
     }
     fillLayer('hotspot', 'rgba(255,92,224,0.2)');
 
-    // Range ring and own-aircraft symbol at the ARP (north up).
-    const c = S([0, 0]);
+    if (taxiRoute && taxiRoute.icao === man.icao && Array.isArray(taxiRoute.points) && taxiRoute.points.length > 1) {
+      const routePoints = taxiRoute.points.map(([x, y]) => S([x, y]));
+      ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.beginPath(); routePoints.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+      ctx.strokeStyle = '#101418'; ctx.lineWidth = 9; ctx.stroke();
+      ctx.strokeStyle = C('--label'); ctx.lineWidth = 5; ctx.stroke();
+      ctx.setLineDash([10, 6]); ctx.strokeStyle = C('--white'); ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.setLineDash([]); ctx.restore();
+    }
+
+    // Range ring and own-aircraft symbol; live telemetry keeps this centred while taxiing.
+    const c = S(aircraft ? aircraft.p : [0, 0]);
     ctx.strokeStyle = C('--white'); ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(c[0], c[1], rangeNm * NM * sc, 0, Math.PI * 2); ctx.stroke();
     ctx.setLineDash([6, 6]); ctx.beginPath(); ctx.arc(c[0], c[1], rangeNm * NM * sc / 2, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
@@ -216,18 +303,19 @@ const DATA = /*__DATA__*/null;
     const R = rangeNm * NM * sc;
     ctx.fillText('N', c[0], c[1] - R - 12); ctx.fillText('S', c[0], c[1] + R + 12);
     ctx.fillText('E', c[0] + R + 12, c[1]); ctx.fillText('W', c[0] - R - 12, c[1]);
-    ctx.strokeStyle = C('--label'); ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(c[0], c[1] - 14); ctx.lineTo(c[0], c[1] + 8); ctx.moveTo(c[0] - 12, c[1] - 2); ctx.lineTo(c[0] + 12, c[1] - 2); ctx.moveTo(c[0] - 5, c[1] + 7); ctx.lineTo(c[0] + 5, c[1] + 7); ctx.stroke();
+    ctx.save(); ctx.translate(c[0], c[1]); ctx.rotate((aircraft ? aircraft.heading : 0) * Math.PI / 180);
+    ctx.fillStyle = C('--label'); ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, -15); ctx.lineTo(9, 11); ctx.lineTo(0, 6); ctx.lineTo(-9, 11); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
 
     // Labels: taxiways (yellow), runways (white), stands (cyan).
     const placed = new Set();
     const twy = [];
     for (const f of (F.taxiwayguidanceline || [])) if (f.p.idlin && lineLength(f.g.c) > 60) twy.push({ at: centroid(f.g), text: f.p.idlin });
     for (const f of (F.taxiwayelement || [])) if (f.p.idlin) twy.push({ at: centroid(f.g), text: f.p.idlin });
-    labels(placed, twy, C('--label'), rangeNm <= 1 ? 14 : 12, rangeNm <= 1 ? 70 : 110);
+    labels(placed, twy, C('--label'), Math.round((rangeNm <= 1 ? 14 : 12) * labelScale), rangeNm <= 1 ? 70 : 110);
     const rwys = (F.runwaythreshold || []).map(f => ({ at: f.g.c, text: f.p.idthr }));
-    labels(placed, rwys, C('--white'), 14, 20);
-    if (showStands && rangeNm <= 1) labels(placed, (F.parkingstandlocation || []).map(f => ({ at: f.g.c, text: f.p.idstd })), C('--cyan'), 11, 28);
+    labels(placed, rwys, C('--white'), Math.round(14 * labelScale), 20);
+    if (showStands) labels(placed, (F.parkingstandlocation || []).map(f => ({ at: f.g.c, text: f.p.idstd })), C('--cyan'), Math.max(8, Math.round(11 * standLabelScale)), 28);
     if (rangeNm <= 0.5) labels(placed, (F.aerodromesign || []).filter(f => f.p.signtype === 1).map(f => ({ at: f.g.c, text: f.p.msgfront })), '#ff6b6b', 10, 40);
     document.getElementById('h-range').textContent = rangeNm + ' NM';
   }
@@ -236,7 +324,6 @@ const DATA = /*__DATA__*/null;
   const arp = (L.aerodromereferencepoint || [])[0];
   document.getElementById('h-icao').textContent = man.icao + (man.iata ? ' / ' + man.iata : '');
   document.getElementById('h-name').textContent = (man.name || '').toUpperCase();
-  document.getElementById('h-src').textContent = 'SRC ' + man.sources.join(' + ');
   document.getElementById('h-elev').textContent = man.elevation_ft != null ? Math.round(man.elevation_ft) + ' FT' : '---';
   const rw = (L.runwayelement || []).map(f => f.p.idrwy).filter((v, i, a) => v && a.indexOf(v) === i);
   document.getElementById('h-rwy').textContent = rw.join('  ') || '---';
@@ -252,21 +339,282 @@ const DATA = /*__DATA__*/null;
     rangesEl.appendChild(b);
   });
   document.getElementById('b-legend').onclick = () => document.getElementById('legend').classList.toggle('show');
-  ['c-lines', 'c-stands', 'c-bldg', 'c-mark'].forEach(id => document.getElementById(id).addEventListener('change', draw));
+  const followButton = document.getElementById('b-follow');
+  followButton.onclick = () => { followAircraft = !followAircraft; followButton.setAttribute('aria-pressed', String(followAircraft)); if (followAircraft && aircraft) { cx = aircraft.p[0]; cy = aircraft.p[1]; } draw(); };
+  const settingIds = ['c-lines', 'c-stands', 'c-bldg', 'c-mark', 'auto-detail', 'detail-threshold', 'label-scale', 'stand-label-scale'];
+  function saveSettings() {
+    const values = {};
+    for (const id of settingIds) {
+      const el = document.getElementById(id);
+      values[id] = el.type === 'checkbox' ? el.checked : el.value;
+    }
+    try { localStorage.setItem(settingsKey, JSON.stringify(values)); } catch {}
+    draw();
+  }
+  settingIds.forEach(id => document.getElementById(id).addEventListener(id.includes('scale') ? 'input' : 'change', saveSettings));
+  const settingsPanel = document.getElementById('settings-panel');
+  const openSettings = () => settingsPanel.classList.add('open');
+  document.getElementById('settings-toggle').onclick = openSettings;
+  document.getElementById('settings-open').onclick = openSettings;
+  document.getElementById('settings-close').onclick = () => settingsPanel.classList.remove('open');
 
-  // Pan & zoom.
+  // Taxi route and runway overlays. The bridge routes the clearance over its airport
+  // network and keeps the resulting path available to the aircraft OANS as well.
+  const routePanel = document.getElementById('route-panel');
+  const routeStatus = document.getElementById('route-status');
+  const taxiClearanceInput = document.getElementById('taxi-clearance');
+  const runwayEnds = [...new Set((F.runwayelement || []).flatMap(f => String(f.p.idrwy || '').toUpperCase().split(/[/.\-]/).map(x => x.trim()).filter(Boolean)))].sort();
+  for (const id of ['takeoff-runway', 'landing-runway']) {
+    const select = document.getElementById(id);
+    runwayEnds.forEach(end => { const option = document.createElement('option'); option.value = end; option.textContent = `RWY ${end}`; select.appendChild(option); });
+    select.addEventListener('change', () => {
+      if (id === 'takeoff-runway') takeoffRunway = select.value; else landingRunway = select.value;
+      draw();
+      if (drawTaxiRoute && (takeoffRunway || landingRunway)) { updateDrawnClearance(); void applyTaxiRoute(); }
+    });
+  }
+  document.getElementById('route-toggle').onclick = () => routePanel.classList.add('open');
+  document.getElementById('route-close').onclick = () => routePanel.classList.remove('open');
+  const drawRouteButton = document.getElementById('draw-taxi-route');
+  function updateDrawnClearance() {
+    const end = takeoffRunway || landingRunway;
+    taxiClearanceInput.value = [...drawnTaxiways, ...(end ? ['RWY', end] : [])].join(' ');
+  }
+  drawRouteButton.onclick = () => {
+    drawTaxiRoute = !drawTaxiRoute;
+    drawRouteButton.setAttribute('aria-pressed', String(drawTaxiRoute));
+    cv.style.cursor = drawTaxiRoute ? 'crosshair' : '';
+    if (drawTaxiRoute) {
+      drawnTaxiways = [];
+      if (!takeoffRunway && !landingRunway) routeStatus.textContent = 'Select a takeoff or landing runway first, then click taxiways on the map.';
+      else routeStatus.textContent = 'Click taxiways in the order you want to use them.';
+      updateDrawnClearance();
+    }
+  };
+  document.getElementById('undo-taxiway').onclick = () => {
+    drawnTaxiways.pop(); updateDrawnClearance();
+    if (drawnTaxiways.length && (takeoffRunway || landingRunway)) void applyTaxiRoute();
+    else { taxiRoute = null; draw(); routeStatus.textContent = 'Last taxiway click removed.'; }
+  };
+  function pointSegmentDistance(p, a, b) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], d2 = dx * dx + dy * dy;
+    const t = d2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / d2)) : 0;
+    return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+  }
+  function taxiwayAt(p) {
+    const candidates = [];
+    for (const f of F.taxiwayelement || []) {
+      if (!f.p.idlin) continue;
+      const polygons = f.g.t === 'Polygon' ? [f.g.c] : f.g.t === 'MultiPolygon' ? f.g.c : [];
+      for (const rings of polygons) {
+        const ring = rings[0] || []; let inside = false;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+          const a = ring[i], b = ring[j];
+          if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / ((b[1] - a[1]) || 1e-9) + a[0]) inside = !inside;
+        }
+        if (inside) { candidates.push({ name: String(f.p.idlin).toUpperCase(), distance: 0 }); break; }
+      }
+    }
+    for (const f of F.taxiwayguidanceline || []) {
+      if (!f.p.idlin || f.g.t !== 'LineString') continue;
+      let distance = Infinity;
+      for (let i = 1; i < f.g.c.length; i++) distance = Math.min(distance, pointSegmentDistance(p, f.g.c[i - 1], f.g.c[i]));
+      candidates.push({ name: String(f.p.idlin).toUpperCase(), distance });
+    }
+    candidates.sort((a, b) => a.distance - b.distance);
+    const nearest = candidates[0];
+    return nearest && nearest.distance <= Math.min(90, Math.max(35, 18 / scale())) ? nearest.name : null;
+  }
+  async function addDrawnTaxiway(screenX, screenY) {
+    if (!takeoffRunway && !landingRunway) { routeStatus.textContent = 'Select a runway before drawing the taxi route.'; return; }
+    const rect = cv.getBoundingClientRect();
+    const p = [cx + (screenX - rect.left - W / 2) / scale(), cy - (screenY - rect.top - H / 2) / scale()];
+    const name = taxiwayAt(p);
+    if (!name) { routeStatus.textContent = 'No named taxiway at that point. Click closer to a taxiway.'; return; }
+    if (drawnTaxiways[drawnTaxiways.length - 1] !== name) drawnTaxiways.push(name);
+    updateDrawnClearance();
+    await applyTaxiRoute();
+  }
+  async function loadTaxiRoute() {
+    try {
+      const response = await fetch('/amdb/taxi-route/current', { cache: 'no-store' });
+      const route = await response.json();
+      taxiRoute = route && route.icao === man.icao ? route : null;
+      if (taxiRoute) {
+        document.getElementById('taxi-clearance').value = taxiRoute.clearance || '';
+        routeStatus.textContent = `${taxiRoute.clearance} Â· ${Math.round(taxiRoute.length_m || 0)} m`;
+      }
+      draw();
+    } catch { routeStatus.textContent = 'Could not read the taxi route from AMDB Bridge.'; }
+  }
+  async function applyTaxiRoute() {
+    const clearance = taxiClearanceInput.value.trim();
+    if (!clearance) { routeStatus.textContent = 'Enter taxiway names and a destination runway or stand.'; return; }
+    if (!aircraft) { routeStatus.textContent = 'Waiting for live aircraft position; the route starts at the aircraft.'; return; }
+    const query = new URLSearchParams({ icao: man.icao, lat: String(aircraft.lat), lon: String(aircraft.lon), clearance });
+    routeStatus.textContent = 'Routing taxi clearanceâ€¦';
+    try {
+      const response = await fetch(`/amdb/taxi-route?${query}`, { cache: 'no-store' });
+      const result = await response.json();
+      if (!response.ok || result.error) throw new Error(result.error || `HTTP ${response.status}`);
+      taxiRoute = result; draw();
+      routeStatus.textContent = `${result.clearance} Â· ${Math.round(result.length_m || 0)} m`;
+    } catch (error) { routeStatus.textContent = error.message; }
+  }
+  document.getElementById('apply-taxi-route').onclick = applyTaxiRoute;
+  document.getElementById('clear-taxi-route').onclick = async () => {
+    try { await fetch('/amdb/taxi-route/clear', { cache: 'no-store' }); taxiRoute = null; drawnTaxiways = []; taxiClearanceInput.value = ''; draw(); routeStatus.textContent = 'Taxi route cleared.'; }
+    catch { routeStatus.textContent = 'Could not clear the taxi route.'; }
+  };
+  void loadTaxiRoute();
+
+  // An MSFS panel publishes SimVars to the bridge; poll the latest sample and redraw.
+  let positionPoll = false;
+  async function pollAircraft() {
+    if (positionPoll) return;
+    positionPoll = true;
+    try {
+      const response = await fetch('/amdb/aircraft-position', { cache: 'no-store' });
+      if (!response.ok) return;
+      const p = await response.json();
+      if (p && Number.isFinite(p.lat) && Number.isFinite(p.lon) && Number.isFinite(p.heading)) {
+        aircraft = { p: P([p.lon, p.lat]), lat: p.lat, lon: p.lon, heading: p.heading, groundSpeed: p.ground_speed, onGround: p.on_ground };
+        document.getElementById('h-feed').textContent = `MSFS LIVE Â· ${Math.round(p.ground_speed || 0)} KT`;
+        if (followAircraft) { cx = aircraft.p[0]; cy = aircraft.p[1]; }
+        if (autoAirport.checked && p.on_ground && Date.now() - nearestCheckAt > 2500 && !airportRedirecting) {
+          nearestCheckAt = Date.now();
+          void maybeLoadNearestAirport(p);
+        }
+      } else {
+        aircraft = null;
+        document.getElementById('h-feed').textContent = 'WAITING FOR MSFS Â· OPEN AIRPORT MAP PANEL';
+      }
+      draw();
+    } catch { document.getElementById('h-feed').textContent = 'BRIDGE CONNECTION LOST'; }
+    finally { positionPoll = false; }
+  }
+  async function maybeLoadNearestAirport(p) {
+    try {
+      const query = new URLSearchParams({ lat: String(p.lat), lon: String(p.lon), radius_km: '25', limit: '1' });
+      const response = await fetch(`/v1/nearest?${query}`, { cache: 'no-store' });
+      if (!response.ok) return;
+      const rows = await response.json();
+      const nearest = rows[0];
+      const icao = String(nearest?.idarpt || '').toUpperCase();
+      if (!/^[A-Z0-9]{4}$/.test(icao) || icao === man.icao || Number(nearest.distance_nm) > 15) return;
+      const url = new URL('/map', location.origin);
+      url.searchParams.set('icao', icao);
+      for (const name of ['departure', 'arrival']) {
+        const value = document.querySelector(`[name="${name}"]`).value.trim().toUpperCase();
+        if (value) url.searchParams.set(name, value);
+      }
+      url.searchParams.set('auto', '1');
+      airportRedirecting = true;
+      location.replace(url);
+    } catch { /* nearest airport auto-load can retry on the next position poll */ }
+  }
+  pollAircraft();
+  window.setInterval(pollAircraft, 250);
+
+  // Pan & zoom. Touch pointers share the same map gestures as a mouse; two active
+  // pointers pinch to zoom and keep the map point under their midpoint in place.
   let drag = null;
-  cv.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, cx, cy }; cv.classList.add('dragging'); cv.setPointerCapture(e.pointerId); });
-  cv.addEventListener('pointermove', e => { if (!drag) return; const sc = scale(); cx = drag.cx - (e.clientX - drag.x) / sc; cy = drag.cy + (e.clientY - drag.y) / sc; draw(); });
-  cv.addEventListener('pointerup', () => { drag = null; cv.classList.remove('dragging'); });
+  const activePointers = new Map();
+  let pinch = null;
+  let suppressGesture = false;
+  function syncRangeButtons() {
+    rangesEl.querySelectorAll('button').forEach(button => button.setAttribute('aria-pressed', String(Number.parseFloat(button.textContent) === rangeNm)));
+  }
+  function beginPinch() {
+    const points = [...activePointers.values()].slice(0, 2);
+    if (points.length < 2) return;
+    const midX = (points[0].x + points[1].x) / 2;
+    const midY = (points[0].y + points[1].y) / 2;
+    const rect = cv.getBoundingClientRect();
+    pinch = {
+      distance: Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y)),
+      range: rangeNm,
+      anchor: [cx + (midX - rect.left - W / 2) / scale(), cy - (midY - rect.top - H / 2) / scale()]
+    };
+    drag = null;
+    suppressGesture = true;
+    cv.classList.remove('dragging');
+  }
+  cv.addEventListener('pointerdown', e => {
+    cv.setPointerCapture(e.pointerId);
+    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (activePointers.size >= 2) {
+      if (!drawTaxiRoute) { followAircraft = false; followButton.setAttribute('aria-pressed', 'false'); }
+      if (!pinch) beginPinch();
+      return;
+    }
+    suppressGesture = false;
+    if (!drawTaxiRoute) { followAircraft = false; followButton.setAttribute('aria-pressed', 'false'); }
+    drag = { x: e.clientX, y: e.clientY, cx, cy, drawing: drawTaxiRoute };
+    if (!drawTaxiRoute) cv.classList.add('dragging');
+  });
+  cv.addEventListener('pointermove', e => {
+    if (activePointers.has(e.pointerId)) activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && activePointers.size >= 2) {
+      const points = [...activePointers.values()].slice(0, 2);
+      const distance = Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y));
+      const target = pinch.range * pinch.distance / distance;
+      rangeNm = RANGES.reduce((best, r) => Math.abs(Math.log(r / target)) < Math.abs(Math.log(best / target)) ? r : best, RANGES[0]);
+      const midX = (points[0].x + points[1].x) / 2;
+      const midY = (points[0].y + points[1].y) / 2;
+      const rect = cv.getBoundingClientRect();
+      const sc = scale();
+      cx = pinch.anchor[0] - (midX - rect.left - W / 2) / sc;
+      cy = pinch.anchor[1] + (midY - rect.top - H / 2) / sc;
+      syncRangeButtons(); draw();
+      return;
+    }
+    if (suppressGesture || !drag) return;
+    if (drag.drawing && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) >= 7) {
+      drag.drawing = false;
+      followAircraft = false; followButton.setAttribute('aria-pressed', 'false');
+      cv.classList.add('dragging');
+    }
+    if (drag.drawing) return;
+    const sc = scale(); cx = drag.cx - (e.clientX - drag.x) / sc; cy = drag.cy + (e.clientY - drag.y) / sc; draw();
+  });
+  function finishPointer(e, cancelled) {
+    if (!cancelled && !suppressGesture && activePointers.size === 1 && drag && drag.drawing && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 7) void addDrawnTaxiway(e.clientX, e.clientY);
+    activePointers.delete(e.pointerId);
+    drag = null;
+    cv.classList.remove('dragging');
+    if (activePointers.size === 0) { pinch = null; suppressGesture = false; }
+    else { pinch = null; suppressGesture = true; }
+  }
+  cv.addEventListener('pointerup', e => finishPointer(e, false));
+  cv.addEventListener('pointercancel', e => finishPointer(e, true));
   cv.addEventListener('wheel', e => {
     e.preventDefault();
     const i = RANGES.indexOf(rangeNm);
     const j = Math.min(RANGES.length - 1, Math.max(0, i + (e.deltaY > 0 ? 1 : -1)));
-    if (j !== i) { rangeNm = RANGES[j]; rangesEl.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x.textContent === rangeNm + ' NM')); draw(); }
+    if (j !== i) { rangeNm = RANGES[j]; syncRangeButtons(); draw(); }
   }, { passive: false });
   window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => window.setTimeout(resize, 120));
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(wrap);
+  const fullscreenButton = document.getElementById('fullscreen-toggle');
+  function syncFullscreenButton() { const active = document.fullscreenElement === wrap || wrap.classList.contains('pseudo-fullscreen'); fullscreenButton.textContent = active ? 'Exit full' : 'Fullscreen'; fullscreenButton.setAttribute('aria-label', active ? 'Exit fullscreen' : 'Enter fullscreen'); }
+  fullscreenButton.addEventListener('click', async () => {
+    try { if (wrap.classList.contains('pseudo-fullscreen')) wrap.classList.remove('pseudo-fullscreen'); else if (document.fullscreenElement) await document.exitFullscreen(); else if (wrap.requestFullscreen) await wrap.requestFullscreen(); else wrap.classList.add('pseudo-fullscreen'); }
+    catch { fullscreenButton.title = 'Fullscreen was blocked by this browser'; }
+  });
+  document.addEventListener('fullscreenchange', () => { syncFullscreenButton(); resize(); });
+  fullscreenButton.addEventListener('click', () => window.setTimeout(() => { syncFullscreenButton(); resize(); }, 0));
+  syncFullscreenButton();
   document.fonts && document.fonts.ready.then(draw);
   resize();
 })();
 </script>
+
+
+
+
+
+
+

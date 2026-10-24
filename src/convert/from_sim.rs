@@ -464,7 +464,7 @@ fn runways_from(index: &crate::sources::index::AirportIndex, airports: &mut [Air
 /// the localiser's course. Both tests matter: a large aerodrome has thresholds a few hundred
 /// metres apart, and only the course tells one end of a runway from the other.
 fn attach_localisers(loose: Vec<LooseIls>, runways: &[RunwayRec], airports: &[AirportRec]) -> Vec<IlsRec> {
-    use crate::dispatch::distance_nm;
+    
     let elevation: HashMap<&str, f64> = airports.iter().map(|a| (a.icao.as_str(), a.elevation_ft)).collect();
     // Every localiser/runway pairing that is even possible, nearest first. Assigning each
     // localiser its own nearest runway independently gives two of them the same runway where

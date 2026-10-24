@@ -349,6 +349,9 @@ struct ServeArgs {
     /// Also serve X-Plane 12: install the FlyWithLua moving-map script and build airports for it on demand.
     #[arg(long = "xplane")]
     xplane: bool,
+    /// Let other devices on the local network access the HTTP API and browser airport map.
+    #[arg(long)]
+    lan: bool,
 }
 
 #[derive(Subcommand)]
@@ -439,12 +442,6 @@ enum Cmd {
     Navigraph {
         /// on or off
         state: String,
-        /// Also cover the Fenix A320's flight bag: its sign-in, its charts and its chart
-        /// cycle. It is the one bag that cannot be patched, so being the address it calls
-        /// is the only way to answer it — but the redirect is machine-wide, so while this
-        /// is on the Navigraph apps reach this bridge too. Off unless asked for.
-        #[arg(long)]
-        efb: bool,
     },
     /// Add the server to the simulator's exe.xml so it starts with the sim.
     Autostart(ServeArgs),
@@ -609,10 +606,10 @@ fn serve(a: ServeArgs) -> Result<()> {
     let mut https = None;
     // Set up once (the desktop app's option, or `navigraph on`): the address already
     // points here and the certificate is trusted, so serve without touching either.
-    let persistent = !a.no_hosts && (super::desktop::navigraph_ready() || super::desktop::fenix_charts_ready());
+    let persistent = !a.no_hosts && super::desktop::navigraph_ready();
     if persistent {
-        // One certificate for every Navigraph name, whichever of them point here.
-        let m = tls::ensure_for(domain, &super::navigraph_domains(true))?;
+        // The local certificate covers only the A350/A380X map host.
+        let m = tls::ensure_for(domain, &super::navigraph_domains())?;
         https = Some((a.https_port, m.cert_pem, m.key_pem));
         crate::term::info(&format!("{domain} already points here; serving it on port {}", a.https_port));
     } else if !a.no_hosts {
@@ -726,7 +723,11 @@ fn serve(a: ServeArgs) -> Result<()> {
             None => crate::term::warn("--xplane: no X-Plane 12 install found; the /xp/ route still works if you install tools/xplane/amdb_oans.lua yourself"),
         }
     }
-    let result = server::serve(store, server::Listen { http_port: if a.http_port == 0 { None } else { Some(a.http_port) }, https });
+    let http_host = if a.lan { "0.0.0.0" } else { "127.0.0.1" };
+    if a.lan {
+        crate::term::info(&format!("LAN access enabled on port {}; open http://<this-PC-local-IP>:{}/map (use `ipconfig` to find the IPv4 address)", a.http_port, a.http_port));
+    }
+    let result = server::serve(store, server::Listen { http_port: if a.http_port == 0 { None } else { Some(a.http_port) }, http_host: http_host.to_string(), https });
     if !a.no_hosts && !persistent {
         let _ = hosts::remove();
     }
@@ -857,23 +858,13 @@ pub fn run() -> Result<()> {
             crate::term::success(&format!("Saved: {}  ({})", s.describe(), Settings::path().display()));
             Ok(())
         }
-        Cmd::Navigraph { state, efb } => {
+        Cmd::Navigraph { state } => {
             let on = !matches!(state.to_ascii_lowercase().as_str(), "off" | "remove" | "0" | "false");
             if !hosts::writable() {
                 relaunch_elevated()?;
             }
-            if on && efb {
-                // Said plainly, because it is wider than the rest of what this program
-                // does: while it is on, anything on this computer that asks for these
-                // hosts reaches the bridge, not only the aeroplane.
-                crate::term::warn(&format!(
-                    "--efb also redirects {} for every program on this computer, the Navigraph apps included. `navigraph off` puts them back.",
-                    super::NAVIGRAPH_EFB_DOMAINS.join(", ")
-                ));
-            }
-            super::desktop::setup_navigraph_with(on, efb)?;
-            let what = if efb { "A350/A380X and the Fenix A320 flight bag" } else { "A350/A380X" };
-            crate::term::success(&if on { format!("{what} set up: run `amdb-bridge serve` as your normal user") } else { format!("{what} setup removed") });
+            super::desktop::setup_navigraph(on)?;
+            crate::term::success(&if on { "A350/A380X set up: run `amdb-bridge serve` as your normal user".to_string() } else { "A350/A380X setup removed".to_string() });
             Ok(())
         }
         Cmd::Cleanup => {

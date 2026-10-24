@@ -80,6 +80,37 @@ impl Preview {
             _ => &[],
         }
     }
+
+    pub fn viewer_layers() -> &'static [&'static str] {
+        Preview::Viewer.layers()
+    }
+}
+
+/// Render the browser map from in-memory bridge responses, so it also works when the
+/// bridge is configured not to retain generated airport files.
+pub fn render_viewer(manifest: &crate::output::manifest::Manifest, collections: &Map<String, Value>) -> Result<String> {
+    let mut layers = Map::new();
+    for name in Preview::Viewer.layers() {
+        let Some(fc) = collections.get(*name) else { continue };
+        let keep = Preview::Viewer.keep(name);
+        let slim: Vec<Value> = fc.get("features").and_then(Value::as_array).map(|fs| {
+            fs.iter().filter_map(|f| {
+                let g = f.get("geometry")?.clone();
+                if g.is_null() { return None; }
+                let props = f.get("properties").and_then(Value::as_object);
+                let mut p = Map::new();
+                if let Some(props) = props {
+                    for k in keep {
+                        if let Some(v) = props.get(*k) { if !v.is_null() { p.insert((*k).to_string(), v.clone()); } }
+                    }
+                }
+                Some(json!({"g":g,"p":p}))
+            }).collect()
+        }).unwrap_or_default();
+        layers.insert((*name).to_string(), Value::Array(slim));
+    }
+    let payload = serde_json::to_string(&json!({"manifest":manifest,"layers":layers}))?;
+    Ok(VIEWER_TEMPLATE.replacen(DATA_HOOK, &payload, 1))
 }
 
 /// Render `dir` (a built airport folder with manifest.json + <layer>.geojson) to `out`.

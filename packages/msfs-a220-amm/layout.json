@@ -2,18 +2,18 @@
   "content": [
     {
       "path": "html_ui/pages/vcockpit/instruments/a22x/displayunits/amdb-a220-amm.css",
-      "size": 388,
-      "date": 134345631078424256
+      "size": 373,
+      "date": 134364393760000000
     },
     {
       "path": "html_ui/pages/vcockpit/instruments/a22x/displayunits/amdb-a220-amm.js",
       "size": 42279,
-      "date": 134345631546828016
+      "date": 134364393760000000
     },
     {
       "path": "manifest.json",
       "size": 749,
-      "date": 134351415578820560
+      "date": 134370877540420032
     }
   ]
 }

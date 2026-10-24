@@ -30,6 +30,10 @@ export class AircraftPublisher implements Instrument {
 
   private readonly word = Arinc429Register.empty();
 
+  private bridgePositionSentAt = 0;
+
+  private bridgePositionSending = false;
+
   constructor(bus: { getPublisher: <T>() => Publisher<T> }) {
     this.words = bus.getPublisher<PositionWords>();
     this.word.setSsm(Arinc429SignStatusMatrix.NormalOperation);
@@ -38,10 +42,15 @@ export class AircraftPublisher implements Instrument {
   public init(): void {}
 
   public onUpdate(): void {
-    this.publishWord('latitude', SimVar.GetSimVarValue('PLANE LATITUDE', 'degree latitude'));
-    this.publishWord('longitude', SimVar.GetSimVarValue('PLANE LONGITUDE', 'degree longitude'));
-    this.publishWord('trueHeadingRaw', SimVar.GetSimVarValue('PLANE HEADING DEGREES TRUE', 'degree'));
-    this.publishWord('groundSpeed', SimVar.GetSimVarValue('GROUND VELOCITY', 'knots'));
+    const latitude = SimVar.GetSimVarValue('PLANE LATITUDE', 'degree latitude');
+    const longitude = SimVar.GetSimVarValue('PLANE LONGITUDE', 'degree longitude');
+    const heading = SimVar.GetSimVarValue('PLANE HEADING DEGREES TRUE', 'degree');
+    const groundSpeed = SimVar.GetSimVarValue('GROUND VELOCITY', 'knots');
+    const onGround = !!SimVar.GetSimVarValue('SIM ON GROUND', 'bool');
+    this.publishWord('latitude', latitude);
+    this.publishWord('longitude', longitude);
+    this.publishWord('trueHeadingRaw', heading);
+    this.publishWord('groundSpeed', groundSpeed);
     this.publishWord('trueAirSpeed', SimVar.GetSimVarValue('AIRSPEED TRUE', 'knots'));
     this.publishWord('windDirection', SimVar.GetSimVarValue('AMBIENT WIND DIRECTION', 'degrees'));
     this.publishWord('windSpeed', SimVar.GetSimVarValue('AMBIENT WIND VELOCITY', 'knots'));
@@ -49,9 +58,26 @@ export class AircraftPublisher implements Instrument {
     this.publishWord('ra_radio_altitude_1', radioAltitude);
     this.publishWord('ra_radio_altitude_2', radioAltitude);
     this.publishWord('ra_radio_altitude_3', radioAltitude);
-    const gear = SimVar.GetSimVarValue('SIM ON GROUND', 'bool') ? LGCIU_ON_GROUND : 0;
+    const gear = onGround ? LGCIU_ON_GROUND : 0;
     this.publishWord('lgciu_discrete_word_2_1', gear);
     this.publishWord('lgciu_discrete_word_2_2', gear);
+
+    // This publisher also runs from the aircraft's OANS instrument, even while its map
+    // page is not selected. The standalone browser can then follow without opening the
+    // optional toolbar map window.
+    const now = Date.now();
+    if (!AMDB_BRIDGE || this.bridgePositionSending || now - this.bridgePositionSentAt < 250) return;
+    if (![latitude, longitude, heading].every(Number.isFinite)) return;
+    this.bridgePositionSentAt = now;
+    this.bridgePositionSending = true;
+    const request = new XMLHttpRequest();
+    request.timeout = 1500;
+    request.open('POST', 'http://127.0.0.1:8770/amdb/aircraft-position');
+    request.setRequestHeader('Content-Type', 'text/plain');
+    request.onloadend = () => { this.bridgePositionSending = false; };
+    request.onerror = () => console.warn('[AMDB OANS] Could not publish aircraft position to AMDB Bridge');
+    request.ontimeout = request.onerror;
+    request.send(JSON.stringify({ lat: latitude, lon: longitude, heading, ground_speed: groundSpeed, on_ground: onGround }));
   }
 
   private publishWord(topic: keyof PositionWords, value: number): void {

@@ -204,6 +204,19 @@ amdb-bridge cleanup                         # remove redirect + certificate
 amdb-bridge autostart                       # start with the sim (exe.xml)
 ```
 
+The bridge also serves the OANS-style airport map in a regular browser:
+`http://127.0.0.1:8770/map?icao=EDDF`. To open it from a phone, tablet, or another
+computer on the same network, start it with `amdb-bridge serve --lan`, then use
+`ipconfig` on Windows to find this PC's IPv4 address and open
+`http://<IPv4-address>:8770/map?icao=EDDF`. LAN access exposes the bridge's HTTP API
+to devices on your local network; it is off by default.
+For live aircraft position and heading, install the OANS package for the aircraft you fly
+(for example, `amdb-bridge a320-oans on` for the Fenix A320). Its in-aircraft instrument
+feeds the browser map, so the separate Airport Map toolbar window is not required. The
+browser landing page can then choose the nearest airport at spawn; leave **AUTO** checked
+to switch airports on the ground while taxiing. The **Follow aircraft** control keeps the
+symbol centered. Keep AMDB Bridge running on this PC.
+
 `--bulk` takes continents (africa, antarctica, asia, europe, north-america, oceania,
 south-america), ISO countries, or `all`, comma separated; `--type` (default
 large,medium), `--min-runways` (default 1) and `--min-runway-ft` narrow it down, and
@@ -323,27 +336,14 @@ under the GPL-3.0, like FlyByWire's aircraft, and credits them in its `README.tx
 carries none of FlyByWire's fonts or images: the font is Airbus's B612 (SIL Open Font
 License) and the flag and cross symbols are its own.
 
-### Charts on the Fenix A320's tablet
+### Navigraph sign-in on the Fenix A320
 
-The Fenix's tablet signs in to Navigraph for its charts, and unlike the other tablets its
-app cannot be patched: it is served from an encrypted bundle by the Fenix's own gateway.
-So AMDB Bridge answers it by being the addresses it calls. The option **Show AMDB
-Bridge's charts on the Fenix A320's tablet** (or the installer task of the same name, or
-`AMDB Bridge.exe --setup-fenix-charts on`) points these at this computer in the hosts
-file, with a local certificate that covers them:
+AMDB Bridge does not intercept the Fenix EFB's Navigraph sign-in. The Fenix tablet and
+other apps use Navigraph's normal sign-in and chart services.
 
-```
-127.0.0.1 identity.api.navigraph.com # amdb-bridge   the sign-in
-127.0.0.1 api.navigraph.com # amdb-bridge            the charts and airports
-127.0.0.1 charts.api.navigraph.com # amdb-bridge     the chart cycle
-```
-
-The tablet then links with the code `AMDB`, with nothing to type on a website. While it
-is on, every program on the computer that signs in to Navigraph reaches the bridge, the
-Navigraph Charts app included; untick it, or uninstall AMDB Bridge, to put it back. It
-is separate from the A350/A380X option, whose one host (`amdb.api.navigraph.com`) the
-A320 does not use, and turning either on or off keeps the other's hosts.
-
+If you upgraded from a version that offered Bridge charts on the Fenix tablet, run the
+new installer and allow its one-time administrator prompt. It removes the old
+machine-wide sign-in redirect while preserving the separate A350/A380X map setup.
 ## A330 OANS for the Headwind A330 (MSFS)
 
 The same OANS on the Headwind A330-900's two NDs (MSFS 2020): FlyByWire's A380X OANS
