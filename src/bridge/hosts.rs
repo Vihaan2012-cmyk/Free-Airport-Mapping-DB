@@ -1,5 +1,6 @@
-//! Windows hosts-file redirect for the Navigraph AMDB host, added while the bridge
-//! runs and removed when it stops. Every line we write carries a marker so cleanup
+//! Hosts-file redirect for the Navigraph hosts. On Windows it is added when serving
+//! starts and removed when it stops; on Linux it stays while an option is on, since
+//! serving there runs without root. Every line we write carries a marker so cleanup
 //! never touches anything else.
 
 use anyhow::{Context, Result};
@@ -92,7 +93,7 @@ pub fn install_all(domains: &[&str]) -> Result<()> {
 /// Remove every line we added.
 pub fn remove() -> Result<bool> {
     let text = read()?;
-    if !text.contains(MARKER) {
+    if !has_ours(&text) {
         return Ok(false);
     }
     write(&strip_ours(&text))?;
@@ -102,6 +103,15 @@ pub fn remove() -> Result<bool> {
 
 pub fn is_installed(domain: &str) -> bool {
     read().map(|t| t.lines().any(|l| l.contains(MARKER) && l.contains(domain))).unwrap_or(false)
+}
+
+/// Any line of ours is in the hosts file, whichever host it names.
+pub fn any_installed() -> bool {
+    read().map(|t| has_ours(&t)).unwrap_or(false)
+}
+
+fn has_ours(text: &str) -> bool {
+    text.lines().any(|l| l.contains(MARKER))
 }
 
 /// Clear the DNS resolver cache so the new hosts-file entries take effect at once.
@@ -142,5 +152,11 @@ mod tests {
         let s = strip_ours(t);
         assert_eq!(s, "127.0.0.1 localhost\r\n::1 localhost\r\n");
         assert_eq!(strip_ours("a\r\nb # amdb-bridge\r\n"), "a\r\n");
+    }
+
+    #[test]
+    fn finds_any_line_of_ours() {
+        assert!(has_ours("127.0.0.1 localhost\r\n127.0.0.1 identity.api.navigraph.com # amdb-bridge\r\n"));
+        assert!(!has_ours("127.0.0.1 localhost\r\n# amdb\r\n0.0.0.0 api.example.com\r\n"));
     }
 }

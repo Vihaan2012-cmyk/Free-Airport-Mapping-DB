@@ -33,8 +33,9 @@ Three programs:
    - **A320 OANS** adds an airport moving map to the Fenix A320's captain navigation
      display, if the Fenix is installed (see [below](#a320-oans-for-the-fenix-a320-msfs)).
    - **A350 and A380X** points Navigraph's map server address at your computer and
-     trusts a local certificate, so those aircraft load maps from AMDB Bridge. Windows
-     asks for administrator permission once.
+     trusts a local certificate, so those aircraft load maps from AMDB Bridge. The
+     address points here only while AMDB Bridge serves and goes back to Navigraph when
+     it closes, so Windows asks for administrator permission each time AMDB Bridge opens.
 3. AMDB Bridge opens and starts serving. Load your aircraft. The first visit to an
    airport takes 20-40 seconds while it is built; after that it is instant.
 
@@ -223,7 +224,8 @@ run and `--out DIR` uses your own folder with no limit.
 
 `serve` asks for administrator rights, points `amdb.api.navigraph.com` at your PC
 through the hosts file, answers over HTTPS with a locally generated certificate it
-registers as trusted, and removes the redirect when it stops. The API and response
+registers as trusted, and removes the redirect when it stops, its window closed
+included. The API and response
 schema follow Navigraph's own SDK (`@navigraph/amdb`) 1:1: `/v1/cycle`,
 `/v1/search?q=`, `/v1/{ICAO}?include=&exclude=&projection=&precision=`,
 `/v1/{ICAO}/{layer}`, all 36 Navigraph layers with their exact property sets and
@@ -330,7 +332,7 @@ app cannot be patched: it is served from an encrypted bundle by the Fenix's own 
 So AMDB Bridge answers it by being the addresses it calls. The option **Show AMDB
 Bridge's charts on the Fenix A320's tablet** (or the installer task of the same name, or
 `AMDB Bridge.exe --setup-fenix-charts on`) points these at this computer in the hosts
-file, with a local certificate that covers them:
+file while AMDB Bridge serves, with a local certificate that covers them:
 
 ```
 127.0.0.1 identity.api.navigraph.com # amdb-bridge   the sign-in
@@ -338,9 +340,11 @@ file, with a local certificate that covers them:
 127.0.0.1 charts.api.navigraph.com # amdb-bridge     the chart cycle
 ```
 
-The tablet then links with the code `AMDB`, with nothing to type on a website. While it
-is on, every program on the computer that signs in to Navigraph reaches the bridge, the
-Navigraph Charts app included; untick it, or uninstall AMDB Bridge, to put it back. It
+The tablet then links with the code `AMDB`, with nothing to type on a website. While AMDB
+Bridge serves with it on, every program on the computer that signs in to Navigraph
+reaches the bridge, the Navigraph Charts app included. The hosts go back to Navigraph
+when AMDB Bridge closes, so Windows asks for administrator permission each time it
+opens; untick the option, or uninstall AMDB Bridge, to stop that. It
 is separate from the A350/A380X option, whose one host (`amdb.api.navigraph.com`) the
 A320 does not use, and turning either on or off keeps the other's hosts.
 

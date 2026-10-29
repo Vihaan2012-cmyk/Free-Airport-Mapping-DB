@@ -792,25 +792,31 @@ pub fn set_start_with_sim(on: bool, exe: &Path) -> Result<Vec<PathBuf>> {
     Ok(changed)
 }
 
-/// A350/A380X support is set up on this computer: the Navigraph map server's address
-/// points here and the certificate that answers for it is trusted.
+/// A350/A380X support is in effect now: the Navigraph map server's address points here
+/// and the certificate that answers for it is trusted. On Windows the address points
+/// here only while AMDB Bridge serves.
 pub fn navigraph_ready() -> bool {
     let domain = super::NAVIGRAPH_AMDB_DOMAIN;
-    super::hosts::is_installed(domain) && super::tls::data_dir().join("ca.pem").is_file() && super::tls::is_trusted()
+    super::hosts::is_installed(domain) && certificate_ready()
 }
 
-/// The Fenix A320's tablet charts are set up on this computer: the three hosts its flight
-/// bag calls point here and the certificate that answers for them is trusted.
+/// The Fenix A320's tablet charts are in effect now: the three hosts its flight bag calls
+/// point here and the certificate that answers for them is trusted.
 pub fn fenix_charts_ready() -> bool {
-    super::NAVIGRAPH_EFB_DOMAINS.iter().all(|d| super::hosts::is_installed(d)) && super::tls::data_dir().join("ca.pem").is_file() && super::tls::is_trusted()
+    super::NAVIGRAPH_EFB_DOMAINS.iter().all(|d| super::hosts::is_installed(d)) && certificate_ready()
 }
 
-/// Set up (or take down) A350/A380X support. Needs administrator rights, and is done
-/// once rather than every time serving starts: the address stays pointed here while
-/// the option is on, and the app then serves those aircraft as a normal user. The Fenix
-/// tablet's hosts are left as they are.
+/// The certificate that answers for the Navigraph hosts is made and trusted: what either
+/// option keeps between sessions on Windows, where the hosts file points here only while
+/// serving.
+pub fn certificate_ready() -> bool {
+    super::tls::data_dir().join("ca.pem").is_file() && super::tls::is_trusted()
+}
+
+/// Set up (or take down) A350/A380X support, leaving the Fenix tablet's option as it is.
+/// Needs administrator rights.
 pub fn setup_navigraph(on: bool) -> Result<()> {
-    setup_redirects(on, fenix_hosts_redirected())
+    setup_redirects(on, fenix_option_on())
 }
 
 /// Set up (or take down) the Fenix A320's tablet charts, leaving A350/A380X support as it is.
@@ -825,14 +831,14 @@ pub fn setup_navigraph(on: bool) -> Result<()> {
 /// That is a bigger thing to switch on than a moving map, so it is asked for separately
 /// and says so.
 pub fn setup_fenix_charts(on: bool) -> Result<()> {
-    setup_redirects(super::hosts::is_installed(super::NAVIGRAPH_AMDB_DOMAIN), on)
+    setup_redirects(a350_option_on(), on)
 }
 
-/// `amdb-bridge navigraph on|off [--efb]`: on adds the map's host, and the flight bag's
-/// with `--efb` (keeping them if they are already there); off takes every one away.
+/// `amdb-bridge navigraph on|off [--efb]`: on sets up the map's host, and the flight
+/// bag's with `--efb` (keeping them if they are already on); off takes every one away.
 pub fn setup_navigraph_with(on: bool, with_efb: bool) -> Result<()> {
     if on {
-        setup_redirects(true, with_efb || fenix_hosts_redirected())
+        setup_redirects(true, with_efb || fenix_option_on())
     } else {
         setup_redirects(false, false)
     }
@@ -843,15 +849,20 @@ fn fenix_hosts_redirected() -> bool {
     super::NAVIGRAPH_EFB_DOMAINS.iter().any(|d| super::hosts::is_installed(d))
 }
 
-/// Point exactly these hosts at this computer: the map's for the A350/A380X, the flight
-/// bag's three for the Fenix. The hosts file is rewritten as one block, so asking for one
-/// set never quietly drops the other; with neither, the block and the certificate go.
-/// Needs administrator rights.
-///
-/// One certificate carries every name whichever are redirected, because a server presents
-/// one certificate per connection whichever host was asked for, and it is signed by the
-/// authority already in the store rather than by a new one each time.
-pub fn setup_redirects(a350: bool, fenix: bool) -> Result<()> {
+/// The Fenix tablet's option is on: in the settings, or, where the hosts stay pointed
+/// here while it is on (Linux, set up with `navigraph on --efb`), in the hosts file.
+fn fenix_option_on() -> bool {
+    super::settings::Settings::load().is_some_and(|s| s.fenix_charts) || fenix_hosts_redirected()
+}
+
+/// The same for A350/A380X support.
+fn a350_option_on() -> bool {
+    super::settings::Settings::load().is_some_and(|s| s.navigraph_redirect) || super::hosts::is_installed(super::NAVIGRAPH_AMDB_DOMAIN)
+}
+
+/// The hosts to point here: the map's for the A350/A380X, the flight bag's three for the
+/// Fenix.
+fn redirect_domains(a350: bool, fenix: bool) -> Vec<&'static str> {
     let mut domains = Vec::new();
     if a350 {
         domains.push(super::NAVIGRAPH_AMDB_DOMAIN);
@@ -859,25 +870,62 @@ pub fn setup_redirects(a350: bool, fenix: bool) -> Result<()> {
     if fenix {
         domains.extend(super::NAVIGRAPH_EFB_DOMAINS);
     }
-    if domains.is_empty() {
+    domains
+}
+
+/// Make the two options what they now are. With either on, the certificate that answers
+/// for the Navigraph hosts is trusted; with neither, it goes, and every hosts line with
+/// it. On Windows the hosts file points here only while serving (`redirect`), so lines
+/// already there, from a run serving now, are rewritten to match and none are added; on
+/// Linux, where serving runs without root, the lines are written here and stay while an
+/// option is on. The hosts file is rewritten as one block, so asking for one set never
+/// quietly drops the other. Needs administrator rights.
+pub fn setup_redirects(a350: bool, fenix: bool) -> Result<()> {
+    if !a350 && !fenix {
         super::hosts::remove()?;
         super::tls::untrust()?;
     } else {
-        let m = super::tls::ensure_for(super::NAVIGRAPH_AMDB_DOMAIN, &super::navigraph_domains(true))?;
-        // A newly made authority has the same name as the one it replaces, so the store
-        // would report it installed and refuse everything it signs. The old one goes
-        // first. This is the ordinary case on a machine set up before the authority's key
-        // was kept, where there is no key to reuse and a new one has to be made.
-        if m.fresh_ca {
-            let _ = super::tls::untrust();
+        trust_certificate()?;
+        if !cfg!(windows) || super::hosts::any_installed() {
+            super::hosts::install_all(&redirect_domains(a350, fenix))?;
         }
-        super::tls::trust(&m)?;
-        super::hosts::install_all(&domains)?;
         allow_port_443();
     }
     // Run with sudo, the certificate files were created as root in the user's folder.
     super::platform::return_to_user(&super::platform::data_dir());
     Ok(())
+}
+
+/// Point exactly these hosts at this computer for a serving session, trusting the
+/// certificate that answers for them; `service::give_back_redirect` points them back at
+/// Navigraph when serving stops. Needs administrator rights.
+pub fn redirect(a350: bool, fenix: bool) -> Result<()> {
+    if !a350 && !fenix {
+        super::hosts::remove()?;
+        return Ok(());
+    }
+    trust_certificate()?;
+    super::hosts::install_all(&redirect_domains(a350, fenix))?;
+    allow_port_443();
+    super::platform::return_to_user(&super::platform::data_dir());
+    Ok(())
+}
+
+/// The certificate for every Navigraph host, made when there is none and trusted.
+///
+/// One certificate carries every name whichever are redirected, because a server presents
+/// one certificate per connection whichever host was asked for, and it is signed by the
+/// authority already in the store rather than by a new one each time.
+fn trust_certificate() -> Result<()> {
+    let m = super::tls::ensure_for(super::NAVIGRAPH_AMDB_DOMAIN, &super::navigraph_domains(true))?;
+    // A newly made authority has the same name as the one it replaces, so the store
+    // would report it installed and refuse everything it signs. The old one goes
+    // first. This is the ordinary case on a machine set up before the authority's key
+    // was kept, where there is no key to reuse and a new one has to be made.
+    if m.fresh_ca {
+        let _ = super::tls::untrust();
+    }
+    super::tls::trust(&m)
 }
 
 /// Linux only lets root listen on ports below 1024. Give this program that one right,
@@ -1008,8 +1056,7 @@ pub fn uninstall_cleanup() -> Vec<String> {
     if let Ok(exe) = std::env::current_exe() {
         note(set_run_at_login(false, &exe), "remove the Windows start-up entry");
     }
-    let domain = super::NAVIGRAPH_AMDB_DOMAIN;
-    if super::hosts::is_installed(domain) || super::tls::is_trusted() {
+    if super::hosts::any_installed() || super::tls::is_trusted() {
         if super::hosts::writable() {
             note(super::hosts::remove().map(|_| ()), "remove the hosts-file redirect");
             note(super::tls::untrust().map(|_| ()), "remove the local certificate");

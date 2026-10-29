@@ -41,9 +41,12 @@ impl Running {
         self.handle.store.loaded_count()
     }
 
-    /// Stop serving. The A350/A380X setup stays in place for next time.
+    /// Stop serving, and point the Navigraph hosts this run served back at Navigraph.
     pub fn stop(self) {
         self.handle.stop();
+        if self.redirected || self.fenix_charts {
+            give_back_redirect();
+        }
         crate::term::info("Stopped serving");
     }
 }
@@ -53,25 +56,47 @@ pub fn elevated() -> bool {
     hosts::writable()
 }
 
-/// A redirect left in the hosts file (by `amdb-bridge serve` that did not stop cleanly, a
-/// crash, a killed process) for an option that is off: the A350/A380X map host, or the
-/// Fenix tablet's. While it is there, programs that use those Navigraph addresses reach
-/// nothing, so it is removed when possible, keeping the other option's hosts.
+/// Point the Navigraph hosts back at Navigraph. On Windows they point here only while
+/// serving: left in place, every program that uses them, the Navigraph apps included,
+/// reaches nothing once the bridge has gone. Without administrator rights they stay, and
+/// the next start that has them clears them. On Linux the lines stay while an option is
+/// on, since serving there runs without root.
+pub fn give_back_redirect() {
+    if !cfg!(windows) || !hosts::any_installed() {
+        return;
+    }
+    if !hosts::writable() {
+        crate::term::warn("Navigraph's addresses still point at this computer: AMDB Bridge has no administrator permission to give them back. They go when it next opens with it");
+        return;
+    }
+    match hosts::remove() {
+        Ok(_) => crate::term::info("Navigraph's addresses point back at Navigraph"),
+        Err(e) => crate::term::warn(&format!("could not give Navigraph's addresses back: {e:#}")),
+    }
+}
+
+/// A redirect left in the hosts file when nothing is serving: by a run that did not stop
+/// cleanly (a crash, a killed process, Windows shutting down before the app could close)
+/// or by an earlier version, which kept it between sessions. While it is there,
+/// programs that use those Navigraph addresses reach nothing, so it is removed when
+/// possible. Another copy serving through it (`amdb-bridge serve`) holds the port, and
+/// then it is left alone.
 pub fn clear_stale_redirect(settings: &Settings) -> Option<String> {
-    let a350 = hosts::is_installed(super::NAVIGRAPH_AMDB_DOMAIN);
-    let fenix = super::NAVIGRAPH_EFB_DOMAINS.iter().any(|d| hosts::is_installed(d));
-    let stale_a350 = a350 && !settings.navigraph_redirect;
-    let stale_fenix = fenix && !settings.fenix_charts;
-    if !stale_a350 && !stale_fenix {
+    if !hosts::any_installed() || port_free(super::DEFAULT_PORT).is_err() {
         return None;
     }
     if hosts::writable() {
-        return Some(match desktop::setup_redirects(a350 && !stale_a350, fenix && !stale_fenix) {
+        return Some(match hosts::remove() {
             Ok(_) => "Removed a Navigraph redirect left behind by an earlier run".to_string(),
             Err(e) => format!("A Navigraph redirect was left behind by an earlier run and could not be removed: {e:#}"),
         });
     }
-    let which = if stale_a350 { "A350/A380X" } else { "Fenix A320 tablet charts" };
+    // With an option on, serving goes through it until a copy with administrator
+    // permission gives it back.
+    if settings.navigraph_redirect || settings.fenix_charts {
+        return None;
+    }
+    let which = if hosts::is_installed(super::NAVIGRAPH_AMDB_DOMAIN) { "A350/A380X" } else { "Fenix A320 tablet charts" };
     Some(format!(
         "A Navigraph redirect was left behind by an earlier run, so programs using those Navigraph addresses cannot reach them. Tick and untick the {which} option to remove it."
     ))
@@ -101,28 +126,36 @@ fn describe_storage(s: &Settings) -> String {
     }
 }
 
-/// Start serving. The A350 and A380X are served too when that option is on and set up;
-/// no administrator rights are needed for either.
+/// Start serving. The A350 and A380X, and the Fenix A320's tablet, are served too when
+/// their options are on: their Navigraph hosts are pointed here now, which needs
+/// administrator rights, and pointed back by `Running::stop`.
 pub fn start(settings: &Settings, opts: &Options) -> Result<Running> {
-    let domain = super::NAVIGRAPH_AMDB_DOMAIN;
     crate::term::start(&format!("Starting AMDB Bridge {}", env!("CARGO_PKG_VERSION")));
     let http_port = super::DEFAULT_PORT;
     // Before any of the slow work, so a second copy fails in a moment, not ten seconds.
     port_free(http_port)?;
+    let pointed = (opts.navigraph_redirect || opts.fenix_charts) && hosts::writable();
+    if pointed {
+        desktop::redirect(opts.navigraph_redirect, opts.fenix_charts)?;
+    }
+    let started = serve(settings, opts, http_port);
+    if started.is_err() && pointed {
+        give_back_redirect();
+    }
+    started
+}
+
+fn serve(settings: &Settings, opts: &Options, http_port: u16) -> Result<Running> {
+    let domain = super::NAVIGRAPH_AMDB_DOMAIN;
     let mut https = None;
-    if opts.navigraph_redirect && !desktop::navigraph_ready() && hosts::writable() {
-        desktop::setup_navigraph(true)?;
-    }
-    if opts.fenix_charts && !desktop::fenix_charts_ready() && hosts::writable() {
-        desktop::setup_fenix_charts(true)?;
-    }
     let redirected = opts.navigraph_redirect && desktop::navigraph_ready();
     let fenix_charts = opts.fenix_charts && desktop::fenix_charts_ready();
+    let no_rights = "AMDB Bridge was opened without administrator permission, so it cannot point Navigraph's addresses at this computer. Close it and open it again, and allow it when Windows asks";
     if opts.navigraph_redirect && !redirected {
-        crate::term::warn("A350/A380X support is not set up on this computer; untick and tick its option to set it up");
+        crate::term::warn(&format!("The A350/A380X are not served. {no_rights}"));
     }
     if opts.fenix_charts && !fenix_charts {
-        crate::term::warn("The Fenix A320's tablet charts are not set up on this computer; untick and tick their option to set them up");
+        crate::term::warn(&format!("The Fenix A320's tablet charts are not served. {no_rights}"));
     }
     if redirected || fenix_charts {
         port_free(super::DEFAULT_HTTPS_PORT)?;
