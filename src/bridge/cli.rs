@@ -434,8 +434,9 @@ enum Cmd {
     /// Remove the hosts-file redirect and the local certificate authority (cleanup after a crash).
     Cleanup,
     /// One-time setup for aircraft that ask Navigraph's map server directly (iniBuilds A350,
-    /// FlyByWire A380X): point its address here and trust the local certificate. Needs
-    /// administrator rights (sudo on Linux). `off` undoes it.
+    /// FlyByWire A380X): trust the local certificate, and on Linux point its address here.
+    /// On Windows `serve` points it here only while it runs. Needs administrator rights
+    /// (sudo on Linux). `off` undoes it.
     Navigraph {
         /// on or off
         state: String,
@@ -581,6 +582,42 @@ pub(crate) fn config(d: &DataArgs, s: &Settings) -> Config {
     }
 }
 
+/// Take the hosts-file redirect out however `serve` ends: Ctrl+C, Ctrl+Break, the console
+/// window closed, signing out or shutting down.
+///
+/// The `ctrlc` handler this replaces did the work on a thread of its own, and Windows ends
+/// a process the moment its handler returns from a close, sign-out or shutdown, so a
+/// window closed with its X usually won that race and left the redirect behind. The work
+/// is done in the handler itself, which Windows waits for.
+#[cfg(windows)]
+fn give_back_on_exit() -> Result<()> {
+    use winapi::shared::minwindef::{BOOL, DWORD, TRUE};
+    unsafe extern "system" fn handler(_event: DWORD) -> BOOL {
+        match hosts::remove() {
+            Ok(_) => log::info!("hosts-file redirect removed"),
+            Err(e) => log::error!("could not clean the hosts file: {e:#}"),
+        }
+        std::process::exit(0)
+    }
+    if unsafe { winapi::um::consoleapi::SetConsoleCtrlHandler(Some(handler), TRUE) } == 0 {
+        return Err(anyhow!("could not watch for the window closing: {}", std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+/// Take the hosts-file redirect out on Ctrl+C.
+#[cfg(not(windows))]
+fn give_back_on_exit() -> Result<()> {
+    ctrlc::set_handler(move || {
+        match hosts::remove() {
+            Ok(_) => log::info!("hosts-file redirect removed"),
+            Err(e) => log::error!("could not clean the hosts file: {e:#}"),
+        }
+        std::process::exit(0);
+    })?;
+    Ok(())
+}
+
 /// Relaunch this command elevated (UAC prompt) and exit the current process.
 #[cfg(not(windows))]
 fn relaunch_elevated() -> Result<()> {
@@ -607,9 +644,11 @@ fn serve(a: ServeArgs) -> Result<()> {
     // Ask the storage questions in the user's own window, before any elevation.
     let settings = effective_settings(&a.data)?;
     let mut https = None;
-    // Set up once (the desktop app's option, or `navigraph on`): the address already
-    // points here and the certificate is trusted, so serve without touching either.
-    let persistent = !a.no_hosts && (super::desktop::navigraph_ready() || super::desktop::fenix_charts_ready());
+    // On Linux the hosts are set up once, with sudo (`navigraph on`), and serving runs
+    // without root, so an address already pointed here is served as it is. On Windows
+    // the addresses point here only while serving: pointed now, and back however this
+    // ends.
+    let persistent = !cfg!(windows) && !a.no_hosts && (super::desktop::navigraph_ready() || super::desktop::fenix_charts_ready());
     if persistent {
         // One certificate for every Navigraph name, whichever of them point here.
         let m = tls::ensure_for(domain, &super::navigraph_domains(true))?;
@@ -622,18 +661,15 @@ fn serve(a: ServeArgs) -> Result<()> {
             }
             relaunch_elevated()?;
         }
-        let m = tls::ensure(domain)?;
-        tls::trust(&m)?;
-        hosts::install(domain)?;
-        crate::term::success(&format!("Hosts file now sends {domain} here (removed automatically on exit)"));
+        give_back_on_exit()?;
+        // The Fenix tablet's hosts as well while its option is on (the desktop app's, or
+        // `navigraph on --efb`).
+        let fenix = settings.fenix_charts;
+        super::desktop::redirect(true, fenix)?;
+        let m = tls::ensure_for(domain, &super::navigraph_domains(true))?;
+        let names = if fenix { super::navigraph_domains(true).join(", ") } else { domain.to_string() };
+        crate::term::success(&format!("Hosts file now sends {names} here (removed automatically on exit)"));
         https = Some((a.https_port, m.cert_pem, m.key_pem));
-        ctrlc::set_handler(move || {
-            match hosts::remove() {
-                Ok(_) => log::info!("hosts-file redirect removed"),
-                Err(e) => log::error!("could not clean the hosts file: {e:#}"),
-            }
-            std::process::exit(0);
-        })?;
     } else if a.https_port != super::DEFAULT_HTTPS_PORT || a.http_port == 0 {
         // Explicit HTTPS without the redirect (testing): still needs the certificate.
         let m = tls::ensure(domain)?;
@@ -867,13 +903,28 @@ pub fn run() -> Result<()> {
                 // does: while it is on, anything on this computer that asks for these
                 // hosts reaches the bridge, not only the aeroplane.
                 crate::term::warn(&format!(
-                    "--efb also redirects {} for every program on this computer, the Navigraph apps included. `navigraph off` puts them back.",
-                    super::NAVIGRAPH_EFB_DOMAINS.join(", ")
+                    "--efb also redirects {} for every program on this computer{}, the Navigraph apps included. `navigraph off` puts them back.",
+                    super::NAVIGRAPH_EFB_DOMAINS.join(", "),
+                    if cfg!(windows) { " while the bridge serves" } else { "" }
                 ));
             }
             super::desktop::setup_navigraph_with(on, efb)?;
+            if cfg!(windows) {
+                // The hosts point here only while serving, so nothing in the hosts file
+                // says which are wanted between runs: `serve` and the desktop app read it
+                // from the settings.
+                let mut s = Settings::load_or_setup()?;
+                s.navigraph_redirect = on;
+                s.fenix_charts = on && (efb || s.fenix_charts);
+                s.save()?;
+            }
             let what = if efb { "A350/A380X and the Fenix A320 flight bag" } else { "A350/A380X" };
-            crate::term::success(&if on { format!("{what} set up: run `amdb-bridge serve` as your normal user") } else { format!("{what} setup removed") });
+            let next = if cfg!(windows) {
+                "`amdb-bridge serve` and the AMDB Bridge app point the addresses here while they serve, asking for administrator permission each time"
+            } else {
+                "run `amdb-bridge serve` as your normal user"
+            };
+            crate::term::success(&if on { format!("{what} set up: {next}") } else { format!("{what} setup removed") });
             Ok(())
         }
         Cmd::Cleanup => {

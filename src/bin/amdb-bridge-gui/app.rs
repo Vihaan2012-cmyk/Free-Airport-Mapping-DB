@@ -234,7 +234,9 @@ fn setup_navigraph(on: bool, relaunched: bool) -> i32 {
         amdbgen::term::warn("Administrator permission was not given, so A350/A380X support was not changed");
         return 1;
     }
-    let done = desktop::navigraph_ready() == on;
+    // On, the certificate is trusted and the address is pointed here when serving starts;
+    // off, nothing of it is left.
+    let done = if on { desktop::certificate_ready() } else { !desktop::navigraph_ready() };
     if done {
         if on {
             desktop::patch_a350_everywhere().iter().for_each(|n| amdbgen::term::success(n));
@@ -260,13 +262,13 @@ fn setup_fenix_charts(on: bool, relaunched: bool) -> i32 {
         amdbgen::term::warn("Administrator permission was not given, so the Fenix A320's tablet charts were not changed");
         return 1;
     }
-    let done = desktop::fenix_charts_ready() == on;
+    let done = if on { desktop::certificate_ready() } else { !desktop::fenix_charts_ready() };
     if done {
         let mut s = Settings::load().unwrap_or_default();
         s.fenix_charts = on;
         let _ = s.save();
         amdbgen::term::success(if on {
-            "Fenix A320 tablet charts set up: its Navigraph sign-in now links to AMDB Bridge"
+            "Fenix A320 tablet charts set up: its Navigraph sign-in links to AMDB Bridge while it serves"
         } else {
             "Fenix A320 tablet charts removed: its tablet uses Navigraph again"
         });
@@ -349,7 +351,23 @@ pub fn main() -> i32 {
     }
 
     let tray_only = has("--tray");
-    let Some(inst) = Instance::acquire(Duration::ZERO) else {
+    // The Navigraph options point Navigraph's hosts at this computer while serving and
+    // back when the app closes, and both need administrator rights: they are asked for
+    // once, here, for the whole session. A copy already running is shown instead, and a
+    // relaunched copy never relaunches again (see `setup_navigraph`).
+    if !relaunched && !instance::is_elevated() && !instance::running() {
+        let s = Settings::load().unwrap_or_default();
+        if s.navigraph_redirect || s.fenix_charts {
+            let mut again: Vec<String> = args.iter().map(|a| if a.contains(' ') { format!("\"{a}\"") } else { a.clone() }).collect();
+            again.push("--relaunched".into());
+            if instance::run_elevated(&again.join(" "), false) {
+                return 0;
+            }
+            amdbgen::term::warn("Administrator permission was not given, so Navigraph's addresses are not pointed at this computer this time");
+        }
+    }
+    // A copy relaunched as administrator waits for the one it replaces to close.
+    let Some(inst) = Instance::acquire(if relaunched { Duration::from_secs(15) } else { Duration::ZERO }) else {
         // Already running: bring that window forward instead of opening a second one.
         // Started by Windows or the simulator, stay quiet.
         if !tray_only {
@@ -373,7 +391,7 @@ pub fn main() -> i32 {
             return 1;
         }
     };
-    app.after_open();
+    app.after_open(has("--serve"));
     nwg::dispatch_thread_events();
     app.shutdown();
     0
@@ -392,14 +410,16 @@ struct Inventory {
     tablets_on: Option<bool>,
 }
 
-/// Build the list. `redirect` is the A350/A380X option, `serving_redirect` whether the
-/// redirect is in place right now; `fenix_charts` and `serving_fenix` the same for the
-/// Fenix A320's tablet.
+/// Build the list. `redirect` is the A350/A380X option, `serving_redirect` whether this
+/// run serves through it; `fenix_charts` and `serving_fenix` the same for the Fenix
+/// A320's tablet.
 fn take_inventory(redirect: bool, serving_redirect: bool, fenix_charts: bool, serving_fenix: bool, xplane_on: bool) -> Inventory {
     let mut rows: Vec<[String; 3]> = Vec::new();
     let mut tablets: Vec<bool> = Vec::new();
     let sims = desktop::detect_sims();
-    let ready = redirect && desktop::navigraph_ready();
+    // The hosts are pointed here when serving starts, which takes administrator rights.
+    let elevated = instance::is_elevated();
+    const NO_RIGHTS: &str = "Needs administrator permission: close AMDB Bridge and open it again";
     for sim in &sims {
         let map = match desktop::a220_map_state(&sim.community) {
             MapState::NotInstalled => "Not installed".to_string(),
@@ -410,10 +430,10 @@ fn take_inventory(redirect: bool, serving_redirect: bool, fenix_charts: bool, se
         let navigraph = |when_serving: &str| -> String {
             if serving_redirect {
                 when_serving.to_string()
-            } else if redirect && ready {
+            } else if redirect && elevated {
                 "Ready when serving".to_string()
             } else if redirect {
-                "Not set up: tick the option again".to_string()
+                NO_RIGHTS.to_string()
             } else {
                 "Needs the A350/A380X option below".to_string()
             }
@@ -446,10 +466,10 @@ fn take_inventory(redirect: bool, serving_redirect: bool, fenix_charts: bool, se
             rows.push([sim.name.clone(), "Fenix A320: A320 OANS".into(), status]);
             let charts = if serving_fenix {
                 "From the bridge"
-            } else if fenix_charts && desktop::fenix_charts_ready() {
+            } else if fenix_charts && elevated {
                 "From the bridge when serving"
             } else if fenix_charts {
-                "Not set up: tick its option again"
+                NO_RIGHTS
             } else {
                 "Its own (Navigraph): tick its option below"
             };
@@ -743,8 +763,8 @@ impl App {
             (&mut ui.opt_xplane, "Install the X-Plane 12 moving map when serving starts"),
             (&mut ui.opt_a320_oans, "Add the A320 OANS moving map to the Fenix A320's captain navigation display"),
             (&mut ui.opt_a330_oans, "Add the A330 OANS moving map to the Headwind A330's navigation displays"),
-            (&mut ui.opt_fenix_charts, "Show AMDB Bridge's charts on the Fenix A320's tablet (asks for administrator permission once)"),
-            (&mut ui.opt_redirect, "Also serve the iniBuilds A350 and FlyByWire A380X (asks for administrator permission once)"),
+            (&mut ui.opt_fenix_charts, "Show AMDB Bridge's charts on the Fenix A320's tablet (asks for administrator permission when AMDB Bridge opens)"),
+            (&mut ui.opt_redirect, "Also serve the iniBuilds A350 and FlyByWire A380X (asks for administrator permission when AMDB Bridge opens)"),
             (&mut ui.opt_cache, "Keep built airports on disk, so they load instantly next time"),
         ];
         for (i, (cb, text)) in opts.into_iter().enumerate() {
@@ -881,6 +901,18 @@ impl App {
         if let Ok(raw) = raw {
             self.raw_handlers.borrow_mut().push(raw);
         }
+
+        // Signing out or shutting down ends the process once this message is answered,
+        // before the window's own shutdown runs: point Navigraph's hosts back first.
+        let ended = nwg::bind_raw_event_handler(&self.ui.window.handle, 0x1_0002, move |_hwnd, msg, wparam, _lparam| {
+            if msg == winapi::um::winuser::WM_ENDSESSION && wparam != 0 {
+                service::give_back_redirect();
+            }
+            None
+        });
+        if let Ok(ended) = ended {
+            self.raw_handlers.borrow_mut().push(ended);
+        }
     }
 
     fn on_event(&self, evt: nwg::Event, data: &nwg::EventData, handle: nwg::ControlHandle) {
@@ -988,12 +1020,14 @@ impl App {
     // ----------------------------------------------------------------------------------
     // Lifecycle
 
-    fn after_open(self: &Rc<Self>) {
+    /// `serve`: start serving whatever the setting says, for a copy reopened as
+    /// administrator by one that was serving.
+    fn after_open(self: &Rc<Self>, serve: bool) {
         self.log_line(&format!("AMDB Bridge {VERSION}"));
         if let Some(msg) = service::clear_stale_redirect(&self.state.borrow().settings) {
             amdbgen::term::warn(&msg);
         }
-        let start = self.state.borrow().settings.start_on_open;
+        let start = serve || self.state.borrow().settings.start_on_open;
         if start {
             self.start_serving(false);
         } else {
@@ -1770,7 +1804,7 @@ impl App {
                 &self.ui.window,
                 &nwg::MessageParams {
                     title: "Serve the A350 and A380X",
-                    content: "The iniBuilds A350 and FlyByWire A380X ask Navigraph's map server for airports directly. To answer them, AMDB Bridge points that address at this computer, installs a local certificate, and patches the A350's EFB so it does not ask you to sign in.\n\nWindows asks for administrator permission once. While this option is on, those aircraft get their airport maps from AMDB Bridge, so keep it running when you fly them. Untick it, or uninstall AMDB Bridge, to undo all of it.\n\nThe A220 map and X-Plane do not need this.",
+                    content: "The iniBuilds A350 and FlyByWire A380X ask Navigraph's map server for airports directly. To answer them, AMDB Bridge points that address at this computer, installs a local certificate, and patches the A350's EFB so it does not ask you to sign in.\n\nThe address points at this computer only while AMDB Bridge serves, and back at Navigraph when it closes, so Windows asks for administrator permission each time AMDB Bridge opens. Keep it running when you fly those aircraft. Untick it, or uninstall AMDB Bridge, to undo all of it.\n\nThe A220 map and X-Plane do not need this.",
                     buttons: nwg::MessageButtons::OkCancel,
                     icons: nwg::MessageIcons::Info,
                 },
@@ -1780,7 +1814,12 @@ impl App {
                 return;
             }
         }
-        // The setup runs as a separate elevated copy; this one waits for it.
+        if on && !instance::is_elevated() {
+            self.reopen_as_administrator(|s, on| s.navigraph_redirect = on, &self.ui.opt_redirect);
+            return;
+        }
+        // Done here when this copy is administrator; otherwise (turning it off) the setup
+        // runs as a separate elevated copy, which this one waits for.
         let code = setup_navigraph(on, false);
         self.drain_lines_only();
         if code != 0 {
@@ -1805,7 +1844,7 @@ impl App {
                 &self.ui.window,
                 &nwg::MessageParams {
                     title: "Charts on the Fenix A320's tablet",
-                    content: "The Fenix A320's tablet signs in to Navigraph for its charts, and its app cannot be patched the way other tablets are. To show AMDB Bridge's charts on it instead, AMDB Bridge points Navigraph's sign-in and charts addresses at this computer and installs a local certificate. The tablet then links with the code AMDB, with nothing to type on a website.\n\nWhile this is on, every program on this computer that signs in to Navigraph reaches AMDB Bridge instead, the Navigraph Charts app included. Untick it, or uninstall AMDB Bridge, to put everything back.\n\nWindows asks for administrator permission once. Keep AMDB Bridge running when you fly the Fenix.",
+                    content: "The Fenix A320's tablet signs in to Navigraph for its charts, and its app cannot be patched the way other tablets are. To show AMDB Bridge's charts on it instead, AMDB Bridge points Navigraph's sign-in and charts addresses at this computer and installs a local certificate. The tablet then links with the code AMDB, with nothing to type on a website.\n\nWhile AMDB Bridge serves, every program on this computer that signs in to Navigraph reaches AMDB Bridge instead, the Navigraph Charts app included; when AMDB Bridge closes, they reach Navigraph again. Untick it, or uninstall AMDB Bridge, to put everything back.\n\nWindows asks for administrator permission each time AMDB Bridge opens. Keep AMDB Bridge running when you fly the Fenix.",
                     buttons: nwg::MessageButtons::OkCancel,
                     icons: nwg::MessageIcons::Info,
                 },
@@ -1815,7 +1854,11 @@ impl App {
                 return;
             }
         }
-        // The setup runs as a separate elevated copy; this one waits for it.
+        if on && !instance::is_elevated() {
+            self.reopen_as_administrator(|s, on| s.fenix_charts = on, &self.ui.opt_fenix_charts);
+            return;
+        }
+        // As for the A350/A380X option.
         let code = setup_fenix_charts(on, false);
         self.drain_lines_only();
         if code != 0 {
@@ -1831,6 +1874,25 @@ impl App {
             self.start_serving(true);
         }
         self.refresh_inventory();
+    }
+
+    /// A Navigraph option turned on in a copy without administrator rights, which could
+    /// have the hosts pointed here but never point them back: the choice is saved and the
+    /// app opens again as administrator, serving if this copy was, and this copy closes.
+    /// Refused, the option stays off.
+    fn reopen_as_administrator(&self, set: fn(&mut Settings, bool), option: &nwg::CheckBox) {
+        set(&mut self.state.borrow_mut().settings, true);
+        self.save();
+        let serving = self.state.borrow().phase == Phase::Serving;
+        if instance::run_elevated(if serving { "--relaunched --serve" } else { "--relaunched" }, false) {
+            self.exit();
+            return;
+        }
+        set(&mut self.state.borrow_mut().settings, false);
+        self.save();
+        option.set_check_state(checked(false));
+        amdbgen::term::warn("Administrator permission was not given, so the option was not turned on");
+        self.drain_lines_only();
     }
 
     fn option_cache(&self) {
@@ -1923,7 +1985,7 @@ impl App {
         if is_checked(&self.ui.opt_a320_oans) && desktop::a320_oans_fits(&sim.community) {
             note("A320 OANS", desktop::install_a320_oans(&sim.community));
         }
-        if self.state.borrow().settings.navigraph_redirect && desktop::navigraph_ready() {
+        if self.state.borrow().settings.navigraph_redirect && desktop::certificate_ready() {
             desktop::patch_a350_everywhere().iter().for_each(|n| amdbgen::term::success(n));
         }
         if others.iter().any(|s| amdbgen::bridge::patcher::scan_charts(&s.community).iter().any(|(_, _, on)| *on)) {

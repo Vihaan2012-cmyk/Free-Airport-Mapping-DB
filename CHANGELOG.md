@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.2.12 (2026-10-29)
+
+**Navigraph's addresses go back to Navigraph when AMDB Bridge closes.**
+
+- With the A350/A380X or the Fenix tablet charts option on, the hosts file pointed
+  Navigraph's addresses at this computer for as long as the option was on, so once AMDB
+  Bridge closed, whatever used them reached nothing: with the Fenix option, Navigraph's
+  sign-in and charts for every program, the Navigraph Charts app included. They now
+  point here only while AMDB Bridge serves. They are set when serving starts, and put
+  back when it stops or the app closes, whether from Exit, the installer closing it, or
+  Windows signing out or shutting down. A redirect left by a crash, or by an earlier
+  version, is cleared the next time AMDB Bridge opens.
+- That takes administrator rights each time, so with either option on, AMDB Bridge asks
+  for administrator permission when it opens, once a session. Refused, it serves
+  everything else. Turning an option on in a copy without the rights opens AMDB Bridge
+  again as administrator.
+- `amdb-bridge serve` closed with its window's X left its redirect behind: Windows ends a
+  console program as soon as the close is acknowledged, and the cleanup ran on another
+  thread that usually lost that race. It now finishes before the window goes. On Windows
+  `serve` points the hosts here for each run (the Fenix tablet's too when that option is
+  on) and asks for administrator rights each time; on Linux nothing changes.
+- Uninstalling left the Fenix tablet's hosts in place when the certificate had already
+  gone.
+
 ## 1.2.11 (2026-10-14) · A330 OANS 1.0.1 · A320 OANS 1.0.9
 
 **A much smaller airport cache: update the bridge before using a cache built by this
