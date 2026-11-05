@@ -22,8 +22,72 @@ use anyhow::{Context, Result};
 use rayon::prelude::*;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashSet};
+use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Write the Gateway half's source: `aptdat`, X-Plane's Global Airports file, as
+/// `gateway/source/<AB>.dat.gz` by the first two letters of each airport's code, with
+/// `airports.json`, the pack's own `README` and `COPYING`, and the notice.
+pub fn export_gateway_source(aptdat: &Path, to: &Path) -> Result<()> {
+    use crate::sources::xplane::{aptdat as parse, gateway, local};
+    let bytes = std::fs::read(aptdat).with_context(|| format!("read {}", aptdat.display()))?;
+    let mut groups: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut rows = Vec::new();
+    let mut finish = |code: &str, block: &[u8]| {
+        groups.entry(gateway::group_of(code)).or_default().extend_from_slice(block);
+        let text = format!("I\n1200\n{}99\n", String::from_utf8_lossy(block));
+        let Ok(ap) = parse::parse(&text, Some(code)) else {
+            crate::term::warn(&format!("{code}: not listed, its apt.dat does not read"));
+            return;
+        };
+        if let Some((lat, lon)) = crate::build::choose_arp(&ap) {
+            rows.push(json!({ "icao": code.to_uppercase(), "name": ap.header.name, "lat": lat, "lon": lon, "elevation_ft": ap.header.elevation_ft }));
+        }
+    };
+    let mut current: Option<(String, Vec<u8>)> = None;
+    for line in bytes.split_inclusive(|b| *b == b'\n') {
+        let text = String::from_utf8_lossy(line);
+        if let Some(code) = local::airport_code(&text) {
+            if let Some((c, b)) = current.take() {
+                finish(&c, &b);
+            }
+            current = Some((code.to_string(), Vec::new()));
+        } else if text.trim() == "99" {
+            break;
+        }
+        if let Some((_, b)) = current.as_mut() {
+            b.extend_from_slice(line);
+        }
+    }
+    if let Some((c, b)) = current.take() {
+        finish(&c, &b);
+    }
+    let folder = to.join("gateway/source");
+    std::fs::create_dir_all(&folder)?;
+    let mut packed = 0;
+    for (group, blocks) in &groups {
+        let mut w = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        w.write_all(b"I\n1200 An extract of X-Plane's Global Airports, by the first letters of the code\n\n")?;
+        w.write_all(blocks)?;
+        w.write_all(b"99\n")?;
+        let gz = w.finish()?;
+        packed += gz.len();
+        std::fs::write(folder.join(format!("{group}.dat.gz")), gz)?;
+    }
+    write(&folder.join("airports.json"), &json!({ "airports": rows }).to_string())?;
+    if let Some(pack) = aptdat.parent().and_then(Path::parent) {
+        for name in ["README", "COPYING"] {
+            if pack.join(name).is_file() {
+                std::fs::copy(pack.join(name), folder.join(name))?;
+            }
+        }
+    }
+    write(&to.join("gateway/COPYING"), GPL_2)?;
+    write(&to.join("gateway/NOTICE"), GATEWAY_NOTICE)?;
+    crate::term::success(&format!("{} airports in {} files ({}) in {}", rows.len(), groups.len(), crate::term::human_bytes(packed as u64), folder.display()));
+    Ok(())
+}
 
 fn write(path: &Path, text: &str) -> Result<()> {
     if let Some(dir) = path.parent() {
@@ -189,7 +253,7 @@ pub fn export_split(gateway: &Store, osm: &Store, to: &Path, only: &[String]) ->
         "gateway_files": gw_n.load(Ordering::Relaxed),
         "osm_files": osm_n.load(Ordering::Relaxed),
         "layers": NAVIGRAPH_LAYERS.iter().map(|l| l.name()).collect::<Vec<_>>(),
-        "gateway_file": "gateway/v1/{first two letters}/{ICAO}.json: X-Plane Scenery Gateway data with public-domain data, GPL v2 or later (gateway/COPYING)",
+        "gateway_file": "gateway/v1/{first two letters}/{ICAO}.json: X-Plane Scenery Gateway data with public-domain data, GPL 2.0 (gateway/COPYING); its source is gateway/source/{first two letters}.dat.gz",
         "osm_file": "osm/v1/{first two letters}/{ICAO}.json: OpenStreetMap data with public-domain data, ODbL 1.0 (osm/LICENSE)",
         "osm_layers_beside_gateway": CONTEXT_LAYERS.iter().map(|l| l.name()).collect::<Vec<_>>(),
         "projection": "NAVIGRAPH:ARP_AZEQ: metres east and north of each file's own arp, azimuthal equidistant on a sphere of radius 6371008.8 m",
@@ -453,11 +517,14 @@ const GPL_2: &str = include_str!("licences/GPL-2.0.txt");
 const ODBL_1: &str = include_str!("licences/ODbL-1.0.txt");
 
 const GATEWAY_NOTICE: &str = "Airport layouts in this folder are derived from the X-Plane Scenery Gateway
-(https://gateway.x-plane.com/), whose scenery packs are free software: you can
-redistribute them and/or modify them under the terms of the GNU General Public License
-as published by the Free Software Foundation; either version 2 of the License, or (at
-your option) any later version. These files are distributed under the same terms; see
-COPYING. The scenery they come from is the Gateway's own download for each airport.
+(https://gateway.x-plane.com/), through the Global Airports scenery pack that ships with
+X-Plane, which is licensed under the terms of the GNU General Public License, version 2
+(GPL 2.0). These files are distributed under the same terms; see COPYING. None of them was downloaded from the Gateway's servers.
+
+The source is source/<first two letters of the code>.dat.gz: the pack's apt.dat, unchanged
+but for being split by airport code, with the pack's own README and COPYING. The airports
+were converted from it to the JSON in v1/ and the built airports in builds.tar by the
+program below.
 
 They also hold public-domain data from the FAA and OurAirports, and nothing from
 OpenStreetMap: OpenStreetMap data is in ../osm, under its own licence.

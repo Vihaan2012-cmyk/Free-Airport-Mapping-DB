@@ -82,11 +82,11 @@ All free, no keys, nothing to install.
 
 | Source | Used for | Licence |
 |---|---|---|
-| X-Plane Scenery Gateway | Runways, pavement, painted lines, stands, taxi routing network, signs, lights, frequencies | free |
+| X-Plane Scenery Gateway's data, from [our copy](https://huggingface.co/datasets/Royale2072/free-airport-mapping-db) of X-Plane's Global Airports pack (the Gateway's own servers are not used) | Runways, pavement, painted lines, stands, taxi routing network, signs, lights, frequencies | GPL 2.0 |
 | OpenStreetMap (map API, tiled) | Terminals, buildings, towers, fences, roads, water, construction, deicing | ODbL |
 | OurAirports | Worldwide airport index | public domain |
 | FAA NASR (US only, automatic) | Declared distances, stopways, arresting systems, LAHSO | public domain |
-| Local X-Plane install (auto-detected) | Fallback for airports the Gateway does not have: Custom Scenery first, then Global Airports; `--xplane-dir` to point elsewhere, `--aptdat` for one file | yours |
+| Local X-Plane install (auto-detected) | Fallback for airports the Gateway's data does not have: Custom Scenery first, then Global Airports; `--xplane-dir` to point elsewhere, `--aptdat` for one file | yours |
 | FAA Digital Obstacle File (US only, automatic) | Surveyed obstacles for approach charts: masts, towers, chimneys, wind turbines | public domain |
 | OpenStreetMap masts, towers, chimneys and wind turbines (worldwide, tagged height only) | Obstacles for approach charts outside the US | ODbL |
 | `overrides/<ICAO>/<layer>.geojson` | Anything to add or replace per airport (hotspots, blind spots) | yours |
@@ -130,7 +130,7 @@ Positional ICAO codes, `--from-file list.txt`, `--simbrief NAME`, or any mix of:
 | `--all` | everything in the index |
 
 `amdbgen list ...` shows what a selection resolves to, `amdbgen info LFPG` what the
-index knows (runways, Gateway scenery), `amdbgen search heathrow` finds codes.
+index knows (runways), `amdbgen search heathrow` finds codes.
 `amdbgen list ... --csv file.csv` exports the selection with names, kinds and runway
 counts; edit it in a spreadsheet and feed it back with `--from-file file.csv` (both
 tools take a CSV with an `icao` column or a plain list, and build in file order, so
@@ -181,9 +181,8 @@ airports on it (Geneva, Basel) lose their far side. Memory grows with the airpor
 file (about 1 GB for 67 in dense Switzerland); `--continent europe` and friends split a
 run if it runs short.
 
-`--no-gateway` reads X-Plane scenery from your X-Plane 12 installation instead of the
-Gateway, one request less per airport: about 2.5 times faster for a big batch, and the
-same scenery as the Gateway for most airports (56 of 67 in Switzerland), older for some.
+`--no-gateway` reads X-Plane scenery from your X-Plane 12 installation instead of our copy
+of the Gateway's data on Hugging Face.
 
 The drag-and-drop **AMDB Build List** takes extracts too: drop the `.osm.pbf` files on it
 together with the list.
@@ -213,9 +212,19 @@ main speed lever), airports already built are skipped unless `--rebuild`, `--dis
 each airport's source downloads once it is built, and every run ends with
 `bulk-status.csv` next to the airports folder (built / failed / skipped per airport,
 sources used, feature count, error). `amdbgen build --continent europe --min-runways 2`
-does the same outside the bridge. Source order per airport: Scenery Gateway, then the
+does the same outside the bridge. Source order per airport: the Scenery Gateway's data, then the
 local X-Plane install, then OpenStreetMap alone; with no runway anywhere the airport
 is written with only its reference point and the status CSV says so.
+
+An airport not built yet comes already built from the
+[Hugging Face dataset](https://huggingface.co/datasets/Royale2072/free-airport-mapping-db)
+when it has it: one byte range of `gateway/builds.tar` and one of `osm/builds.tar`, found
+by the `builds.idx.json` beside each, put together as the Gateway's airfield with
+OpenStreetMap's buildings, water and roads. That takes a second or two instead of a build,
+and bulk builds and `prefetch` take airports the same way. Those airports are a little
+thinner than a build made here, which blends OpenStreetMap's aprons, stands and holding
+points into the Gateway's. `--no-dataset` builds every airport here instead, as does
+anything the dataset does not have or when it cannot be reached.
 
 The first `serve` asks three questions: keep generated airports and downloads on
 disk, where, and up to how much space (oldest airports are dropped first). Answers
@@ -583,7 +592,7 @@ charts you already have.
 
 - `src/model` layer registry, code lists, feature container
 - `src/geom` local metre projection, Bézier tessellation, buffers, boolean ops
-- `src/sources` xplane (gateway, local, apt.dat), osm (map API, Overpass, tags), index, faa, simbrief, overrides
+- `src/sources` xplane (the Gateway's data from Hugging Face, local, apt.dat), osm (map API, Overpass, tags), index, faa, simbrief, overrides
 - `src/build` conflation and derivation: runways, markings, pavement, lines, stands, ASRN, structures, signs
 - `src/output` GeoJSON, Geobuf, manifest, PDF chart, HTML preview, X-Plane Lua data
 - `tools/xplane` the FlyWithLua moving-map script

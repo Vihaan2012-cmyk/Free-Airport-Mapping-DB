@@ -1,5 +1,6 @@
 //! Airport index: ICAO -> ARP / elevation / names, from X-Plane `earth_aptmeta.dat`
-//! (local), OurAirports CSV (public domain download), and the Gateway airport list.
+//! (local), OurAirports CSV (public domain download), and the Gateway's airports, from their
+//! copy on Hugging Face.
 
 use crate::cache::Cache;
 use crate::ir::AirportHeader;
@@ -28,8 +29,6 @@ pub struct IndexEntry {
     pub kind: Option<String>,
     /// OurAirports continent code: AF, AN, AS, EU, NA, OC, SA.
     pub continent: Option<String>,
-    /// Recommended Gateway scenery id, when the Gateway list has been loaded.
-    pub gateway_scenery: Option<i64>,
     pub source: &'static str,
 }
 
@@ -193,23 +192,14 @@ impl AirportIndex {
         Ok(n)
     }
 
-    /// Load the Gateway airport list (all ~41k airports with their recommended scenery id).
+    /// Load the Gateway's airports, from their copy on Hugging Face, for those no other list has.
     pub fn load_gateway_list(&mut self, http: &Http, cache: &Cache) -> Result<usize> {
-        let text = cache.get_or_fetch_text("gateway/airports.json", || http.get_text("https://gateway.x-plane.com/apiv1/airports"))?;
+        let text = crate::sources::xplane::gateway::airport_list(http, cache)?;
         let v: serde_json::Value = serde_json::from_str(&text).context("gateway airports json")?;
         let mut n = 0;
         for a in v.get("airports").and_then(|x| x.as_array()).map(|x| x.as_slice()).unwrap_or(&[]) {
-            let Some(code) = a.get("AirportCode").and_then(|c| c.as_str()) else { continue };
-            let icao = code.to_uppercase();
-            let scenery = a.get("RecommendedSceneryId").and_then(|s| s.as_i64());
-            let (lat, lon) = (a.get("Latitude").and_then(|x| x.as_f64()), a.get("Longitude").and_then(|x| x.as_f64()));
-            match self.by_icao.get_mut(&icao) {
-                Some(e) => e.gateway_scenery = scenery,
-                None => {
-                    let (Some(lat), Some(lon)) = (lat, lon) else { continue };
-                    self.by_icao.insert(icao.clone(), IndexEntry { icao, name: a.get("AirportName").and_then(|x| x.as_str()).map(str::to_string), lat, lon, elevation_ft: a.get("Elevation").and_then(|x| x.as_f64()), gateway_scenery: scenery, source: crate::model::codes::source::XPLANE, ..Default::default() });
-                }
-            }
+            let (Some(code), Some(lat), Some(lon)) = (a.get("icao").and_then(|c| c.as_str()), a.get("lat").and_then(|x| x.as_f64()), a.get("lon").and_then(|x| x.as_f64())) else { continue };
+            self.insert_if_absent(IndexEntry { icao: code.to_uppercase(), name: a.get("name").and_then(|x| x.as_str()).map(str::to_string), lat, lon, elevation_ft: a.get("elevation_ft").and_then(|x| x.as_f64()), source: crate::model::codes::source::XPLANE, ..Default::default() });
             n += 1;
         }
         Ok(n)
@@ -220,24 +210,6 @@ impl AirportIndex {
         let a = cache.get_or_fetch_text("ourairports/airports.csv", || http.get_text(OURAIRPORTS_AIRPORTS))?;
         let r = cache.get_or_fetch_text("ourairports/runways.csv", || http.get_text(OURAIRPORTS_RUNWAYS)).ok();
         self.load_ourairports(&a, r.as_deref())
-    }
-
-    /// Fallback: ask the Gateway for one airport's ARP.
-    pub fn load_gateway_single(&mut self, http: &Http, cache: &Cache, icao: &str) -> Result<bool> {
-        let info = crate::sources::xplane::gateway::airport_info(http, cache, icao)?;
-        if let (Some(lat), Some(lon)) = (info.latitude, info.longitude) {
-            self.insert_if_absent(IndexEntry {
-                icao: info.icao.to_uppercase(),
-                name: info.airport_name,
-                lat,
-                lon,
-                elevation_ft: info.elevation,
-                source: crate::model::codes::source::XPLANE,
-                ..Default::default()
-            });
-            return Ok(true);
-        }
-        Ok(false)
     }
 
     /// ICAOs whose index entry matches a country (ISO2) or an aptmeta region prefix.

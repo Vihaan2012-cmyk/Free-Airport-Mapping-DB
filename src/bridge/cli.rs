@@ -31,7 +31,7 @@ pub(crate) struct DataArgs {
     /// Keep nothing on disk for this run (overrides the saved setting).
     #[arg(long = "no-cache")]
     no_cache: bool,
-    /// X-Plane install used for airports the Gateway does not have (auto-detected when omitted).
+    /// X-Plane install used for airports the Gateway's data does not have (auto-detected when omitted).
     #[arg(long = "xplane-dir")]
     xplane_dir: Option<PathBuf>,
     /// Optional X-Plane earth_aptmeta.dat index.
@@ -43,6 +43,10 @@ pub(crate) struct DataArgs {
     /// Seconds to wait on one source before moving to the next (default 120).
     #[arg(long, value_name = "SECONDS")]
     timeout: Option<u64>,
+    /// Build every airport here, rather than downloading those the Hugging Face dataset has
+    /// already built.
+    #[arg(long = "no-dataset")]
+    no_dataset: bool,
 }
 
 /// Build whole regions ahead of time.
@@ -237,8 +241,31 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard:
     let skipped = icaos.len() - todo.len();
     let mut rows: Vec<BulkRow> = icaos.iter().filter(|i| !todo.contains(i)).map(|i| BulkRow { icao: i.clone(), status: "skipped (already built)", seconds: None, error: String::new() }).collect();
     crate::term::start(&format!("Bulk build {label}: {} airport(s){}", todo.len(), if skipped > 0 { format!(", {skipped} already built") } else { String::new() }));
+    let todo = if super::dataset::is_on() && !todo.is_empty() {
+        use rayon::prelude::*;
+        let t0 = std::time::Instant::now();
+        let fetch = || todo.par_iter().filter(|i| super::store::downloaded(&cfg.out, i)).cloned().collect::<std::collections::HashSet<String>>();
+        let got = match rayon::ThreadPoolBuilder::new().num_threads(8).build() {
+            Ok(pool) => pool.install(fetch),
+            Err(_) => fetch(),
+        };
+        if !got.is_empty() {
+            crate::term::info(&format!("Bulk {label}: {} airport(s) downloaded already built from the Hugging Face dataset in {}", got.len(), crate::term::human_secs(t0.elapsed().as_secs_f64())));
+        }
+        rows.extend(todo.iter().filter(|i| got.contains(*i)).map(|i| BulkRow { icao: i.clone(), status: "downloaded", seconds: None, error: String::new() }));
+        todo.into_iter().filter(|i| !got.contains(i)).collect()
+    } else {
+        todo
+    };
+    let downloaded = rows.iter().filter(|r| r.status == "downloaded").count();
     if todo.is_empty() {
         super::progress::finish();
+        if downloaded > 0 {
+            rows.sort_by(|a, b| a.icao.cmp(&b.icao));
+            if let Err(e) = write_bulk_status(cfg, &rows, label) {
+                crate::term::warn(&format!("could not write the status CSV: {e:#}"));
+            }
+        }
         return;
     }
     let t0 = std::time::Instant::now();
@@ -278,7 +305,7 @@ fn run_bulk(cfg: &Config, icaos: &[String], rebuild: bool, label: &str, discard:
         crate::term::info(&format!("Bulk {label}: {done}/{} done ({built} built, {failed} failed), about {} left", todo.len(), crate::term::human_secs(eta)));
     }
     crate::term::success(&format!(
-        "Bulk build {label} finished: {built} built, {failed} failed, {skipped} skipped, in {}{}",
+        "Bulk build {label} finished: {downloaded} downloaded, {built} built, {failed} failed, {skipped} skipped, in {}{}",
         crate::term::human_secs(t0.elapsed().as_secs_f64()),
         if discard.is_some() { format!(", {} of downloads discarded", crate::term::human_bytes(freed)) } else { String::new() }
     ));
@@ -381,9 +408,27 @@ enum Cmd {
         /// Only these airports (for a look at the format); every built one when left out.
         icaos: Vec<String>,
     },
+    /// Write the source of the Gateway half: the Global Airports apt.dat that ships with
+    /// X-Plane, as `gateway/source/<AB>.dat.gz` by the first two letters of the airport's
+    /// code, with `airports.json`. It is the source the GPL asks for with the converted
+    /// files, and where builds read the Gateway's data from.
+    ExportGatewaySource {
+        /// X-Plane's `Global Scenery/Global Airports/Earth nav data/apt.dat`.
+        #[arg(long)]
+        aptdat: PathBuf,
+        /// The same folder `export-split` wrote to.
+        #[arg(long)]
+        to: PathBuf,
+    },
+    /// Write `builds.idx.json` beside each `builds.tar` of the dataset: where in the archive
+    /// each airport lies, which is how the bridge downloads one airport and not the archive.
+    IndexBuilds {
+        /// The dataset's `gateway/builds.tar` and `osm/builds.tar`.
+        archives: Vec<PathBuf>,
+    },
     /// Write the airports for a web host as two separately licensed halves, each from its
     /// own build: `gateway/` from airports built from X-Plane Scenery Gateway data alone
-    /// (GPL v2 or later) and `osm/` from airports built from OpenStreetMap alone (ODbL), both
+    /// (GPL 2.0) and `osm/` from airports built from OpenStreetMap alone (ODbL), both
     /// with public-domain FAA and OurAirports data, and the search and nearest lists from
     /// public-domain data only. Neither build may have seen the other's source:
     /// `amdbgen build --aptdat <Global Airports apt.dat> --no-gateway --no-xplane-install
@@ -539,6 +584,7 @@ pub(crate) fn make_store(d: &DataArgs, s: &Settings) -> Result<Store> {
     // one. They are built from the same arguments as the store's rather than shared with
     // them: `Config` carries a download cache and an HTTP client, which are not things to
     // hand round between threads by copying.
+    super::dataset::warm();
     super::charts::set_ground(config(d, s));
     let mut store = Store::new(config(d, s))?;
     store.retention = if d.out.is_some() {
@@ -554,6 +600,9 @@ pub(crate) fn make_store(d: &DataArgs, s: &Settings) -> Result<Store> {
 }
 
 pub(crate) fn config(d: &DataArgs, s: &Settings) -> Config {
+    if d.no_dataset {
+        super::dataset::turn_off();
+    }
     Config {
         out: d.out.clone().unwrap_or_else(|| s.airports_dir()),
         cache: Cache::new(d.cache.clone().or_else(|| s.downloads_dir()), false, false),
@@ -848,6 +897,8 @@ pub fn run() -> Result<()> {
             };
             super::export::export_split(&open(&gateway)?, &open(&osm)?, &to, &icaos)
         }
+        Cmd::ExportGatewaySource { aptdat, to } => super::export::export_gateway_source(&aptdat, &to),
+        Cmd::IndexBuilds { archives } => super::dataset::write_indexes(&archives),
         Cmd::BundleWeb { from, to, listed_only, min_runway_m, min_width_m, large_too } => super::export::bundle(&from, &to, &super::export::Select { listed_only, min_runway_m, min_width_m, large_too }),
         Cmd::Status => {
             let domain = super::NAVIGRAPH_AMDB_DOMAIN;

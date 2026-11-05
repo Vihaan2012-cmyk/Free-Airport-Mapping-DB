@@ -154,7 +154,7 @@ fn ground_dir(icao: &str) -> Result<PathBuf> {
     while crate::pipeline::is_building(icao) && t0.elapsed().as_secs() < 900 {
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
-    if dir.join("manifest.json").is_file() {
+    if dir.join("manifest.json").is_file() || super::store::downloaded(&cfg.out, icao) {
         return Ok(dir);
     }
     crate::term::start(&format!("[{icao}] Building {icao} for its airport diagram"));
