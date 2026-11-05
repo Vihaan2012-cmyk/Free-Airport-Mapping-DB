@@ -1,6 +1,7 @@
-//! Airport data store for the bridge: loads generated airports from `out/`, builds
-//! missing ones on demand with the amdbgen pipeline, keeps them in memory in the
-//! local metre frame, and knows the airport list for the search endpoint.
+//! Airport data store for the bridge: loads generated airports from `out/`, downloads
+//! missing ones already built from the Hugging Face dataset or builds them on demand with
+//! the amdbgen pipeline, keeps them in memory in the local metre frame, and knows the
+//! airport list for the search endpoint.
 
 use crate::geom::LocalFrame;
 use crate::model::{AmdbFeature, Layer, ALL_LAYERS};
@@ -123,6 +124,18 @@ fn bring_back(aside: &std::path::Path, dir: &std::path::Path, built: bool) {
     let _ = std::fs::remove_dir_all(aside);
 }
 
+/// `icao` put into `out` from the dataset; false, and a word in the log if it went wrong,
+/// when it has to be built here.
+pub(crate) fn downloaded(out: &std::path::Path, icao: &str) -> bool {
+    match super::dataset::install(out, icao) {
+        Ok(done) => done,
+        Err(e) => {
+            crate::term::warn(&format!("[{icao}] Not downloaded from the Hugging Face dataset, so it is built here: {e:#}"));
+            false
+        }
+    }
+}
+
 pub(crate) fn project_to_local(frame: &LocalFrame, g: &Geometry<f64>) -> Geometry<f64> {
     let f = |c: &Coord<f64>| frame.forward(c.x, c.y);
     let ls = |l: &LineString<f64>| LineString(l.0.iter().map(f).collect());
@@ -156,7 +169,7 @@ impl Store {
     pub fn search(&self, q: &str) -> Vec<Value> {
         let q = q.trim().to_uppercase();
         let matches = |idarpt: &str, iata: Option<&str>, name: &str| q.is_empty() || idarpt.starts_with(&q) || iata.is_some_and(|i| i.to_uppercase().starts_with(&q)) || name.to_uppercase().starts_with(&q);
-        let built = |icao: &str| self.out.join(icao).join("manifest.json").is_file();
+        let built = |icao: &str| self.out.join(icao).join("manifest.json").is_file() || super::dataset::has(icao);
         let mut out: HashMap<String, (String, Option<String>, String, f64, f64, Option<f64>)> = HashMap::new();
         for e in self.index.by_icao.values() {
             let big = matches!(e.kind.as_deref(), Some("large_airport") | Some("medium_airport"));
@@ -238,8 +251,12 @@ impl Store {
         Ok(data)
     }
 
-    /// Build an airport not built yet, for an aircraft waiting on it.
+    /// Build an airport not built yet, for an aircraft waiting on it, unless the dataset has
+    /// it built already.
     fn build_if_missing(&self, icao: &str, dir: &std::path::Path) -> Result<()> {
+        if !dir.join("manifest.json").is_file() && downloaded(&self.out, icao) {
+            return Ok(());
+        }
         if !dir.join("manifest.json").is_file() {
             crate::term::start(&format!("[{icao}] First request for {icao}: building it now"));
             // An aircraft is waiting on this: OpenStreetMap gets a fixed time (see
@@ -297,7 +314,7 @@ impl Store {
             .index
             .by_icao
             .values()
-            .filter(|e| matches!(e.kind.as_deref(), Some("large_airport") | Some("medium_airport") | Some("small_airport")) || self.out.join(&e.icao).join("manifest.json").is_file())
+            .filter(|e| matches!(e.kind.as_deref(), Some("large_airport") | Some("medium_airport") | Some("small_airport")) || self.out.join(&e.icao).join("manifest.json").is_file() || super::dataset::has(&e.icao))
             .filter_map(|e| {
                 let d = pipeline::haversine_km(lat, lon, e.lat, e.lon);
                 if d > radius_km {
@@ -329,7 +346,7 @@ impl Store {
         self.index
             .by_icao
             .values()
-            .filter(|e| matches!(e.kind.as_deref(), Some("large_airport") | Some("medium_airport") | Some("small_airport")) || self.out.join(&e.icao).join("manifest.json").is_file())
+            .filter(|e| matches!(e.kind.as_deref(), Some("large_airport") | Some("medium_airport") | Some("small_airport")) || self.out.join(&e.icao).join("manifest.json").is_file() || super::dataset::has(&e.icao))
             .map(|e| {
                 let mut row = super::compat::search_row(&e.icao, e.iata.as_deref(), e.name.as_deref().unwrap_or(""), e.lat, e.lon, e.elevation_ft);
                 row["kind"] = Value::from(e.kind.clone().unwrap_or_default());
@@ -356,6 +373,10 @@ impl Store {
         if building.insert(icao.clone()) {
             let me = self.clone();
             std::thread::spawn(move || {
+                if downloaded(&me.out, &icao) {
+                    me.xp_building.lock().unwrap().remove(&icao);
+                    return;
+                }
                 crate::term::start(&format!("[{icao}] X-Plane requested {icao}: building it now"));
                 if let Err(e) = crate::pipeline::run(&me.cfg, std::slice::from_ref(&icao)) {
                     log::error!("{icao}: X-Plane build failed: {e:#}");

@@ -6,6 +6,7 @@
 pub mod charts;
 pub mod cli;
 pub mod compat;
+pub mod dataset;
 pub mod desktop;
 pub mod diagnostics;
 pub mod enroute;

@@ -43,8 +43,19 @@ fn unpack(path: &Path) -> Result<HashMap<String, String>> {
         flate2::read::GzDecoder::new(file).read_to_string(&mut json)
     }
     .with_context(|| format!("unpack {}", path.display()))?;
-    let raw: HashMap<String, Box<serde_json::value::RawValue>> = serde_json::from_str(&json).with_context(|| format!("read {}", path.display()))?;
+    split(&json).with_context(|| format!("read {}", path.display()))
+}
+
+fn split(json: &str) -> Result<HashMap<String, String>> {
+    let raw: HashMap<String, Box<serde_json::value::RawValue>> = serde_json::from_str(json)?;
     Ok(raw.into_iter().map(|(k, v)| (k, v.get().to_string())).collect())
+}
+
+/// Every layer in a pack's bytes (the brotli form), by name.
+pub fn unpack_bytes(bytes: &[u8]) -> Result<HashMap<String, String>> {
+    let mut json = String::new();
+    brotli::Decompressor::new(bytes, 1 << 16).read_to_string(&mut json).context("unpack layers")?;
+    split(&json).context("read layers")
 }
 
 fn pack_of(dir: &Path) -> Option<Texts> {
@@ -76,6 +87,19 @@ pub fn is_packed(dir: &Path) -> bool {
 
 /// Write layers, (name, FeatureCollection text), as an airport's pack, in their order.
 pub fn write_pack(dir: &Path, layers: &[(String, String)]) -> Result<u64> {
+    let bytes = pack_bytes(layers)?;
+    write_pack_bytes(dir, &bytes)?;
+    Ok(bytes.len() as u64)
+}
+
+/// Layers, (name, FeatureCollection text), as a pack's bytes, in their order.
+pub fn pack_bytes(layers: &[(String, String)]) -> Result<Vec<u8>> {
+    pack_bytes_at(layers, QUALITY)
+}
+
+/// The same at another brotli quality: 5 packs the biggest airport in a tenth of a second,
+/// for a pack made while an aircraft waits on it, at about a third more space.
+pub fn pack_bytes_at(layers: &[(String, String)], quality: u32) -> Result<Vec<u8>> {
     let mut json = String::with_capacity(layers.iter().map(|(n, t)| n.len() + t.len() + 4).sum::<usize>() + 2);
     json.push('{');
     for (i, (name, text)) in layers.iter().enumerate() {
@@ -87,16 +111,20 @@ pub fn write_pack(dir: &Path, layers: &[(String, String)]) -> Result<u64> {
         json.push_str(text.trim_start_matches('\u{feff}'));
     }
     json.push('}');
-    let mut w = brotli::CompressorWriter::new(Vec::new(), 1 << 16, QUALITY, WINDOW);
+    let mut w = brotli::CompressorWriter::new(Vec::new(), 1 << 16, quality, WINDOW);
     w.write_all(json.as_bytes())?;
-    let bytes = w.into_inner();
+    Ok(w.into_inner())
+}
+
+/// A pack's bytes, as they are, as an airport's pack.
+pub fn write_pack_bytes(dir: &Path, bytes: &[u8]) -> Result<()> {
     // Written beside it and put in its place, so that a reader never sees half of one.
     let tmp = dir.join(format!("{PACK}.tmp"));
-    std::fs::write(&tmp, &bytes).with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::write(&tmp, bytes).with_context(|| format!("write {}", tmp.display()))?;
     std::fs::rename(&tmp, dir.join(PACK)).with_context(|| format!("write {}", dir.join(PACK).display()))?;
     let _ = std::fs::remove_file(dir.join(GZIP_PACK));
     LAST.with(|l| *l.borrow_mut() = None);
-    Ok(bytes.len() as u64)
+    Ok(())
 }
 
 /// The loose layer files in an airport folder.

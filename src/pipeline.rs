@@ -95,7 +95,7 @@ pub fn load_index(cfg: &Config) -> Result<AirportIndex> {
     }
     if cfg.use_gateway {
         match idx.load_gateway_list(&cfg.http, &cfg.index_cache) {
-            Ok(n) => term::info(&format!("Index: {} airports on the X-Plane Gateway", fmt_n(n))),
+            Ok(n) => term::info(&format!("Index: {} airports in the X-Plane Gateway's data", fmt_n(n))),
             Err(e) => log::warn!("gateway list unavailable: {e:#}"),
         }
     }
@@ -155,26 +155,26 @@ struct Prepared {
     country: Option<String>,
 }
 
-/// Source order: an explicit apt.dat file, then the Scenery Gateway (newest community
-/// scenery), then the local X-Plane install for airports the Gateway does not have or
-/// cannot deliver.
-fn fetch_xplane(cfg: &Config, icao: &str, known_scenery: Option<Option<i64>>) -> Result<Option<SourceAirport>> {
+/// Source order: an explicit apt.dat file, then the Scenery Gateway's data (from its copy on
+/// Hugging Face, never the Gateway's own servers), then the local X-Plane install for
+/// airports that does not have or cannot deliver.
+fn fetch_xplane(cfg: &Config, icao: &str) -> Result<Option<SourceAirport>> {
     if let Some(f) = &cfg.aptdat_file {
         if let Some(block) = xplane::local::extract_airport_block(f, icao)? {
             return Ok(Some(xplane::aptdat::parse(&block, Some(icao))?));
         }
     }
     if cfg.use_gateway {
-        match xplane::gateway::fetch_aptdat(&cfg.http, &cfg.cache, icao, known_scenery) {
+        match xplane::gateway::fetch_aptdat(&cfg.http, &cfg.cache, icao) {
             Ok(Some(text)) => return Ok(Some(xplane::aptdat::parse(&text, Some(icao))?)),
-            Ok(None) => log::info!("{icao}: no Gateway scenery"),
+            Ok(None) => log::info!("{icao}: not in the Gateway's data"),
             Err(e) => log::warn!("{icao}: gateway failed: {e:#}"),
         }
     }
     if let Some(root) = &cfg.xplane_dir {
         match xplane::local::lookup(root, icao) {
             Ok(Some((path, block))) => {
-                term::step(Some(icao), &format!("Not on the Gateway; using the local X-Plane copy from {}", path.display()));
+                term::step(Some(icao), &format!("Not in the Gateway's data; using the local X-Plane copy from {}", path.display()));
                 return Ok(Some(xplane::aptdat::parse(&block, Some(icao))?));
             }
             Ok(None) => log::info!("{icao}: not in the local X-Plane install either"),
@@ -233,17 +233,15 @@ fn prepare_with(cfg: &Config, idx: &AirportIndex, icao: &str, faa_amdb: bool) ->
     if let Some(e) = &entry {
         src.absorb(SourceAirport { header: e.header(), sources: vec![e.source.to_string()], ..Default::default() });
     }
-    // Trust a "no scenery" answer only when the Gateway list itself was loaded.
-    let known = entry.as_ref().filter(|e| e.source == source::XPLANE || e.gateway_scenery.is_some()).map(|e| e.gateway_scenery);
     let t_xp = std::time::Instant::now();
-    if let Some(xp) = fetch_xplane(cfg, &icao, known)? {
+    if let Some(xp) = fetch_xplane(cfg, &icao)? {
         term::info(&format!("[{icao}] X-Plane apt.dat: {} runways, {} pavements, {} stands, {} taxi routes in {}", xp.runways.len(), xp.pavements.len(), xp.stands.len(), xp.route_edges.len(), term::human_secs(t_xp.elapsed().as_secs_f64())));
         // X-Plane datum/elevation are authoritative when present.
         let mut merged = xp;
         merged.absorb(std::mem::take(&mut src));
         src = merged;
     } else {
-        term::warn(&format!("[{icao}] No X-Plane scenery on the Gateway; runways and taxiways will come from OpenStreetMap"));
+        term::warn(&format!("[{icao}] No X-Plane scenery in the Gateway's data; runways and taxiways will come from OpenStreetMap"));
     }
     // FAA airport mapping (US only): hotspots always, pavement and buildings only when
     // no scenery was found, so real scenery is never duplicated. Never fatal.
@@ -259,16 +257,6 @@ fn prepare_with(cfg: &Config, idx: &AirportIndex, icao: &str, faa_amdb: bool) ->
                 }
             }
             Err(e) => log::info!("{icao}: FAA airport mapping unavailable: {e:#}"),
-        }
-    }
-    if src.header.arp.is_none() && src.runways.is_empty() {
-        // Last resort: ask the Gateway for the position.
-        let mut tmp = AirportIndex::default();
-        if cfg.use_gateway && tmp.load_gateway_single(&cfg.http, &cfg.cache, &icao).unwrap_or(false) {
-            if let Some(e) = tmp.get(&icao) {
-                src.header.arp = Some(Coord { x: e.lon, y: e.lat });
-                src.header.name = src.header.name.take().or_else(|| e.name.clone());
-            }
         }
     }
     let (lat, lon) = build::choose_arp(&src).ok_or_else(|| anyhow!("{icao}: unknown airport (not in any index or source)"))?;

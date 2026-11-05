@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.2.13 (2026-11-05)
+
+**AMDB Bridge no longer uses the X-Plane Scenery Gateway's servers.**
+
+- Laminar Research does not allow the Gateway's API to be used for products outside
+  X-Plane. Every program here now reads the Gateway's airport data, which is GPL, from the
+  copy in the [Hugging Face dataset](https://huggingface.co/datasets/Royale2072/free-airport-mapping-db)
+  (`gateway/source/`), made from the Global Airports pack that ships with X-Plane. It is
+  the same data, as of that pack: new Gateway scenery arrives when the copy is made again.
+- `amdb-bridge export-gateway-source` writes that copy. `--no-gateway` now means not reading it.
+- `amdbgen info` no longer lists an airport's Gateway scenery number.
+
+**Airports come already built from the Hugging Face dataset.**
+
+- An airport not built yet is downloaded from the dataset's `gateway/builds.tar` and
+  `osm/builds.tar`, one byte range of each, and put together: the Gateway's airfield with
+  OpenStreetMap's buildings, water and roads. It takes a second or two, not a build of 3 to
+  25 seconds, and asks nothing of OpenStreetMap's servers. Airports the dataset does not
+  have, or any when it cannot be reached, are built here as before.
+- The aircraft, the airport diagrams, the X-Plane moving map and bulk builds all take them.
+- `--no-dataset` builds every airport here instead.
+- `amdb-bridge index-builds` writes the `builds.idx.json` beside each archive that says
+  where each airport lies in it.
+
 ## 1.2.12 (2026-10-29)
 
 **Navigraph's addresses go back to Navigraph when AMDB Bridge closes.**

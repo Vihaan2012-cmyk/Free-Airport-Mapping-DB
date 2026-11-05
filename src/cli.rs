@@ -39,7 +39,7 @@ enum Cmd {
         #[arg(long, value_name = "FILE")]
         csv: Option<PathBuf>,
     },
-    /// Show what the index knows about airports (name, IATA, position, elevation, runways, Gateway scenery).
+    /// Show what the index knows about airports (name, IATA, position, elevation, runways).
     Info(SelectArgs),
     /// Search the airport index by name, city, IATA or ICAO.
     Search {
@@ -799,13 +799,13 @@ pub struct BuildArgs {
     /// Coordinate output: wgs84 (EPSG:4326) or metres (azimuthal equidistant from ARP).
     #[arg(long, default_value = "wgs84")]
     projection: String,
-    /// X-Plane installation root, used for airports the Gateway does not have (auto-detected from the X-Plane installer record when omitted).
+    /// X-Plane installation root, used for airports the Gateway's data does not have (auto-detected from the X-Plane installer record when omitted).
     #[arg(long = "xplane-dir")]
     xplane_dir: Option<PathBuf>,
     /// A specific apt.dat file (any size) to read airports from.
     #[arg(long = "aptdat")]
     aptdat_file: Option<PathBuf>,
-    /// Do not query the X-Plane Scenery Gateway.
+    /// Do not read the X-Plane Scenery Gateway's data from its copy on Hugging Face.
     #[arg(long = "no-gateway")]
     no_gateway: bool,
     /// Never read the local X-Plane install, not even the one the installer recorded.
@@ -988,7 +988,7 @@ pub fn config(a: &BuildArgs) -> Result<Config> {
         http: Http::new(a.timeout, 250),
         formats,
         projection,
-        // Gateway first; a local X-Plane install (given or auto-detected) fills the gaps.
+        // The Gateway's data first; a local X-Plane install (given or auto-detected) fills the gaps.
         xplane_dir: if a.no_xplane_install { None } else { a.xplane_dir.clone().or_else(crate::sources::xplane::local::detect_install) },
         aptdat_file: a.aptdat_file.clone(),
         use_gateway: !a.no_gateway,
@@ -1453,7 +1453,7 @@ fn info_cmd(s: SelectArgs) -> Result<()> {
                     rs.iter().filter(|r| !r.closed).map(|r| format!("{}/{}{}", r.le_ident, r.he_ident, r.length_ft.map(|l| format!(" {l:.0} ft")).unwrap_or_default())).collect::<Vec<_>>().join(", ")
                 }).unwrap_or_default();
                 println!(
-                    "{}  {}  {}\n      {}{}  {:.4},{:.4}  elev {}  {}{}\n      index: {}{}{}",
+                    "{}  {}  {}\n      {}{}  {:.4},{:.4}  elev {}  {}{}\n      index: {}{}",
                     e.icao,
                     e.iata.clone().unwrap_or_else(|| "---".into()),
                     e.name.clone().unwrap_or_default(),
@@ -1465,11 +1465,10 @@ fn info_cmd(s: SelectArgs) -> Result<()> {
                     e.kind.clone().unwrap_or_default(),
                     e.transition_alt_ft.map(|t| format!("  TA {t:.0} ft")).unwrap_or_default(),
                     e.source,
-                    e.gateway_scenery.map(|g| format!("  Gateway scenery {g}")).unwrap_or_default(),
                     if rwys.is_empty() { String::new() } else { format!("\n      runways: {rwys}") },
                 );
             }
-            None => println!("{i}  (not in the index; a build will still try the Gateway)"),
+            None => println!("{i}  (not in the index; a build will still look in the Gateway's data)"),
         }
     }
     if shown < icaos.len() {

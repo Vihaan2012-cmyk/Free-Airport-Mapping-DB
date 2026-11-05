@@ -36,7 +36,21 @@ pub fn candidate_files(xplane_root: &Path) -> Vec<PathBuf> {
 /// Returns `Ok(None)` if the ICAO is not in the file.
 pub fn extract_airport_block(file: &Path, icao: &str) -> Result<Option<String>> {
     let f = fs::File::open(file).with_context(|| format!("open {}", file.display()))?;
-    let mut r = BufReader::with_capacity(1 << 20, f);
+    airport_block(BufReader::with_capacity(1 << 20, f), icao)
+}
+
+/// The code of the airport an apt.dat line begins, when it begins one.
+pub fn airport_code(line: &str) -> Option<&str> {
+    let t = line.trim_start();
+    if t.starts_with("1 ") || t.starts_with("16 ") || t.starts_with("17 ") {
+        Some(t.split_whitespace().nth(4).unwrap_or(""))
+    } else {
+        None
+    }
+}
+
+/// The text block for one airport, from apt.dat text. `Ok(None)` if the ICAO is not in it.
+pub fn airport_block(mut r: impl BufRead, icao: &str) -> Result<Option<String>> {
     let icao_up = icao.to_uppercase();
     let mut line = Vec::new();
     let mut block: Option<String> = None;
@@ -48,12 +62,10 @@ pub fn extract_airport_block(file: &Path, icao: &str) -> Result<Option<String>> 
         }
         let s = String::from_utf8_lossy(&line);
         let t = s.trim_start();
-        let is_header = t.starts_with("1 ") || t.starts_with("16 ") || t.starts_with("17 ");
-        if is_header {
+        if let Some(code) = airport_code(&s) {
             if block.is_some() {
                 break; // next airport reached
             }
-            let code = t.split_whitespace().nth(4).unwrap_or("");
             if code.eq_ignore_ascii_case(&icao_up) {
                 block = Some(String::from("I\n1200\n"));
             }

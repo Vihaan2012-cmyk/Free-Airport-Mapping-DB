@@ -1,132 +1,62 @@
-//! X-Plane Scenery Gateway client (free, no key). Downloads the recommended scenery
-//! pack for an ICAO and extracts its apt.dat text.
+//! The X-Plane Scenery Gateway's airport data, from its copy on Hugging Face. Laminar does
+//! not allow products outside X-Plane to use the Gateway's own servers, so nothing here goes
+//! near them. The data itself is GPL, and `amdb-bridge export-gateway-source` writes this
+//! copy from the Global Airports pack that ships with X-Plane:
+//!
+//! * `airports.json`  every airport: `{airports: [{icao, name, lat, lon, elevation_ft}]}`
+//! * `<AB>.dat.gz`    the apt.dat of every airport whose code begins with AB
 
 use crate::cache::Cache;
 use crate::sources::http::Http;
-use anyhow::{anyhow, Context, Result};
-use base64::Engine;
-use serde::Deserialize;
-use std::io::Read;
+use anyhow::Result;
+use std::io::BufReader;
 
-const BASE: &str = "https://gateway.x-plane.com/apiv1";
+const SOURCE: &str = "https://huggingface.co/datasets/Royale2072/free-airport-mapping-db/resolve/main/gateway/source";
 
-#[derive(Debug, Deserialize)]
-struct AirportResp {
-    airport: AirportInfo,
+/// The file an airport's apt.dat is in: the first two characters of its code.
+pub fn group_of(icao: &str) -> String {
+    icao.chars().take(2).map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' }).collect()
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AirportInfo {
-    pub icao: String,
-    pub airport_name: Option<String>,
-    pub latitude: Option<f64>,
-    pub longitude: Option<f64>,
-    pub elevation: Option<f64>,
-    pub recommended_scenery_id: Option<i64>,
+/// The list of airports, as JSON.
+pub fn airport_list(http: &Http, cache: &Cache) -> Result<String> {
+    cache.get_or_fetch_text("gateway/source/airports.json", || http.get_text(&format!("{SOURCE}/airports.json")))
 }
 
-#[derive(Debug, Deserialize)]
-struct SceneryResp {
-    scenery: SceneryPack,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SceneryPack {
-    scenery_id: i64,
-    master_zip_blob: String,
-}
-
-/// Look up an airport on the Gateway.
-pub fn airport_info(http: &Http, cache: &Cache, icao: &str) -> Result<AirportInfo> {
-    let key = format!("gateway/airport/{}.json", icao.to_uppercase());
-    let text = cache.get_or_fetch_text(&key, || {
-        crate::term::step(Some(icao), &format!("GET {BASE}/airport/{}", icao.to_uppercase()));
-        http.get_text(&format!("{BASE}/airport/{}", icao.to_uppercase()))
-    })?;
-    let r: AirportResp = serde_json::from_str(&text).context("gateway airport json")?;
-    Ok(r.airport)
-}
-
-/// Download (or reuse cached) apt.dat text for the recommended scenery of `icao`.
-/// Returns `Ok(None)` when the Gateway has no scenery for this airport.
-pub fn fetch_aptdat(http: &Http, cache: &Cache, icao: &str, known_scenery: Option<Option<i64>>) -> Result<Option<String>> {
+/// The apt.dat text of `icao`, `Ok(None)` when the Gateway's data does not have it.
+pub fn fetch_aptdat(http: &Http, cache: &Cache, icao: &str) -> Result<Option<String>> {
     let icao = icao.to_uppercase();
-    // The Gateway list (index cache) already carries the scenery id; skip the lookup then.
-    let id = match known_scenery {
-        Some(Some(id)) => id,
-        Some(None) => return Ok(None),
-        None => match airport_info(http, cache, &icao)?.recommended_scenery_id {
-            Some(id) => id,
-            None => return Ok(None),
-        },
+    let group = group_of(&icao);
+    let fetched = cache.get_or_fetch_bytes(&format!("gateway/source/{group}.dat.gz"), || {
+        crate::term::step(Some(&icao), &format!("GET {SOURCE}/{group}.dat.gz"));
+        http.get_bytes(&format!("{SOURCE}/{group}.dat.gz"))
+    });
+    let gz = match fetched {
+        Ok(gz) => gz,
+        // No airport's code begins this way.
+        Err(e) if format!("{e:#}").contains("HTTP 404") => return Ok(None),
+        Err(e) => return Err(e),
     };
-    let key = format!("gateway/aptdat/{icao}_{id}.dat");
-    let text = cache.get_or_fetch_text(&key, || {
-        let t0 = std::time::Instant::now();
-        crate::term::step(Some(&icao), &format!("GET {BASE}/scenery/{id}"));
-        let json = http.get_text(&format!("{BASE}/scenery/{id}"))?;
-        let r: SceneryResp = serde_json::from_str(&json).context("gateway scenery json")?;
-        let bytes = base64::engine::general_purpose::STANDARD.decode(r.scenery.master_zip_blob.as_bytes()).context("base64")?;
-        let text = extract_aptdat(&bytes, &icao).with_context(|| format!("scenery {} zip", r.scenery.scenery_id))?;
-        crate::term::step(Some(&icao), &format!("Scenery pack {} received: {} zip, apt.dat {} in {}", r.scenery.scenery_id, crate::term::human_bytes(bytes.len() as u64), crate::term::human_bytes(text.len() as u64), crate::term::human_secs(t0.elapsed().as_secs_f64())));
-        Ok(text)
-    })?;
-    Ok(Some(text))
-}
-
-/// Find the airport data file inside a Gateway scenery zip (`<ICAO>.dat` or `apt.dat`,
-/// possibly nested one level in `*_Scenery_Pack.zip`).
-pub fn extract_aptdat(zip_bytes: &[u8], icao: &str) -> Result<String> {
-    let mut z = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).context("open zip")?;
-    let names: Vec<String> = (0..z.len()).filter_map(|i| z.by_index(i).ok().map(|f| f.name().to_string())).collect();
-    let want_dat = |n: &str| {
-        let l = n.to_ascii_lowercase();
-        l.ends_with(&format!("{}.dat", icao.to_ascii_lowercase())) || l.ends_with("apt.dat")
-    };
-    if let Some(n) = names.iter().find(|n| want_dat(n)) {
-        let mut b = Vec::new();
-        z.by_name(n)?.read_to_end(&mut b)?;
-        // Some files are Latin-1; lossy decoding keeps the numeric rows intact.
-        return Ok(String::from_utf8_lossy(&b).into_owned());
-    }
-    // Nested pack zip.
-    if let Some(n) = names.iter().find(|n| n.to_ascii_lowercase().ends_with(".zip")) {
-        let mut b = Vec::new();
-        z.by_name(n)?.read_to_end(&mut b)?;
-        return extract_aptdat(&b, icao);
-    }
-    Err(anyhow!("no apt.dat in scenery zip (entries: {names:?})"))
+    super::local::airport_block(BufReader::new(flate2::read::GzDecoder::new(gz.as_slice())), &icao)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
-    fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
-        let mut buf = std::io::Cursor::new(Vec::new());
-        {
-            let mut w = zip::ZipWriter::new(&mut buf);
-            let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-            for (n, b) in entries {
-                w.start_file(*n, opts).unwrap();
-                w.write_all(b).unwrap();
-            }
-            w.finish().unwrap();
-        }
-        buf.into_inner()
+    #[test]
+    fn a_code_gives_its_group_whatever_it_holds() {
+        assert_eq!(group_of("kjfk"), "KJ");
+        assert_eq!(group_of("5TE"), "5T");
+        assert_eq!(group_of("X"), "X");
+        assert_eq!(group_of("A/B"), "A_");
     }
 
     #[test]
-    fn extracts_icao_dat_and_nested_zip() {
-        let inner = make_zip(&[("Earth nav data/apt.dat", b"I\n1200\n1 1 0 0 KAAA X\n99\n")]);
-        let outer = make_zip(&[("KAAA.txt", b"notes"), ("KAAA_Scenery_Pack.zip", &inner)]);
-        let s = extract_aptdat(&outer, "KAAA").unwrap();
-        assert!(s.contains("KAAA X"));
-        let direct = make_zip(&[("KBBB.dat", b"I\n1200\n1 1 0 0 KBBB Y\n99\n")]);
-        assert!(extract_aptdat(&direct, "KBBB").unwrap().contains("KBBB Y"));
-        assert!(extract_aptdat(&make_zip(&[("readme.txt", b"x")]), "KCCC").is_err());
+    fn an_airport_is_found_in_its_group_and_no_other_is() {
+        let text = "I\n1200 x\n\n1 13 0 0 AAAA First\n100 a\n\n17 0 0 0 AAAB Second\n102 b\n\n99\n";
+        let block = super::super::local::airport_block(text.as_bytes(), "aaab").unwrap().unwrap();
+        assert!(block.contains("AAAB Second") && block.contains("102 b") && !block.contains("AAAA"));
+        assert!(super::super::local::airport_block(text.as_bytes(), "AAAC").unwrap().is_none());
     }
 }
