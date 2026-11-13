@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.2.14 (2026-11-13) · A320 OANS 1.0.10
+
+**iniBuilds A350 1.2.7 and later, and iniBuilds A380s in the Community folder.**
+
+- The A350's flight bag from 1.2.7 on no longer spells out the handler that hands the
+  OANS its Navigraph token, so the bridge found nothing to patch and the OANS showed
+  `ARPT NAV NOT AVAIL` ([#10](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB/issues/10)).
+  Where the handler cannot be found, `serve` now adds a few lines to the end of
+  `ini-efb-a350.js` that hand the OANS the token over the comm bus every 15 seconds,
+  as pauladame07 found works on 1.2.7 Hotfix 1 and 1.2.8 (backup kept, `unpatch`
+  restores). Any iniBuilds aircraft in a Community folder with an `ini-efb-*.js` flight
+  bag gets the same, which covers an iniBuilds A380 installed there; the Marketplace copy
+  is encrypted and cannot be changed.
+- `/v1/navdata/packages`, the flight bag's first call (and Fenix 3's, for its navigation
+  data), is answered with an empty list rather than "Unknown request".
+- The A350 shows in `status` again.
+
+**Fenix A320 3.**
+
+- AMDB Navdata writes Fenix 3's navigation database. Fenix 3 no longer reads the
+  `imported.db3` Fenix 2 did: it reads Navigraph's DFD v2 layout and takes a database by
+  hand from `%PROGRAMDATA%\Fenix\NavdataDFD\Import`, named `<cycle>-r001.db3`, through the
+  IMPORT prompt on the MCDU. `--to fenix` now writes that wherever Fenix 3 has run
+  (`fenix2` and `fenix3` say which), and `--in-place` puts it in the import folder.
+  - Each part of a departure, arrival or approach goes in under its own route type, and
+    every fix, beacon and runway a leg names points at its row the way Fenix checks it.
+  - A part with a leg ending at a fix the simulator's data does not place is left out
+    rather than written as a leg to nowhere, and a procedure FS2020 keeps twice is
+    written once, from the copy whose fixes it places.
+  - `--keep` takes frequencies, airspace, grid MORA, stands, markers, GLS, path points and
+    cruising tables from Fenix's own database. Its holds, MSA sectors and airway
+    restrictions point at fixes by position, so they are not taken.
+  - The cycle has to be a real one, since Fenix checks its dates; with none given it is
+    the cycle in effect today.
+- The tablet charts option also redirects `enroute-bitmap.charts.api-v2.navigraph.com`:
+  Fenix 3's gateway fetches the enroute map's tiles from it itself (`/styles/<style>/z/x/y`),
+  and the bridge answers with its own enroute tiles. The sign-in, chart and cycle hosts are
+  the same as Fenix 2's.
+- A conversion that finds almost no airways (FS2024's are not decoded yet) says so.
+- The A320 OANS looks for the Fenix's MSFS 2024 cockpit in every attachment of every Fenix
+  package: Fenix 3 moved it out of `fnx-aircraft-320` (into its shared
+  `fnx-aircraft-a32x-common`, as far as can be told from an install that never finished).
+  A Fenix package with no `manifest.json` is named as unfinished in the diagnosis.
+  **A320 OANS 1.0.10** is the same package with this version's tray program, so its own
+  installer finds a Fenix 3 cockpit too.
+
 ## 1.2.13 (2026-11-05)
 
 **AMDB Bridge no longer uses the X-Plane Scenery Gateway's servers.**

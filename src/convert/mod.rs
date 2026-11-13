@@ -13,6 +13,7 @@
 //! pass — see its own doc comment for why landing Fenix completely took the whole budget.
 
 pub mod dfd;
+pub mod dfd2;
 pub mod fenix;
 pub mod from_sim;
 pub mod model;
@@ -26,7 +27,10 @@ use std::path::{Path, PathBuf};
 /// Which of the two shapes a `convert` run writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
+    /// Fenix 2's own `imported.db3` layout.
     Fenix,
+    /// Navigraph's DFD v2 layout, which Fenix 3 imports.
+    Fenix3,
     Dfd,
 }
 
@@ -34,9 +38,13 @@ impl std::str::FromStr for Target {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self> {
         match s.to_ascii_lowercase().as_str() {
-            "fenix" => Ok(Target::Fenix),
+            // Fenix 3 replaced Fenix 2's database and reads only its own; where it has run,
+            // that is the one a plain `fenix` means.
+            "fenix" if dfd2::fenix_root().is_some() => Ok(Target::Fenix3),
+            "fenix" | "fenix2" => Ok(Target::Fenix),
+            "fenix3" | "dfd2" => Ok(Target::Fenix3),
             "dfd" | "navigraph" => Ok(Target::Dfd),
-            other => Err(anyhow::anyhow!("--to takes fenix or dfd, not {other}")),
+            other => Err(anyhow::anyhow!("--to takes fenix, fenix2, fenix3 or dfd, not {other}")),
         }
     }
 }
@@ -111,6 +119,13 @@ pub fn carry_over(into: &Path, from: &Path, report: &[TableReport]) -> Result<Ve
         let (new_cols, old_cols) = (columns("main", table)?, columns("old", table)?);
         if new_cols.is_empty() || old_cols.is_empty() || new_cols != old_cols {
             log::warn!("{table}: not carried over, the two databases spell it differently");
+            continue;
+        }
+        // Nor can one that points at a fix by the fix's table, name and exact position
+        // (DFD v2's `*_ref_table`): the simulator places its fixes a little differently from
+        // the database being replaced, and Fenix 3 refuses a reference it cannot resolve.
+        if let Some(col) = new_cols.iter().find(|c| c.to_ascii_lowercase().ends_with("_ref_table")) {
+            log::warn!("{table}: not carried over, its {col} names fixes by a position this conversion may not share");
             continue;
         }
         // A table that points at another by its surrogate number cannot come across.

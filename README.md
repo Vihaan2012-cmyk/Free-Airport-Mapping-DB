@@ -243,8 +243,11 @@ alternative that rewrites the aircraft bundles instead.
 
 Aircraft: FlyByWire A380X (OANS + BTV, tested), FlyByWire A32NX development builds,
 iniBuilds A350 (its EFB only hands the OANS gauge a token with a Navigraph
-subscription, so `serve` rewrites that one handler; backup kept, `unpatch` restores,
-`--no-patch` skips), and the GM5 A220 Airport Moving Map for the Synaptic A220
+subscription, so `serve` rewrites that one handler; from 1.2.7 on, where the handler
+cannot be found, it adds a few lines at the end of `ini-efb-a350.js` that hand the gauge
+the token every 15 seconds instead; backup kept, `unpatch` restores, `--no-patch` skips;
+an iniBuilds aircraft in the Community folder with an `ini-efb-*.js` flight bag, such as
+an A380 installed there, gets the same), and the GM5 A220 Airport Moving Map for the Synaptic A220
 (`serve` adds a token fallback and lets it find the airport through the bridge's
 `/v1/nearest`, since the sim-side search returns nothing under MSFS 2020; on 2020 the
 package folder must sort after `synaptic-aircraft-a220`, e.g. `zzz-gm5-a220-amm`,
@@ -325,8 +328,9 @@ Nothing of the Fenix's is replaced or redistributed. Two gauge lines go into its
 `panel.cfg`, the captain ND is drawn at 1536 x 1536 pixels instead of 768 for sharp text
 (Fenix's ND scales itself to it), and the range knob gets its OANS positions in
 `FNX32X_Interior.xml`
-(`Cockpit_Behavior.xml` in MSFS 2024), each with a backup beside it. A Fenix update puts
-both files back to its own; the bridge adds the lines again the next time it starts.
+(`Cockpit_Behavior.xml` in MSFS 2024, looked for in every Fenix package, since Fenix 3
+moved the cockpit out of `fnx-aircraft-320`), each with a backup beside it. A Fenix update puts both files back to its own;
+the bridge adds the lines again the next time it starts.
 
 The package is built from FlyByWire's source at a pinned commit by
 `tools/fenix-oans/build.mjs` (`npm install && node build.mjs`), and so it is licensed
@@ -347,7 +351,11 @@ file while AMDB Bridge serves, with a local certificate that covers them:
 127.0.0.1 identity.api.navigraph.com # amdb-bridge   the sign-in
 127.0.0.1 api.navigraph.com # amdb-bridge            the charts and airports
 127.0.0.1 charts.api.navigraph.com # amdb-bridge     the chart cycle
+127.0.0.1 enroute-bitmap.charts.api-v2.navigraph.com # amdb-bridge   Fenix 3's enroute map
 ```
+
+Fenix 3's gateway fetches the enroute map's tiles from Navigraph's tile host itself, so
+that host is redirected too and the bridge's own enroute tiles answer it.
 
 The tablet then links with the code `AMDB`, with nothing to type on a website. While AMDB
 Bridge serves with it on, every program on the computer that signs in to Navigraph

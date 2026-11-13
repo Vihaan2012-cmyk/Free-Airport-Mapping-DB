@@ -314,6 +314,11 @@ pub struct LegRec {
     /// `None` on any other leg type.
     pub center_fix: Option<String>,
     pub center_fix_region: Option<String>,
+    /// Where the fix is, when the source says: the simulator's procedure records carry a
+    /// position for most fixes, which tells two fixes of the same name apart where no
+    /// region code does.
+    pub fix_lat: Option<f64>,
+    pub fix_lon: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -334,6 +339,16 @@ pub struct ProcedureRec {
     /// feeding more than one runway).
     pub runway_ident: Option<String>,
     pub legs: Vec<LegRec>,
+    /// Which part of the procedure these legs are, where the source says: "runway",
+    /// "common" or "enroute" for a departure or an arrival, "final" or "missed" for an
+    /// approach's own path, and empty for an approach transition. The DFD layout stores
+    /// each part under its own route type rather than flattened.
+    pub part: String,
+    /// An approach's ARINC route-type letter (I for ILS, R for RNAV, V for VOR and so on),
+    /// where the source says what sort of approach it is.
+    pub approach_code: Option<char>,
+    /// The letter that tells two approaches of the same sort to one runway apart.
+    pub suffix: Option<char>,
 }
 
 /// One cell of the grid minimum off-route altitude table: never left empty, because it is

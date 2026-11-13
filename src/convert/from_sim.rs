@@ -868,6 +868,7 @@ fn read_procedures(blobs: &[Vec<u8>]) -> Vec<ProcedureRec> {
                             procedures::Kind::Approach => ProcKind::Approach,
                         };
                         let (icao, name, runway) = (icao.clone(), p.name.clone(), p.runway.clone());
+                        let (approach_code, suffix) = (p.approach_type.map(approach_code), p.suffix);
                         p.transitions.into_iter().filter_map(move |t| {
                             let legs: Vec<LegRec> = t.legs.iter().enumerate().map(|(i, l)| leg_of(i, l)).collect();
                             (!legs.is_empty()).then(|| ProcedureRec {
@@ -877,7 +878,9 @@ fn read_procedures(blobs: &[Vec<u8>]) -> Vec<ProcedureRec> {
                                 transition_ident: (!t.name.is_empty()).then(|| t.name.clone()),
                                 runway_ident: (!runway.is_empty()).then(|| runway.clone()),
                                 legs,
-                                ..Default::default()
+                                part: t.part.clone(),
+                                approach_code,
+                                suffix,
                             })
                         })
                     })
@@ -913,7 +916,24 @@ fn leg_of(i: usize, l: &procedures::Leg) -> LegRec {
         is_if: l.role == Some(procedures::FixRole::Intermediate),
         is_faf: l.role == Some(procedures::FixRole::Final),
         is_map: l.role == Some(procedures::FixRole::MissedApproachPoint),
+        fix_lat: l.lat,
+        fix_lon: l.lon,
         ..Default::default()
+    }
+}
+
+/// The ARINC route-type letter of an approach of this sort.
+fn approach_code(t: procedures::ApproachType) -> char {
+    use procedures::ApproachType as A;
+    match t {
+        A::Ils => 'I',
+        A::Localiser => 'L',
+        A::LocaliserBackCourse => 'B',
+        A::Lda => 'X',
+        A::Rnav => 'R',
+        A::Gps => 'P',
+        A::Vor => 'V',
+        A::Ndb => 'N',
     }
 }
 

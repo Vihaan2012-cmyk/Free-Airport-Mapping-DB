@@ -136,6 +136,32 @@ pub fn patch_a350_text(text: &str) -> Option<String> {
     Some(out)
 }
 
+/// The token pushed on a timer alone, for an iniBuilds flight bag whose token handler cannot
+/// be found. From the A350 1.2.7 on, the bundle no longer spells the handler out where it
+/// can be matched (issue #10), and its first call, to Navigraph's navdata packages, fails
+/// without a subscription before the handoff is reached. Handing the gauge the token over
+/// the comm bus every few seconds, whatever the flight bag itself decides, is what was
+/// found to bring the OANS back (tested on 1.2.7 Hotfix 1 and 1.2.8).
+pub fn patch_ini_efb_append(text: &str) -> Option<String> {
+    if text.contains(A350_MARK) {
+        return None;
+    }
+    let push = format!("Coherent.call('COMM_BUS_WASM_CALLBACK','SetNavigraphAccessToken','{A350_TOKEN}')");
+    let mut out = String::with_capacity(text.len() + 200);
+    out.push_str(text);
+    out.push_str(&format!("
+;{A350_MARK}setTimeout(()=>{{try{{{push};}}catch(e){{}}}},3000);setInterval(()=>{{try{{{push};}}catch(e){{}}}},15000);
+"));
+    Some(out)
+}
+
+/// An iniBuilds flight bag bundle (`ini-efb-a350.js` and its kin), by package and file name:
+/// what the timed token push goes into when the handler itself is not there to rewrite.
+fn is_ini_efb(package: &str, file: &Path) -> bool {
+    let name = file.file_name().map(|s| s.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    package.to_ascii_lowercase().starts_with("inibuilds-aircraft-") && name.starts_with("ini-efb") && name.ends_with(".js")
+}
+
 /// A350 EFB bundles in a Community folder: (package, file, already patched).
 pub fn scan_a350(community: &Path) -> Vec<(String, PathBuf, bool)> {
     let mut out = Vec::new();
@@ -156,8 +182,9 @@ pub fn scan_a350(community: &Path) -> Vec<(String, PathBuf, bool)> {
                 continue;
             }
             let Ok(text) = fs::read_to_string(&f) else { continue };
-            if token_handler_open(&text).is_some() || text.contains(A350_MARK) {
-                out.push((pkg.file_name().to_string_lossy().to_string(), f, text.contains(A350_MARK)));
+            let package = pkg.file_name().to_string_lossy().to_string();
+            if token_handler_open(&text).is_some() || text.contains(A350_MARK) || is_ini_efb(&package, &f) {
+                out.push((package, f, text.contains(A350_MARK)));
             }
         }
     }
@@ -174,8 +201,15 @@ pub fn patch_a350(community: &Path, dry_run: bool) -> Result<Vec<PatchedFile>> {
             continue;
         }
         let text = fs::read_to_string(&path)?;
-        let Some(new_text) = patch_a350_text(&text) else { continue };
-        log::info!("{}{}: Navigraph token handler rewritten in {}", if dry_run { "[dry-run] " } else { "" }, pkg, path.display());
+        let (new_text, how) = match patch_a350_text(&text) {
+            Some(t) => (t, "Navigraph token handler rewritten"),
+            None if is_ini_efb(&pkg, &path) => match patch_ini_efb_append(&text) {
+                Some(t) => (t, "Navigraph token pushed to the OANS on a timer"),
+                None => continue,
+            },
+            None => continue,
+        };
+        log::info!("{}{}: {how} in {}", if dry_run { "[dry-run] " } else { "" }, pkg, path.display());
         if dry_run {
             done.push(PatchedFile { path: path.clone(), backup: PathBuf::new(), replacements: 1 });
             continue;
@@ -1197,19 +1231,34 @@ fn fenix_knobs_patched(text: &str) -> bool {
     text.contains(FENIX_KNOB_MARK) && (!text.contains(FENIX_FO_KNOB_ANCHOR) || text.contains(FENIX_FO_KNOB_MARK))
 }
 
-/// The two Fenix files the OANS needs changed: panel.cfg for the gauges, the cockpit
-/// model for the range knob.
-/// The Fenix files the OANS changes, in the MSFS 2020 layout and in the MSFS 2024 one,
-/// where the cockpit is an attachment with its own panel.cfg and behaviours.
-fn fenix_oans_files(pdir: &Path) -> [(PathBuf, &'static str); 4] {
+/// The Fenix files the OANS may change in one package: panel.cfg for the gauges, the
+/// cockpit model for the range knob. MSFS 2020 keeps both with the aircraft. In MSFS 2024
+/// the cockpit is an attachment with its own panel.cfg and behaviours: Fenix 2 shipped it
+/// in fnx-aircraft-320 as Part_Interior_Cockpit, Fenix 3 in its shared
+/// fnx-aircraft-a32x-common package, so every attachment's panel.cfg and model files are
+/// candidates and `scan_fenix_oans` keeps the ones that hold an ND or the range knob.
+pub(crate) fn fenix_oans_files(pdir: &Path) -> Vec<(PathBuf, &'static str)> {
     let fnx = pdir.join("SimObjects/Airplanes/FNX_32X");
-    let cockpit = fnx.join("attachments/fnx/Part_Interior_Cockpit");
-    [
-        (fnx.join("Panel/panel.cfg"), "panel.cfg"),
-        (fnx.join("model/FNX32X_Interior.xml"), "cockpit model"),
-        (cockpit.join("panel/panel.cfg"), "panel.cfg"),
-        (cockpit.join("model/Cockpit_Behavior.xml"), "cockpit model"),
-    ]
+    let mut out = vec![(fnx.join("Panel/panel.cfg"), "panel.cfg"), (fnx.join("model/FNX32X_Interior.xml"), "cockpit model")];
+    let mut parts: Vec<PathBuf> = fs::read_dir(fnx.join("attachments"))
+        .map(|rd| rd.flatten().filter_map(|g| fs::read_dir(g.path()).ok()).flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
+        .unwrap_or_default();
+    parts.sort();
+    for part in parts {
+        out.push((part.join("panel/panel.cfg"), "panel.cfg"));
+        let mut models: Vec<PathBuf> = fs::read_dir(part.join("model"))
+            .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("xml"))).collect())
+            .unwrap_or_default();
+        models.sort();
+        out.extend(models.into_iter().map(|m| (m, "cockpit model")));
+    }
+    out
+}
+
+/// A panel.cfg is the Fenix's cockpit one: it has the Captain's ND (the exterior parts
+/// have panel.cfg files of their own, with no displays).
+fn fenix_cockpit_panel(text: &str) -> bool {
+    text.contains("[VCockpit") && text.contains(FENIX_NDS[0].0)
 }
 
 fn fenix_file_patched(kind: &str, text: &str) -> bool {
@@ -1231,7 +1280,7 @@ pub fn scan_fenix_oans(community: &Path) -> Vec<(String, PathBuf, bool)> {
         let name = pkg.file_name().to_string_lossy().to_string();
         for (path, kind) in fenix_oans_files(&pdir) {
             let Ok(text) = fs::read_to_string(&path) else { continue };
-            let is_fenix = if kind == "panel.cfg" { text.contains("[VCockpit") } else { text.contains(FENIX_KNOB_ANCHOR) || text.contains(FENIX_KNOB_MARK) };
+            let is_fenix = if kind == "panel.cfg" { fenix_cockpit_panel(&text) } else { text.contains(FENIX_KNOB_ANCHOR) || text.contains(FENIX_KNOB_MARK) };
             if is_fenix {
                 out.push((name.clone(), path, fenix_file_patched(kind, &text)));
             }
@@ -1688,6 +1737,28 @@ bus.on('RequestNavigraphAccessToken',()=>{ return 'tok'; });";
     }
 
     #[test]
+    fn a_newer_ini_efb_gets_the_token_on_a_timer() {
+        let root = std::env::temp_dir().join(format!("amdb-ini-efb-{}", std::process::id()));
+        let dir = root.join("inibuilds-aircraft-a350/html_ui/Pages/VCockpit/Instruments/ini-efb-a350");
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("ini-efb-a350.js");
+        fs::write(&file, "var _0x1=function(){return _0x2(0x1a);};").unwrap();
+        let other = root.join("someone-else/html_ui/efb.js");
+        fs::create_dir_all(other.parent().unwrap()).unwrap();
+        fs::write(&other, "var a=1;").unwrap();
+        let found = scan_a350(&root);
+        assert_eq!(found.len(), 1, "only the iniBuilds flight bag: {found:?}");
+        assert_eq!(patch_a350(&root, false).unwrap().len(), 1);
+        let text = fs::read_to_string(&file).unwrap();
+        assert!(text.starts_with("var _0x1=function(){return _0x2(0x1a);};"), "the bundle itself untouched");
+        assert!(text.contains("setInterval(()=>{try{Coherent.call('COMM_BUS_WASM_CALLBACK','SetNavigraphAccessToken','amdb-bridge-local');}catch(e){}},15000);"));
+        assert!(scan_a350(&root).iter().all(|(_, _, patched)| *patched));
+        assert!(patch_a350(&root, false).unwrap().is_empty(), "once");
+        assert!(file.with_file_name("ini-efb-a350.js.amdb-bridge.bak").is_file());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a350_handler_is_rewritten() {
         let src = "x['on']('RequestNavigraphAccessToken',()=>{const a='{';if(DataStore['get']('a350_ng_isauthed')=='0'){Coherent['call']('COMM_BUS_WASM_CALLBACK','SetNavigraphAccessToken','');return;}}),this['t']=setInterval(()=>{},1);";
         let out = patch_a350_text(src).unwrap();
@@ -1925,6 +1996,38 @@ bus.on('RequestNavigraphAccessToken',()=>{ return 'tok'; });";
         let _ = fs::remove_dir_all(&root);
         assert_eq!(found.len(), 2);
         assert!(found.iter().all(|(_, _, patched)| !patched));
+    }
+
+    #[test]
+    fn fenix_3_cockpit_is_found_in_the_shared_package_and_patched_there() {
+        let root = std::env::temp_dir().join(format!("amdb-fenix-3-{}", std::process::id()));
+        let attachments = |pkg: &str| root.join(pkg).join("SimObjects/Airplanes/FNX_32X/attachments/fnx");
+        let ceo = attachments("fnx-aircraft-320").join("Part_Interior_Cockpit_CEO");
+        let exterior = attachments("fnx-aircraft-320").join("Function_Exterior_A320_CFM_SL");
+        let cockpit = attachments("fnx-aircraft-a32x-common").join("Part_Interior_Cockpit");
+        for d in [ceo.join("model"), exterior.join("panel"), cockpit.join("panel"), cockpit.join("model")] {
+            fs::create_dir_all(d).unwrap();
+        }
+        fs::write(ceo.join("model/Cockpit.xml"), "<IncludeBase RelativeFile=\"..\\..\\Part_Interior_Cockpit\\model\\Cockpit_Behavior.xml\"/>\n<ANIM_NAME>FlightControl_FAC_1_Button</ANIM_NAME>\n").unwrap();
+        fs::write(exterior.join("panel/panel.cfg"), "[VCockpit01]\nsize_mm=1,1\ntexture=NO_TEXTURE\nhtmlgauge00=X, 0,0,1,1\n").unwrap();
+        fs::write(cockpit.join("panel/panel.cfg"), FENIX_2024_PANEL).unwrap();
+        fs::write(cockpit.join("model/Cockpit_Behavior.xml"), "<UseTemplate><ANIM_NAME>EFIS_1_Range_Selector_Knob</ANIM_NAME>\n</UseTemplate>\n").unwrap();
+        let rel = |p: &Path| p.strip_prefix(root.join("fnx-aircraft-a32x-common")).unwrap().to_string_lossy().replace('\\', "/");
+        let entry = |p: &Path| format!("{{\"path\": \"{}\", \"size\": {}, \"date\": 1}}", rel(p), fs::metadata(p).unwrap().len());
+        let (panel, model) = (cockpit.join("panel/panel.cfg"), cockpit.join("model/Cockpit_Behavior.xml"));
+        fs::write(root.join("fnx-aircraft-a32x-common/layout.json"), format!("{{\"content\": [{}, {}]}}", entry(&panel), entry(&model))).unwrap();
+
+        let mut found: Vec<PathBuf> = scan_fenix_oans(&root).into_iter().map(|(_, p, _)| p).collect();
+        found.sort();
+        assert_eq!(found, vec![model.clone(), panel.clone()], "only the shared cockpit, not the exterior panel or the CEO model");
+        assert_eq!(patch_fenix_oans(&root, false).unwrap().len(), 2);
+        assert!(fs::read_to_string(&panel).unwrap().contains(FENIX_OANS_ND_PATH));
+        let layout = fs::read_to_string(root.join("fnx-aircraft-a32x-common/layout.json")).unwrap();
+        assert!(layout.contains(&format!("\"size\": {}", fs::metadata(&panel).unwrap().len())), "the shared package's layout.json follows the change");
+        assert!(scan_fenix_oans(&root).iter().all(|(_, _, patched)| *patched));
+        assert_eq!(unpatch_fenix_oans(&root).unwrap(), 2);
+        assert_eq!(fs::read_to_string(&panel).unwrap(), FENIX_2024_PANEL);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

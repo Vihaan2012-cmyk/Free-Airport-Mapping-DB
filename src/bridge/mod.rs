@@ -53,8 +53,10 @@ pub const DEFAULT_HTTPS_PORT: u16 = 443;
 /// it calls cannot be rewritten the way every other bag's are. They are redirected
 /// instead. Read out of the app itself rather than guessed: the sign-in is the OAuth
 /// device flow, the charts are the same v2 API this bridge already answers, and the cycle
-/// is a single call of its own.
-pub const NAVIGRAPH_EFB_DOMAINS: [&str; 3] = ["identity.api.navigraph.com", "api.navigraph.com", "charts.api.navigraph.com"];
+/// is a single call of its own. Fenix 3's own gateway also fetches the enroute map's tiles
+/// from Navigraph's tile host itself (read out of `Fenix.GqlGateway.exe`), so that host is
+/// redirected too, and its `/styles/...` tiles are answered from the bridge's own.
+pub const NAVIGRAPH_EFB_DOMAINS: [&str; 4] = ["identity.api.navigraph.com", "api.navigraph.com", "charts.api.navigraph.com", "enroute-bitmap.charts.api-v2.navigraph.com"];
 
 /// Every host the redirect covers: the map's alone, or the flight bag's as well.
 pub fn navigraph_domains(with_efb: bool) -> Vec<&'static str> {
