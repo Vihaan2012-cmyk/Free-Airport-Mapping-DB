@@ -469,8 +469,9 @@ enum Cmd {
 /// `amdb-navdata-gui` fills in exactly these: one set of rules about what a request is.
 #[derive(Args, Clone)]
 pub struct ConvertArgs {
-    /// fenix (the Fenix A320), or dfd for the Navigraph layout the iniBuilds A350, the
-    /// Synaptic A220 and PMDG's 737 and 777 all read.
+    /// fenix (the Fenix A320: Fenix 3's layout where Fenix 3 has run, else Fenix 2's;
+    /// fenix2 and fenix3 say which), or dfd for the Navigraph layout the iniBuilds A350,
+    /// the Synaptic A220 and PMDG's 737 and 777 all read.
     #[arg(long = "to")]
     pub to: String,
     /// Read the simulator's own navigation data (FS2020's loose files, or FS2024's packed
@@ -1876,21 +1877,51 @@ pub fn convert_cmd(a: ConvertArgs) -> Result<()> {
         (None, false) => return Err(anyhow!("give --from-sim to read the simulator's own navigation data, or --from-json for a NavSet built by hand")),
     };
 
+    if a.from_sim && !nav.airports.is_empty() && nav.airways.len() < 1000 {
+        term::warn(&format!(
+            "only {} airways came out of {}'s navigation data, so routes along airways will not be found in this database; --sim fs2020 reads them all",
+            nav.airways.len(),
+            a.sim
+        ));
+    }
+    // Fenix 3 checks a database's cycle against the calendar and its file name, so it needs a
+    // real one: the cycle in effect today when none was given.
+    let mut nav = nav;
+    if target == Target::Fenix3 && convert::dfd2::cycle_dates(&nav.cycle).is_none() {
+        let today = convert::dfd2::cycle_on(chrono::Utc::now().date_naive());
+        if a.cycle != "0000" {
+            return Err(anyhow!("{} is not an AIRAC cycle (YYNN, for example {today})", a.cycle));
+        }
+        term::info(&format!("no --cycle given: stamped {today}, the cycle in effect today, which Fenix 3 needs"));
+        nav.cycle = today;
+    }
+    let fenix3_root = (target == Target::Fenix3).then(convert::dfd2::fenix_root).flatten();
+
     let report = if a.dry_run {
         match target {
             Target::Fenix => convert::fenix::plan(&nav),
+            Target::Fenix3 => convert::dfd2::plan(&nav),
             Target::Dfd => convert::dfd::plan(&nav),
         }
     } else {
         let out = if a.in_place {
             match target {
                 Target::Fenix => convert::fenix_default_path().ok_or_else(|| anyhow!("no installed Fenix navdata found under %PROGRAMDATA%; pass --out"))?,
+                Target::Fenix3 => {
+                    let root = fenix3_root.clone().ok_or_else(|| anyhow!("no Fenix 3 navigation data under %PROGRAMDATA%\\Fenix\\NavdataDFD (start the Fenix once), or pass --out"))?;
+                    let path = convert::dfd2::import_path(&root, &nav.cycle);
+                    std::fs::create_dir_all(path.parent().unwrap_or(&root)).with_context(|| format!("create {}", root.join("Import").display()))?;
+                    path
+                }
                 Target::Dfd => return Err(anyhow!("--in-place has nowhere fixed to write for --to dfd (three aircraft, three paths); pass --out")),
             }
         } else {
             a.out.clone().ok_or_else(|| anyhow!("give --out <path>, or --in-place to overwrite the installed database (backed up first)"))?
         };
-        let backup = if out.exists() {
+        // Fenix 3's import folder holds a copy for it to take, not the database it flies on:
+        // nothing there needs keeping.
+        let importing = target == Target::Fenix3 && a.in_place;
+        let backup = if out.exists() && !importing {
             let backup = convert::backup(&out)?;
             term::file(None, &backup.display().to_string(), "backup of the database about to be overwritten");
             Some(backup)
@@ -1903,6 +1934,7 @@ pub fn convert_cmd(a: ConvertArgs) -> Result<()> {
         let _ = std::fs::remove_file(&scratch);
         let result = match target {
             Target::Fenix => convert::fenix::write(&nav, &scratch),
+            Target::Fenix3 => convert::dfd2::write(&nav, &scratch),
             Target::Dfd => convert::dfd::write(&nav, &scratch),
         };
         let report = match result {
@@ -1915,7 +1947,8 @@ pub fn convert_cmd(a: ConvertArgs) -> Result<()> {
         // Done on the scratch file, before anything is moved into place, so a failure here
         // leaves the aircraft's own database exactly as it was.
         if a.keep || a.keep_from.is_some() {
-            let source = a.keep_from.clone().or_else(|| backup.clone());
+            // Fenix 3's own database in use is what an import replaces.
+            let source = a.keep_from.clone().or_else(|| backup.clone()).or_else(|| fenix3_root.as_deref().and_then(convert::dfd2::active_database));
             match source {
                 Some(src) if src.is_file() => match convert::carry_over(&scratch, &src, &report) {
                     Ok(done) if !done.is_empty() => {
@@ -1938,6 +1971,9 @@ pub fn convert_cmd(a: ConvertArgs) -> Result<()> {
             std::fs::copy(&scratch, &out).map(|_| ()).and_then(|_| std::fs::remove_file(&scratch))
         }).with_context(|| format!("move {} into place at {}", scratch.display(), out.display()))?;
         term::file(None, &out.display().to_string(), &format!("{} navigation database ({})", a.to, nav.cycle));
+        if importing {
+            term::info("Fenix 3 takes it from there: on the ground, use IMPORT on the MCDU's navigation database page, then make it the active database");
+        }
         report
     };
 

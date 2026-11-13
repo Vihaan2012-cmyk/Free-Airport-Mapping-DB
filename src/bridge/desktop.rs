@@ -227,19 +227,21 @@ pub fn fenix_diagnosis(community: &Path) -> Vec<String> {
     if fenix.is_empty() {
         out.push("no fnx* folder in it".to_string());
     }
+    let found = patcher::scan_fenix_oans(community);
     for pkg in fenix {
         let fnx = pkg.join("SimObjects/Airplanes/FNX_32X");
-        let files = [
-            "Panel/panel.cfg",
-            "model/FNX32X_Interior.xml",
-            "attachments/fnx/Part_Interior_Cockpit/panel/panel.cfg",
-            "attachments/fnx/Part_Interior_Cockpit/model/Cockpit_Behavior.xml",
-        ];
-        let have: Vec<&str> = files.iter().copied().filter(|f| fnx.join(f).is_file()).collect();
         let name = pkg.file_name().unwrap_or_default().to_string_lossy().to_string();
+        if !pkg.join("manifest.json").is_file() {
+            out.push(format!("{name}: no manifest.json, so the simulator does not load it - finish installing it in the Fenix app"));
+        }
         if !fnx.is_dir() {
             continue; // a livery or another variant
         }
+        let have: Vec<String> = found
+            .iter()
+            .filter(|(p, _, _)| *p == name)
+            .filter_map(|(_, f, _)| f.strip_prefix(&fnx).ok().map(|r| r.to_string_lossy().replace('\\', "/")))
+            .collect();
         let parts: Vec<String> = fs::read_dir(fnx.join("attachments/fnx")).map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect()).unwrap_or_default();
         out.push(format!(
             "{name}: FNX_32X has {}; attachments/fnx: {}",
@@ -800,7 +802,7 @@ pub fn navigraph_ready() -> bool {
     super::hosts::is_installed(domain) && certificate_ready()
 }
 
-/// The Fenix A320's tablet charts are in effect now: the three hosts its flight bag calls
+/// The Fenix A320's tablet charts are in effect now: the hosts its flight bag calls
 /// point here and the certificate that answers for them is trusted.
 pub fn fenix_charts_ready() -> bool {
     super::NAVIGRAPH_EFB_DOMAINS.iter().all(|d| super::hosts::is_installed(d)) && certificate_ready()

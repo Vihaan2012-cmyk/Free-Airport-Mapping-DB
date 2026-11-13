@@ -885,6 +885,7 @@ mod tests {
                         ..Default::default()
                     },
                 ],
+                ..Default::default()
             }],
             mora: vec![MoraRec { lat: 40.4, lon: -100.4, altitude_ft: 5600.0 }],
         }

@@ -638,10 +638,13 @@ fn handle(store: Arc<Store>, req: Request) {
     let path = path.to_string();
     let Some(req) = super::planner::handle(req, &path, &params, |r, s, b| respond_json(r, s, b), |r, s, t, b| respond_bytes(r, s, t, b)) else { return };
     let Some(req) = handle_simbrief(req, &path, &params) else { return };
-    // The flight bags' enroute map, in place of Navigraph's enroute service.
-    if let Some(at) = path.find("/enroute/") {
+    // The flight bags' enroute map, in place of Navigraph's enroute service: under
+    // `/enroute/` for a patched flight bag, and as Navigraph's own `/styles/...` for Fenix 3,
+    // whose gateway is reached by redirecting the tile host.
+    let enroute = path.find("/enroute/").map(|at| at + "/enroute/".len()).or_else(|| path.starts_with("/styles/").then_some(1));
+    if let Some(at) = enroute {
         let aircraft = path.find("/efb/").map(|p| path[p + "/efb/".len()..].split('/').next().unwrap_or("").to_string()).filter(|a| !a.is_empty());
-        let rest = path[at + "/enroute/".len()..].to_string();
+        let rest = path[at..].to_string();
         match super::charts::enroute_root().ok_or_else(|| anyhow::anyhow!("the bridge has not said where its cache is")).and_then(|root| super::enroute::tile(&root, &rest, aircraft.as_deref())) {
             Ok(png) => respond_bytes(req, 200, "image/png", png),
             Err(e) => {
@@ -696,6 +699,13 @@ fn handle(store: Arc<Store>, req: Request) {
             }
         }
         ("", None) => respond_json(req, 200, json!({"service":"amdb-bridge","version":env!("CARGO_PKG_VERSION"),"loaded":store.loaded_count()}).to_string()),
+        // Navigraph's navigation data packages: the first thing the iniBuilds A350's flight
+        // bag (1.2.7 on) and Fenix 3 ask for when the API host points here. The bridge has
+        // none to give, and says so the way Navigraph says it to an account without them.
+        ("navdata", Some(t)) if t.starts_with("packages") => {
+            crate::term::info(&format!("Navigraph navigation data asked for{}: none served, the aircraft keeps its own", params.get("format").and_then(Value::as_str).filter(|f| !f.is_empty()).map(|f| format!(" ({f})")).unwrap_or_default()));
+            respond_json(req, 200, "[]".to_string());
+        }
         (icao, layer_name) if icao.len() == 4 && icao.chars().all(|c| c.is_ascii_alphanumeric()) => {
             let ap = match store.airport(icao) {
                 Ok(a) => a,
