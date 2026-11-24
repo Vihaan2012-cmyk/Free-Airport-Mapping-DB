@@ -231,101 +231,136 @@ pub fn patch_a350(community: &Path, dry_run: bool) -> Result<Vec<PatchedFile>> {
 }
 
 // ---------------------------------------------------------------------------------
-// GM5 A220 Airport Moving Map (Gunman5). Its script fetches the Navigraph AMDB URL
-// directly, so the hosts redirect reaches it, but it refuses to fetch without the
-// A220's stored Navigraph token and, under MSFS 2020, its sim-side nearest-airport
-// search never returns anything. Two small rewrites fix both; the bridge's
-// /v1/nearest endpoint stands in for the sim search.
+// FlyByWire's OANS (the A380X's ND, `fbw-common/.../OANC/Oanc.tsx`). Its `loadAirportMap`
+// clears the map, awaits two requests and then adds what came back to the layers, and
+// nothing stops an older call from finishing after a newer one: picking LIMC while LIRF
+// is still on its way leaves both airports' taxiways, aprons and buildings drawn together
+// under LIMC's name (issues #7 and #8). Navigraph answers in a fraction of a second, so
+// the overlap is rare there; an airport the bridge downloads or builds on first use takes
+// one to twenty-five seconds, which makes it easy to hit. Each call is given a number,
+// and one that is no longer the latest stops before it touches the map.
 // ---------------------------------------------------------------------------------
 
-const A220_MARK: &str = "/*amdb-bridge-a220*/";
-const A220_TOKEN_FN: &str = "    function ***REMOVED***() {\n        const token = ***REMOVED***;\n        if (!token) return null;\n        const info = ***REMOVED***;\n        return ***REMOVED***;\n    }";
-const A220_SEARCH_FN: &str = "    async function ***REMOVED***() {";
+const OANC_MARK: &str = "/*amdb-bridge-oanc*/";
+const OANC_LOAD: &str = "async loadAirportMap(";
+const OANC_LAST_AWAIT: &str = "await this.amdbClient.getAirportData(";
 
-/// Rewrite the A220 map script. None when it is not that script or already patched.
-pub fn patch_a220_text(text: &str) -> Option<String> {
-    if text.contains(A220_MARK) || text.contains("bridgeNearestSearch(") || !text.contains("***REMOVED***") {
+/// Make FlyByWire's `loadAirportMap` drop a call overtaken by a newer one. None when the
+/// text has no OANS, is already patched, or is not shaped as this expects.
+pub fn patch_oanc_text(text: &str) -> Option<String> {
+    if text.contains(OANC_MARK) || text.matches(OANC_LOAD).count() != 1 {
         return None;
     }
-    let text = text.replace("\r\n", "\n");
-    let token_fn = format!(
-        "    function ***REMOVED***() {{\n        {A220_MARK} /* no Navigraph login needed: the local bridge ignores bearer tokens */\n        const token = ***REMOVED***;\n        if (!token) return '{A350_TOKEN}';\n        const info = ***REMOVED***;\n        return info.expired ? '{A350_TOKEN}' : token;\n    }}"
-    );
-    let search_fn = format!(
-        "{A220_MARK}\n    function bridgeFacilityKey(ident) {{\n        return 'A      ' + String(ident).toUpperCase() + ' ';\n    }}\n\n    async function bridgeNearestSearch(state, radiusMeters, maxItems, stage) {{\n        const url = `${{AMDB_BASE}}/nearest?lat=${{encodeURIComponent(state.lat)}}&lon=${{encodeURIComponent(state.lon)}}&radius_km=${{Math.max(5, Math.round(radiusMeters / 1000))}}&limit=${{maxItems || 16}}`;\n        const response = await withTimeout(fetch(url, {{ method: 'GET', headers: {{ 'Accept': 'application/json' }} }}), SEARCH_TIMEOUT_MS, `bridge nearest ${{stage || ''}} timeout`);\n        if (!response.ok) throw new Error(`bridge nearest HTTP ${{response.status}}`);\n        const rows = await response.json();\n        const added = [];\n        if (nearest && Array.isArray(rows)) {{\n            for (let i = 0; i < rows.length; i++) {{\n                const row = rows[i] || {{}};\n                const ident = String(row.idarpt || '').trim().toUpperCase();\n                if (!/^[A-Z]{{4}}$/.test(ident)) continue;\n                const coords = row.coordinates || {{}};\n                const lat = Number(coords.lat), lon = Number(coords.lon);\n                if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;\n                const key = bridgeFacilityKey(ident);\n                nearest.facilities.set(key, {{ icao: key, ident: ident, name: row.name || ident, lat: lat, lon: lon, runways: [], source: 'amdb-bridge' }});\n                added.push(key);\n            }}\n        }}\n        log('Bridge nearest airports', added.length, stage || '');\n        return {{ sessionId: nearest ? nearest.sessionId : null, searchId: 'bridge', added: added, removed: [] }};\n    }}\n\n    async function ***REMOVED***() {{\n        let native = null;\n        let nativeError = null;\n        try {{\n            native = await ***REMOVED***Native(state, radiusMeters, maxItems, stage);\n        }} catch (e) {{\n            nativeError = e;\n        }}\n        const nativeCount = native && Array.isArray(native.added) ? native.added.length : 0;\n        const known = nearest && nearest.currentRaw ? nearest.currentRaw.size : 0;\n        if (nativeCount > 0 || (known > 0 && !nativeError)) return native;\n        try {{\n            return await bridgeNearestSearch(state, radiusMeters, maxItems, stage);\n        }} catch (e) {{\n            if (nativeError) throw nativeError;\n            throw e;\n        }}\n    }}\n\n    async function ***REMOVED***Native(state, radiusMeters, maxItems, stage) {{"
-    );
-    if !text.contains(A220_TOKEN_FN) || !text.contains(A220_SEARCH_FN) {
+    let load = text.find(OANC_LOAD)?;
+    let open = load + text[load..].find('{')? + 1;
+    let end = block_end(text, open - 1)?;
+    let body = &text[open..end];
+    let last = body.rfind(OANC_LAST_AWAIT)?;
+    if body.matches(OANC_LAST_AWAIT).count() < 2 {
         return None;
     }
-    Some(text.replacen(A220_TOKEN_FN, &token_fn, 1).replacen(A220_SEARCH_FN, &search_fn, 1))
+    let call_open = open + last + OANC_LAST_AWAIT.len() - 1;
+    let call_end = paren_end(text, call_open)?;
+    let semicolon = call_end + text[call_end..].find(';')? + 1;
+    if text[call_end..semicolon].trim() != ";" {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len() + 200);
+    out.push_str(&text[..open]);
+    out.push_str(&format!("{OANC_MARK}const amdbBridgeLoad = this.amdbBridgeLoad = (this.amdbBridgeLoad || 0) + 1;"));
+    out.push_str(&text[open..semicolon]);
+    out.push_str(&format!("{OANC_MARK}if (amdbBridgeLoad !== this.amdbBridgeLoad) {{ return; }}"));
+    out.push_str(&text[semicolon..]);
+    Some(out)
 }
 
-/// A220 moving-map scripts in a Community folder: (package, file, already patched).
-pub fn scan_a220(community: &Path) -> Vec<(String, PathBuf, bool)> {
+/// Index just past the `)` closing the `(` at `open`, skipping string literals.
+fn paren_end(text: &str, open: usize) -> Option<usize> {
+    let b = text.as_bytes();
+    if b.get(open) != Some(&b'(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < b.len() {
+        match b[i] {
+            b'\'' | b'"' | b'`' => {
+                let q = b[i];
+                i += 1;
+                while i < b.len() && b[i] != q {
+                    if b[i] == b'\\' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i + 1);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// FlyByWire NDs with the OANS in a Community folder: (package, file, already patched).
+pub fn scan_oanc(community: &Path) -> Vec<(String, PathBuf, bool)> {
     let mut out = Vec::new();
     let Ok(rd) = fs::read_dir(community) else { return out };
     for pkg in rd.flatten() {
-        let pdir = pkg.path();
-        if !pdir.is_dir() {
+        let name = pkg.file_name().to_string_lossy().to_string();
+        let lower = name.to_ascii_lowercase();
+        if !pkg.path().is_dir() || !(lower.contains("flybywire") || lower.contains("a380")) || lower.contains("liver") {
             continue;
         }
         let mut js = Vec::new();
-        walk_js(&pdir.join("html_ui"), &mut js);
+        walk_js(&pkg.path().join("html_ui"), &mut js);
         for f in js {
-            let name = f.file_name().map(|s| s.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-            if name != "gm5-a220-amm.js" {
+            if !f.file_name().is_some_and(|n| n.eq_ignore_ascii_case("nd.js")) {
                 continue;
             }
             let Ok(text) = fs::read_to_string(&f) else { continue };
-            if text.contains("***REMOVED***") {
-                // Also counts copies ported by tools/port_a220_amm.py as patched.
-                let patched = text.contains(A220_MARK) || text.contains("bridgeNearestSearch(");
-                out.push((pkg.file_name().to_string_lossy().to_string(), f, patched));
+            if text.contains(OANC_MARK) {
+                out.push((name.clone(), f, true));
+            } else if text.contains(OANC_LOAD) && text.contains(OANC_LAST_AWAIT) {
+                out.push((name.clone(), f, false));
             }
         }
     }
     out
 }
 
-/// On MSFS 2020 the Community packages apply alphabetically, so the map package must
-/// sort after the aircraft it overrides. Returns a warning when it does not.
-pub fn a220_load_order_warning(community: &Path, package: &str) -> Option<String> {
-    let aircraft = "synaptic-aircraft-a220";
-    if !community.join(aircraft).is_dir() || package.to_ascii_lowercase() > aircraft.to_string() {
-        return None;
-    }
-    let is_2024 = community.to_string_lossy().contains("Limitless") || community.to_string_lossy().contains("2024");
-    if is_2024 {
-        return None; // MSFS 2024 honours package_order_hint instead
-    }
-    Some(format!("{package} sorts before {aircraft}, so MSFS 2020 will ignore its instrument override: rename the folder to zzz-{package}"))
-}
-
-/// Apply the A220 map patch in a Community folder (backups kept, recorded for
-/// `unpatch`). Returns the files changed.
-pub fn patch_a220(community: &Path, dry_run: bool) -> Result<Vec<PatchedFile>> {
+/// Patch every FlyByWire OANS in a Community folder (backups kept, recorded for `unpatch`).
+pub fn patch_oanc(community: &Path, dry_run: bool) -> Result<Vec<PatchedFile>> {
     let mut record = load_record(community);
     let mut done = Vec::new();
-    for (pkg, path, patched) in scan_a220(community) {
+    for (pkg, path, patched) in scan_oanc(community) {
         if patched {
             continue;
         }
         let text = fs::read_to_string(&path)?;
-        let Some(new_text) = patch_a220_text(&text) else {
-            log::warn!("{pkg}: {} is a version of the A220 map this bridge does not know how to patch", path.display());
+        let Some(new_text) = patch_oanc_text(&text) else {
+            log::warn!("{pkg}: {} has an OANS this bridge does not know how to patch", path.display());
             continue;
         };
-        log::info!("{}{}: token fallback and bridge airport search added to {}", if dry_run { "[dry-run] " } else { "" }, pkg, path.display());
+        log::info!("{}{}: OANS made to drop an airport overtaken by a newer one in {}", if dry_run { "[dry-run] " } else { "" }, pkg, path.display());
         if dry_run {
-            done.push(PatchedFile { path: path.clone(), backup: PathBuf::new(), replacements: 2 });
+            done.push(PatchedFile { path: path.clone(), backup: PathBuf::new(), replacements: 1 });
             continue;
         }
         let backup = PathBuf::from(format!("{}{}", path.display(), BACKUP_SUFFIX));
-        if !backup.exists() {
-            fs::copy(&path, &backup).with_context(|| format!("backup {}", path.display()))?;
-        }
+        // A file without the change is FlyByWire's own: after an update that is newer than
+        // any backup, which must follow it.
+        fs::copy(&path, &backup).with_context(|| format!("backup {}", path.display()))?;
         fs::write(&path, new_text)?;
-        let pf = PatchedFile { path: path.clone(), backup, replacements: 2 };
+        // The package's list of its files says how big each is; keep it in step.
+        sync_layout_size(&path)?;
+        let pf = PatchedFile { path: path.clone(), backup, replacements: 1 };
         record.files.retain(|f| f.path != pf.path);
         record.files.push(pf.clone());
         done.push(pf);
@@ -998,6 +1033,7 @@ pub fn unpatch(community: &Path) -> Result<usize> {
         if f.backup.is_file() {
             fs::copy(&f.backup, &f.path).with_context(|| format!("restore {}", f.path.display()))?;
             let _ = fs::remove_file(&f.backup);
+            let _ = sync_layout_size(&f.path);
             n += 1;
         }
     }
@@ -1759,6 +1795,19 @@ bus.on('RequestNavigraphAccessToken',()=>{ return 'tok'; });";
     }
 
     #[test]
+    fn an_overtaken_oans_load_stops_before_it_draws() {
+        let src = "    async loadAirportMap(icao, performanceModeUnload = false) {\n      this.unloadAirportMap(performanceModeUnload);\n      const data = await this.amdbClient.getAirportData(icao, includeLayers, void 0);\n      const wgs84ArpDat = await this.amdbClient.getAirportData(\n        icao,\n        [\"aerodromereferencepoint\" /* AerodromeReferencePoint */],\n        void 0,\n        \"EPSG:4326\" /* Epsg4326 */\n      );\n      this.data = airportMap;\n    }\n    calculateCanvasCenterCoordinates() {\n    }\n";
+        let out = patch_oanc_text(src).unwrap();
+        let first = out.find("const amdbBridgeLoad").unwrap();
+        let guard = out.find("if (amdbBridgeLoad !== this.amdbBridgeLoad) { return; }").unwrap();
+        assert!(first < out.find("this.unloadAirportMap").unwrap(), "numbered before anything happens");
+        assert!(guard > out.find("\"EPSG:4326\" /* Epsg4326 */\n      );").unwrap(), "checked after the last answer arrives");
+        assert!(guard < out.find("this.data = airportMap").unwrap(), "and before the map is touched");
+        assert!(patch_oanc_text(&out).is_none(), "once");
+        assert!(patch_oanc_text("no oans here").is_none());
+    }
+
+    #[test]
     fn a350_handler_is_rewritten() {
         let src = "x['on']('RequestNavigraphAccessToken',()=>{const a='{';if(DataStore['get']('a350_ng_isauthed')=='0'){Coherent['call']('COMM_BUS_WASM_CALLBACK','SetNavigraphAccessToken','');return;}}),this['t']=setInterval(()=>{},1);";
         let out = patch_a350_text(src).unwrap();
@@ -1767,19 +1816,6 @@ bus.on('RequestNavigraphAccessToken',()=>{ return 'tok'; });";
         assert!(out.trim_end().ends_with("},30000);"));
         assert!(patch_a350_text(&out).is_none(), "idempotent");
         assert!(patch_a350_text("nothing here").is_none());
-    }
-
-    #[test]
-    fn a220_map_gets_token_fallback_and_bridge_search() {
-        let src = format!("const SHARED = window.***REMOVED***_SHARED;\n{}\n    const x = 1;\n{}\n        let lastError = null;\n    }}\n", A220_TOKEN_FN, A220_SEARCH_FN);
-        let out = patch_a220_text(&src).unwrap();
-        assert!(out.contains("if (!token) return 'amdb-bridge-local';"));
-        assert!(out.contains("async function bridgeNearestSearch("));
-        assert!(out.contains("async function ***REMOVED***Native("));
-        assert_eq!(out.matches("async function ***REMOVED***(").count(), 1);
-        assert!(patch_a220_text(&out).is_none(), "idempotent");
-        assert!(patch_a220_text("not the map").is_none());
-        assert!(a220_load_order_warning(Path::new("C:/nowhere"), "gm5-a220-amm").is_none());
     }
 
     #[test]

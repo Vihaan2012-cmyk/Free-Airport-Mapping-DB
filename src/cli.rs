@@ -149,7 +149,7 @@ enum Cmd {
     },
     /// Every aircraft in the simulators' Community folders that the bridge can patch, and
     /// whether it is: moving maps that call the Navigraph map server, the A350's token
-    /// handler, the A220's instrument page and GM5 map, and the flight bags' charts.
+    /// handler, the A220's instrument page, and the flight bags' charts.
     PatchStatus,
     /// Approach charts on the flight bags built on the Navigraph SDK (iniBuilds A350, PMDG
     /// 737 and 777): `on` points them at the bridge, `off` gives them their own back,
@@ -1749,9 +1749,9 @@ pub fn run() -> Result<()> {
                     any = true;
                     println!("  {}  {:<40} A350 EFB token handler (moving map without a subscription)", mark(done), pkg);
                 }
-                for (pkg, _, done) in patcher::scan_a220(&d) {
+                for (pkg, _, done) in patcher::scan_oanc(&d) {
                     any = true;
-                    println!("  {}  {:<40} GM5 A220 moving map", mark(done), pkg);
+                    println!("  {}  {:<40} OANS airport loading (one airport at a time)", mark(done), pkg);
                 }
                 for (pkg, _, done) in patcher::scan_a220_page(&d) {
                     any = true;

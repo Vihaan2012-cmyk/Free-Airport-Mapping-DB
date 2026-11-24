@@ -241,17 +241,15 @@ schema follow Navigraph's own SDK (`@navigraph/amdb`) 1:1: `/v1/cycle`,
 enum values. No Navigraph account is needed. `patch` / `unpatch` are a no-admin
 alternative that rewrites the aircraft bundles instead.
 
-Aircraft: FlyByWire A380X (OANS + BTV, tested), FlyByWire A32NX development builds,
+Aircraft: FlyByWire A380X (OANS + BTV, tested; `serve` also makes its OANS drop an
+airport load a newer one has overtaken, so switching airports never draws two at once), FlyByWire A32NX development builds,
 iniBuilds A350 (its EFB only hands the OANS gauge a token with a Navigraph
 subscription, so `serve` rewrites that one handler; from 1.2.7 on, where the handler
 cannot be found, it adds a few lines at the end of `ini-efb-a350.js` that hand the gauge
 the token every 15 seconds instead; backup kept, `unpatch` restores, `--no-patch` skips;
 an iniBuilds aircraft in the Community folder with an `ini-efb-*.js` flight bag, such as
-an A380 installed there, gets the same), and the GM5 A220 Airport Moving Map for the Synaptic A220
-(`serve` adds a token fallback and lets it find the airport through the bridge's
-`/v1/nearest`, since the sim-side search returns nothing under MSFS 2020; on 2020 the
-package folder must sort after `synaptic-aircraft-a220`, e.g. `zzz-gm5-a220-amm`,
-which `tools/port_a220_amm.py` does for you).
+an A380 installed there, gets the same), and the Synaptic A220 through this project's own
+A220 moving map (below).
 
 ## Airport moving map for the A220 (MSFS)
 

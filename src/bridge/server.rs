@@ -670,7 +670,7 @@ fn handle(store: Arc<Store>, req: Request) {
     crate::term::step(None, &format!("{} /v1/{}{}  from {}{}", req.method(), rest, if query.is_empty() { String::new() } else { format!("?{}", if query.len() > 90 { format!("{}…", &query[..90]) } else { query.to_string() }) }, client_name(&agent), if auth { " (with token)" } else { "" }));
     let t0 = std::time::Instant::now();
     // Navigraph's API answers in EPSG:4326 (lat/lon) unless a projection is asked for;
-    // FlyByWire asks for NAVIGRAPH:ARP_AZEQ explicitly, the GM5 A220 map asks for nothing.
+    // FlyByWire asks for NAVIGRAPH:ARP_AZEQ explicitly; some clients ask for nothing.
     let projection = params.get("projection").and_then(Value::as_str).unwrap_or("EPSG:4326").to_string();
     let wgs84 = projection.eq_ignore_ascii_case("EPSG:4326");
     let precision = params.get("precision").and_then(Value::as_str).and_then(|s| s.parse::<f64>().ok());

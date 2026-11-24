@@ -943,7 +943,8 @@ fn allow_port_443() {
 }
 
 /// Patch every iniBuilds A350 EFB found, so its airport map does not wait for a
-/// Navigraph sign-in. Returns one line per aircraft changed.
+/// Navigraph sign-in, and every FlyByWire OANS, so switching airports draws one. Returns
+/// one line per aircraft changed.
 pub fn patch_a350_everywhere() -> Vec<String> {
     let mut notes = Vec::new();
     for sim in detect_sims() {
@@ -951,6 +952,11 @@ pub fn patch_a350_everywhere() -> Vec<String> {
             Ok(files) if !files.is_empty() => notes.push(format!("{}: iniBuilds A350 EFB patched so its airport map works without a Navigraph subscription", sim.name)),
             Ok(_) => {}
             Err(e) => notes.push(format!("{}: could not patch the iniBuilds A350 EFB: {e:#}", sim.name)),
+        }
+        match patcher::patch_oanc(&sim.community, false) {
+            Ok(files) if !files.is_empty() => notes.push(format!("{}: FlyByWire OANS patched so switching airports never draws two at once", sim.name)),
+            Ok(_) => {}
+            Err(e) => notes.push(format!("{}: could not patch the FlyByWire OANS: {e:#}", sim.name)),
         }
     }
     notes

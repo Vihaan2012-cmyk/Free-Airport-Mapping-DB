@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.2.15 (2026-11-13)
+
+**FlyByWire A380X: switching airports no longer draws two at once.**
+
+- Picking another airport on the OANS while the first was still loading left both drawn:
+  the new one's runways under its name, the old one's taxiways, aprons and buildings
+  around them ([#7](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB/issues/7),
+  [#8](https://github.com/Vihaan2012-cmyk/Free-Airport-Mapping-DB/issues/8)). FlyByWire's
+  `loadAirportMap` never drops a load a newer one has overtaken; Navigraph answers fast
+  enough that it seldom shows, but an airport the bridge downloads or builds on first use
+  takes one to twenty-five seconds. `serve` now gives each load a number in the A380X's
+  `ND/nd.js`, and one that is no longer the latest stops before it draws (backup kept,
+  `unpatch` restores, a FlyByWire update is patched again on the next start).
+- `status` lists it. FlyByWire's map requests themselves are unchanged and need nothing.
+
+**The GM5 A220 Airport Moving Map is no longer patched.** Its author has asked for the
+bridge's patcher for it to be removed, and it is gone: `serve` and `patch` no longer touch
+`gm5-a220-amm.js`, and the tools that ported and re-added it are removed, from this
+repository's history as well. The Synaptic A220 has this project's own A220 moving map,
+which is unaffected.
+
+**If the A380X shows NOT AVAIL:** it asks for the airport list once, when it loads. Since
+1.2.12 Navigraph's address points at this computer only while AMDB Bridge runs, so start
+the bridge before loading the aircraft, or press SWAP on the OANS STATUS page to ask again.
+
 ## 1.2.14 (2026-11-13) · A320 OANS 1.0.10
 
 **iniBuilds A350 1.2.7 and later, and iniBuilds A380s in the Community folder.**
